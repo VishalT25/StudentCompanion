@@ -166,8 +166,7 @@ class EventViewModel: ObservableObject {
         let gymEnd = calendar.date(from: components)!
         
         scheduleItems = [
-            ScheduleItem(title: "Math 101",
-
+            ScheduleItem(title: "Math 101", 
                         startTime: mathStart,
                         endTime: mathEnd,
                         daysOfWeek: [.monday, .wednesday, .friday],
