@@ -1,54 +1,67 @@
 import SwiftUI
 
 struct GPAView: View {
-    @State private var courses: [Course] = []
+    @EnvironmentObject private var themeManager: ThemeManager
+    @State private var courses: [Course] = [] // Array of Course class instances
     @State private var showingAddCourseSheet = false
+    @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
+    @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
 
     var body: some View {
-        NavigationView {
-            List {
-                ForEach(courses) { course in
-                    NavigationLink(destination: CourseDetailView(course: course)) {
-                        CourseWidgetView(course: course)
-                    }
-                    // Apply listRowInsets to remove default padding if you want the widget to span closer to edges,
-                    // or let List handle default row appearance.
-                    // .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)) // Example
-                }
-                .onDelete(perform: deleteCourse)
-                // Set listRowBackground to Color.clear if you want custom backgrounds to show fully without List's default row BG
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden) // Hide default separators if widgets are distinct enough
-            }
-            .listStyle(.plain) // Use .plain list style for less chrome
-            .navigationTitle("GPA Tracker")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    EditButton()
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingAddCourseSheet = true
-                    } label: {
-                        Label("Add Course", systemImage: "plus.circle.fill")
-                    }
+        List {
+            ForEach(courses) { course in // Iterate directly over class instances
+                NavigationLink(destination: CourseDetailView(course: course)) { // Pass the course instance
+                    CourseWidgetView(course: course, showGrade: showCurrentGPA, usePercentage: usePercentageGrades)
                 }
             }
-            .sheet(isPresented: $showingAddCourseSheet) {
-                // Placeholder for AddCourseView - we'll create this later
-                // AddCourseView(courses: $courses)
-                AddCourseView(courses: $courses)
+            .onDelete(perform: deleteCourse)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+        }
+        .listStyle(.plain)
+        .navigationTitle("Courses")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingAddCourseSheet = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                        .font(.title2)
+                }
             }
-            .onAppear(perform: loadCourses)
-            .onChange(of: courses) { oldValue, newValue in
-                 saveCourses()
+        }
+        .sheet(isPresented: $showingAddCourseSheet) {
+            AddCourseView(courses: $courses)
+                .environmentObject(themeManager)
+        }
+        .onAppear { 
+            loadCourses()
+            NotificationCenter.default.addObserver(forName: .courseDataDidChange, object: nil, queue: .main) { _ in
+                // A course's internal data changed, so we need to save the whole courses array.
+                // This is because `onChange(of: courses)` won't detect changes *inside* an element
+                // if the element itself (the class instance reference) doesn't change.
+                saveCourses()
             }
+        }
+        .onDisappear {
+            NotificationCenter.default.removeObserver(self, name: .courseDataDidChange, object: nil)
+        }
+        .refreshable {
+            loadCourses()
+        }
+        // This onChange will now primarily handle add/delete of courses
+        // or if the entire course array is replaced.
+        // It won't automatically detect deep changes within Course objects themselves.
+        .onChange(of: courses) { oldValue, newValue in
+             saveCourses()
         }
     }
 
     private func deleteCourse(offsets: IndexSet) {
         courses.remove(atOffsets: offsets)
-        saveCourses()
+        // saveCourses() will be called by onChange
     }
 
     private let coursesUserDefaultsKey = "gpaCourses"
@@ -66,58 +79,104 @@ struct GPAView: View {
                 return
             }
         }
-        // If no saved data, or decoding fails, load default sample data (or an empty array)
-        self.courses = [
-            Course(name: "Calculus I", iconName: "function", colorHex: Color.red.toHex()!),
-            Course(name: "Intro to Physics", iconName: "atom", colorHex: Color.blue.toHex()!),
-            Course(name: "Organic Chem", iconName: "testtube.2", colorHex: Color.green.toHex()!)
+        let defaultCourses: [Course] = [ // Create instances of the Course class
+            Course(name: "Calculus I", iconName: "function", colorHex: "FF0000"),
+            Course(name: "Intro to Physics", iconName: "atom", colorHex: "0000FF"),
+            Course(name: "Organic Chem", iconName: "testtube.2", colorHex: "00FF00")
         ]
+        self.courses = defaultCourses
+        // saveCourses() // Save defaults if loaded for the first time
     }
 }
 
 struct CourseWidgetView: View {
-    let course: Course
+    @ObservedObject var course: Course
+    let showGrade: Bool
+    let usePercentage: Bool
     
     // Determine foreground color based on the course's background color
     private var foregroundColor: Color {
         course.color.isDark ? .white : .black
     }
+    
+    private var currentGrade: String {
+        if !showGrade {
+            return ""
+        }
+        
+        let grade = calculateCurrentGrade()
+        if grade == "N/A" {
+            return "N/A"
+        }
+        
+        if usePercentage {
+            return "\(grade)%"
+        } else {
+            // Convert percentage to GPA (simple 4.0 scale)
+            if let gradeValue = Double(grade) {
+                let gpa = (gradeValue / 100.0) * 4.0
+                return String(format: "%.2f", gpa)
+            }
+            return "N/A"
+        }
+    }
+    
+    private func calculateCurrentGrade() -> String {
+        var totalWeightedGrade = 0.0
+        var totalWeight = 0.0
+        
+        // Access assignments through the ObservedObject
+        for assignment in course.assignments {
+            if let grade = assignment.gradeValue, let weight = assignment.weightValue {
+                totalWeightedGrade += grade * weight
+                totalWeight += weight
+            }
+        }
+        
+        if totalWeight == 0 {
+            return "N/A"
+        }
+        
+        let currentGradeVal = totalWeightedGrade / totalWeight
+        return String(format: "%.1f", currentGradeVal)
+    }
 
     var body: some View {
-        HStack(spacing: 12) { // Main container for left and right content
+        HStack(spacing: 12) {
             // Left side: Icon and Course Name
             HStack(spacing: 10) {
-                Image(systemName: course.iconName)
-                    .font(.title2) // Adjusted for horizontal layout
+                Image(systemName: course.iconName) // Access properties from ObservedObject
+                    .font(.title2)
                     .foregroundColor(foregroundColor)
-                    .frame(width: 30, alignment: .center) // Consistent icon width
+                    .frame(width: 30, alignment: .center)
 
-                Text(course.name)
+                Text(course.name) // Access properties from ObservedObject
                     .font(.headline)
                     .foregroundColor(foregroundColor)
-                    .lineLimit(2) // Allow name to wrap if long
+                    .lineLimit(2)
             }
 
-            Spacer() // Pushes the grade to the right
+            Spacer()
 
-            // Right side: Course Grade (Placeholder for now)
-            // We'll integrate the actual calculation in a later step
-            Text("Grade") // Placeholder text
-                .font(.headline.bold())
-                .foregroundColor(foregroundColor)
+            // Right side: Course Grade
+            if showGrade && !currentGrade.isEmpty {
+                Text(currentGrade)
+                    .font(.headline.bold())
+                    .foregroundColor(foregroundColor)
+            }
         }
-        .padding() // Generous padding inside the widget
-        .frame(maxWidth: .infinity) // Ensure it fills the width of the list row
-        .frame(minHeight: 80) // Adjusted minimum height for a horizontal layout
+        .padding()
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 80)
         .background(
             LinearGradient(
-                // Adjusted gradient direction for a horizontal widget
+                // Access course.color from ObservedObject
                 gradient: Gradient(colors: [course.color.lighter(by: 0.2), course.color]),
                 startPoint: .leading,
                 endPoint: .trailing
             )
         )
-        .cornerRadius(12) // Standard corner radius
+        .cornerRadius(12)
     }
 }
 
@@ -133,10 +192,6 @@ extension Color {
         return self.adjust(by: abs(percentage))
     }
 
-    // func darker(by percentage: CGFloat = 0.2) -> Color {
-    //     return self.adjust(by: -1 * abs(percentage))
-    // }
-
     private func adjust(by percentage: CGFloat) -> Color {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         if UIColor(self).getRed(&r, green: &g, blue: &b, alpha: &a) {
@@ -145,11 +200,12 @@ extension Color {
                                blue: min(b + percentage, 1.0),
                                alpha: a))
         } else {
-            return self // Return self if deconstruction fails
+            return self
         }
     }
 }
 
 #Preview {
     GPAView()
+        .environmentObject(ThemeManager())
 }

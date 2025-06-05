@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject private var themeManager: ThemeManager
     @AppStorage("d2lLink") private var d2lLink: String = "https://d2l.youruniversity.edu"
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
     @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
@@ -8,14 +9,14 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                // Theme Selection
+                themeSelectionSection
+                
                 // Grade Display Settings
                 gradeDisplaySection
                 
                 // D2L Configuration
                 d2lConfigSection
-                
-                // Resources Section
-                resourcesSection
                 
                 Spacer(minLength: 40)
             }
@@ -25,6 +26,30 @@ struct SettingsView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    private var themeSelectionSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Theme")
+                .font(.title3.bold())
+                .foregroundColor(.primary)
+            
+            VStack(spacing: 12) {
+                ForEach(AppTheme.allCases) { theme in
+                    ThemeSelectionRow(
+                        theme: theme,
+                        isSelected: themeManager.currentTheme == theme
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            themeManager.setTheme(theme)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
     }
     
     private var gradeDisplaySection: some View {
@@ -39,7 +64,7 @@ struct SettingsView: View {
                     subtitle: "Display your current grade on the Courses button",
                     isOn: $showCurrentGPA,
                     icon: "graduationcap.fill",
-                    color: .primaryGreen
+                    color: themeManager.currentTheme.primaryColor
                 )
                 
                 if showCurrentGPA {
@@ -48,7 +73,7 @@ struct SettingsView: View {
                         subtitle: "Show percentages instead of GPA scale",
                         isOn: $usePercentageGrades,
                         icon: "percent",
-                        color: .secondaryGreen
+                        color: themeManager.currentTheme.secondaryColor
                     )
                 }
             }
@@ -87,33 +112,69 @@ struct SettingsView: View {
         .background(Color(.systemBackground))
         .cornerRadius(16)
     }
+}
+
+struct ThemeSelectionRow: View {
+    let theme: AppTheme
+    let isSelected: Bool
+    let action: () -> Void
     
-    private var resourcesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Resources")
-                .font(.title3.bold())
-                .foregroundColor(.primary)
-            
-            VStack(spacing: 8) {
-                Image(systemName: "book.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(.tertiaryGreen.opacity(0.7))
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                // Theme color preview
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(theme.primaryColor)
+                        .frame(width: 16, height: 16)
+                    Circle()
+                        .fill(theme.secondaryColor)
+                        .frame(width: 16, height: 16)
+                    Circle()
+                        .fill(theme.tertiaryColor)
+                        .frame(width: 16, height: 16)
+                }
                 
-                Text("Resource Management")
-                    .font(.headline.weight(.medium))
-                    .foregroundColor(.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(theme.displayName)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(.primary)
+                    
+                    Text(themeDescription(for: theme))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 
-                Text("Resource management functionality will be added in a future update.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
+                Spacer()
+                
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(theme.primaryColor)
+                        .font(.title3)
+                }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 20)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? theme.primaryColor.opacity(0.1) : Color(.systemGray6).opacity(0.5))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? theme.primaryColor : Color.clear, lineWidth: 2)
+            )
         }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
+        .buttonStyle(.plain)
+    }
+    
+    private func themeDescription(for theme: AppTheme) -> String {
+        switch theme {
+        case .forest:
+            return "Calming green tones inspired by nature"
+        case .ice:
+            return "Cool blue tones for a crisp, clean feel"
+        case .fire:
+            return "Warm red tones for energy and passion"
+        }
     }
 }
 
@@ -149,7 +210,6 @@ struct SettingToggleRow: View {
         .padding(12)
         .background(Color(.systemGray6).opacity(0.5))
         .cornerRadius(8)
-
     }
 }
 
@@ -157,8 +217,7 @@ struct SettingsView_Previews: PreviewProvider {
     static var previews: some View {
         NavigationView {
             SettingsView()
+                .environmentObject(ThemeManager())
         }
     }
-
 }
-

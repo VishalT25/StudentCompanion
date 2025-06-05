@@ -1,6 +1,149 @@
 import SwiftUI
 import Combine
 
+// MARK: - Theme System
+enum AppTheme: String, CaseIterable, Identifiable {
+    case forest = "Forest"
+    case ice = "Ice"
+    case fire = "Fire"
+    
+    var id: String { rawValue }
+    
+    var displayName: String { rawValue }
+    
+    var primaryColor: Color {
+        switch self {
+        case .forest:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 95/255, green: 135/255, blue: 105/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 134/255, green: 167/255, blue: 137/255, alpha: 1.0)
+                }
+            })
+        case .ice:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 95/255, green: 135/255, blue: 155/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 134/255, green: 167/255, blue: 187/255, alpha: 1.0)
+                }
+            })
+        case .fire:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 155/255, green: 95/255, blue: 105/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 187/255, green: 134/255, blue: 147/255, alpha: 1.0)
+                }
+            })
+        }
+    }
+    
+    var secondaryColor: Color {
+        switch self {
+        case .forest:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 115/255, green: 145/255, blue: 125/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 178/255, green: 200/255, blue: 186/255, alpha: 1.0)
+                }
+            })
+        case .ice:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 115/255, green: 145/255, blue: 165/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 178/255, green: 200/255, blue: 220/255, alpha: 1.0)
+                }
+            })
+        case .fire:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 165/255, green: 115/255, blue: 125/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 220/255, green: 178/255, blue: 186/255, alpha: 1.0)
+                }
+            })
+        }
+    }
+    
+    var tertiaryColor: Color {
+        switch self {
+        case .forest:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 135/255, green: 155/255, blue: 145/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 210/255, green: 227/255, blue: 200/255, alpha: 1.0)
+                }
+            })
+        case .ice:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 135/255, green: 155/255, blue: 175/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 200/255, green: 227/255, blue: 240/255, alpha: 1.0)
+                }
+            })
+        case .fire:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 175/255, green: 135/255, blue: 145/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 240/255, green: 210/255, blue: 200/255, alpha: 1.0)
+                }
+            })
+        }
+    }
+    
+    var quaternaryColor: Color {
+        switch self {
+        case .forest:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 65/255, green: 75/255, blue: 70/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 235/255, green: 243/255, blue: 232/255, alpha: 1.0)
+                }
+            })
+        case .ice:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 65/255, green: 75/255, blue: 85/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 232/255, green: 243/255, blue: 252/255, alpha: 1.0)
+                }
+            })
+        case .fire:
+            return Color(UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 85/255, green: 65/255, blue: 70/255, alpha: 1.0)
+                } else {
+                    return UIColor(red: 252/255, green: 235/255, blue: 232/255, alpha: 1.0)
+                }
+            })
+        }
+    }
+}
+
+class ThemeManager: ObservableObject {
+    @Published var currentTheme: AppTheme = .forest
+    
+    init() {
+        if let savedTheme = UserDefaults.standard.string(forKey: "selectedTheme"),
+           let theme = AppTheme(rawValue: savedTheme) {
+            currentTheme = theme
+        }
+    }
+    
+    func setTheme(_ theme: AppTheme) {
+        currentTheme = theme
+        UserDefaults.standard.set(theme.rawValue, forKey: "selectedTheme")
+    }
+}
+
 // MARK: - Models & ViewModel
 struct Category: Identifiable, Hashable, Codable {
     var id = UUID()
@@ -135,7 +278,7 @@ class EventViewModel: ObservableObject {
     
     private func setupDefaultData() {
         categories = [
-            Category(name: "Assignment", color: .blue),
+            Category(name: "Assignment", color: .primaryGreen),
             Category(name: "Lab", color: .orange),
             Category(name: "Exam", color: .red),
             Category(name: "Personal", color: .purple)
@@ -261,19 +404,97 @@ class EventViewModel: ObservableObject {
             calendar.isDate($0.date, inSameDayAs: Date())
         }.sorted { $0.date < $1.date }
     }
+    
+    func upcomingEvents() -> [Event] {
+        let now = Date()
+        return events.filter { $0.date > now }
+            .sorted { $0.date < $1.date }
+    }
+    
+    func pastEvents() -> [Event] {
+        let now = Date()
+        return events.filter { $0.date <= now }
+            .sorted { $0.date > $1.date }
+    }
+    
+    func events(for date: Date) -> [Event] {
+        let calendar = Calendar.current
+        return events.filter {
+            calendar.isDate($0.date, inSameDayAs: date)
+        }.sorted { $0.date < $1.date }
+    }
+    
+    func eventsInMonth(_ date: Date) -> [Event] {
+        let calendar = Calendar.current
+        let month = calendar.component(.month, from: date)
+        let year = calendar.component(.year, from: date)
+        
+        return events.filter { event in
+            let eventMonth = calendar.component(.month, from: event.date)
+            let eventYear = calendar.component(.year, from: event.date)
+            return eventMonth == month && eventYear == year
+        }
+    }
 }
 
-// MARK: - Color Palette
+// MARK: - Color Palette (Updated to use ThemeManager)
 extension Color {
-    static let primaryGreen = Color(red: 134/255, green: 167/255, blue: 137/255)
-    static let secondaryGreen = Color(red: 178/255, green: 200/255, blue: 186/255)
-    static let tertiaryGreen = Color(red: 210/255, green: 227/255, blue: 200/255)
-    static let quaternaryGreen = Color(red: 235/255, green: 243/255, blue: 232/255)
+    static let primaryGreen = Color(UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor(red: 95/255, green: 135/255, blue: 105/255, alpha: 1.0)
+        } else {
+            return UIColor(red: 134/255, green: 167/255, blue: 137/255, alpha: 1.0)
+        }
+    })
+    
+    static let secondaryGreen = Color(UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor(red: 115/255, green: 145/255, blue: 125/255, alpha: 1.0)
+        } else {
+            return UIColor(red: 178/255, green: 200/255, blue: 186/255, alpha: 1.0)
+        }
+    })
+    
+    static let tertiaryGreen = Color(UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor(red: 135/255, green: 155/255, blue: 145/255, alpha: 1.0)
+        } else {
+            return UIColor(red: 210/255, green: 227/255, blue: 200/255, alpha: 1.0)
+        }
+    })
+    
+    static let quaternaryGreen = Color(UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor(red: 65/255, green: 75/255, blue: 70/255, alpha: 1.0)
+        } else {
+            return UIColor(red: 235/255, green: 243/255, blue: 232/255, alpha: 1.0)
+        }
+    })
 }
 
-// MARK: - EventsPreviewView
+// MARK: - Theme-aware color extensions
+extension Color {
+    static func themePrimary(_ themeManager: ThemeManager) -> Color {
+        themeManager.currentTheme.primaryColor
+    }
+    
+    static func themeSecondary(_ themeManager: ThemeManager) -> Color {
+        themeManager.currentTheme.secondaryColor
+    }
+    
+    static func themeTertiary(_ themeManager: ThemeManager) -> Color {
+        themeManager.currentTheme.tertiaryColor
+    }
+    
+    static func themeQuaternary(_ themeManager: ThemeManager) -> Color {
+        themeManager.currentTheme.quaternaryColor
+    }
+}
+
+// MARK: - EventsPreviewView (Updated to only show upcoming events)
 struct EventsPreviewView: View {
     @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
     let events: [Event]
     
     var body: some View {
@@ -295,18 +516,18 @@ struct EventsPreviewView: View {
                 }
             }
             
-            let sortedEvents = events.sorted { $0.date < $1.date }
+            let upcomingEvents = viewModel.upcomingEvents()
             
-            if sortedEvents.isEmpty {
+            if upcomingEvents.isEmpty {
                 EmptyEventsView()
             } else {
                 VStack(spacing: 8) {
-                    ForEach(sortedEvents.prefix(3)) { event in
+                    ForEach(upcomingEvents.prefix(3)) { event in
                         EventPreviewCard(event: event)
                             .environmentObject(viewModel)
                     }
                     
-                    if events.count > 3 {
+                    if upcomingEvents.count > 3 {
                         HStack {
                             Spacer()
                             Text("View All Events...")
@@ -323,8 +544,8 @@ struct EventsPreviewView: View {
         .background(
             LinearGradient(
                 gradient: Gradient(colors: [
-                    Color.secondaryGreen.opacity(0.9),
-                    Color.secondaryGreen
+                    themeManager.currentTheme.secondaryColor.opacity(0.9),
+                    themeManager.currentTheme.secondaryColor
                 ]),
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -422,76 +643,533 @@ struct EventPreviewCard: View {
     }
 }
 
-// MARK: - EventsListView
+// MARK: - Enhanced EventsListView with Calendar
 struct EventsListView: View {
     @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
     @State private var showingAddEvent = false
     @State private var showingAddCategory = false
+    @State private var selectedDate = Date()
+    @State private var showCalendarView = false
+    @State private var showCategories = false
 
-    var sortedEvents: [Event] {
-        viewModel.events.sorted { $0.date < $1.date }
+    var sortedUpcomingEvents: [Event] {
+        viewModel.upcomingEvents()
+    }
+    
+    var sortedPastEvents: [Event] {
+        viewModel.pastEvents()
     }
 
     var body: some View {
-        List {
-            Section(header: Text("Categories")) {
-                ForEach(viewModel.categories.indices, id: \.self) { idx in
-                    NavigationLink {
-                        CategoryEditView(category: $viewModel.categories[idx], isNew: false)
-                    } label: {
-                        HStack(spacing: 12) {
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(viewModel.categories[idx].color)
-                                .frame(width: 24, height: 24)
-                            Text(viewModel.categories[idx].name)
-                        }
-                    }
-                }
-                Button(action: { showingAddCategory = true }) {
-                    Label("Add Category", systemImage: "plus.circle")
-                }
-            }
-            Section(header: Text("Events")) {
-                ForEach(sortedEvents) { event in
-                    NavigationLink {
-                        EventEditView(event: event, isNew: false)
-                            .environmentObject(viewModel)
-                    } label: {
-                        HStack {
-                            Text(event.title)
-                            Spacer()
-                            Text(EventsListView.dateFormatter.string(from: event.date))
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                .onDelete { indices in
-                    indices.forEach { index in
-                        let eventToDelete = sortedEvents[index]
-                        viewModel.deleteEvent(eventToDelete)
-                    }
-                }
+        VStack(spacing: 0) {
+            // Header with view toggle
+            headerView
+            
+            if showCalendarView {
+                calendarView
+            } else {
+                listView
             }
         }
-        .listStyle(InsetGroupedListStyle())
-        .navigationTitle("All Events")
+        .navigationTitle("Events")
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                HStack {
-                    Button { showingAddEvent = true } label: { Image(systemName: "plus.circle") }
-                    Button { showingAddCategory = true } label: { Image(systemName: "tag.circle") }
+                HStack(spacing: 12) {
+                    Button { showingAddEvent = true } label: { 
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                    }
+                    Button { showingAddCategory = true } label: { 
+                        Image(systemName: "tag.circle.fill")
+                            .foregroundColor(themeManager.currentTheme.secondaryColor)
+                    }
                 }
             }
         }
         .sheet(isPresented: $showingAddEvent) {
             AddEventView(isPresented: $showingAddEvent)
                 .environmentObject(viewModel)
+                .environmentObject(themeManager)
         }
         .sheet(isPresented: $showingAddCategory) {
             AddCategoryView(isPresented: $showingAddCategory)
                 .environmentObject(viewModel)
+                .environmentObject(themeManager)
         }
+    }
+    
+    private var headerView: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Picker("View Mode", selection: $showCalendarView) {
+                    Text("List").tag(false)
+                    Text("Calendar").tag(true)
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                .padding(.horizontal)
+            }
+            
+            if !showCalendarView {
+                HStack {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showCategories.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "tag")
+                                .font(.subheadline)
+                            Text("Categories")
+                                .font(.subheadline.weight(.medium))
+                            Image(systemName: showCategories ? "chevron.up" : "chevron.down")
+                                .font(.caption)
+                        }
+                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(themeManager.currentTheme.primaryColor.opacity(0.1))
+                        .cornerRadius(8)
+                    }
+                    
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+        .padding(.vertical, 8)
+        .background(Color(.systemGroupedBackground))
+    }
+    
+    private var listView: some View {
+        List {
+            // Collapsible Categories Section
+            if showCategories {
+                Section {
+                    ForEach(viewModel.categories.indices, id: \.self) { idx in
+                        NavigationLink {
+                            CategoryEditView(category: $viewModel.categories[idx], isNew: false)
+                                .environmentObject(viewModel)
+                                .environmentObject(themeManager)
+                        } label: {
+                            CategoryRow(category: viewModel.categories[idx])
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Text("Categories")
+                        Spacer()
+                        Text("\(viewModel.categories.count)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            
+            // Upcoming Events Section
+            if !sortedUpcomingEvents.isEmpty {
+                Section {
+                    ForEach(sortedUpcomingEvents) { event in
+                        NavigationLink {
+                            EventEditView(event: event, isNew: false)
+                                .environmentObject(viewModel)
+                                .environmentObject(themeManager)
+                        } label: {
+                            EnhancedEventRow(event: event)
+                                .environmentObject(viewModel)
+                                .environmentObject(themeManager)
+                        }
+                    }
+                    .onDelete { indices in
+                        indices.forEach { index in
+                            let eventToDelete = sortedUpcomingEvents[index]
+                            viewModel.deleteEvent(eventToDelete)
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Image(systemName: "calendar.badge.clock")
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                        Text("Upcoming Events")
+                        Spacer()
+                        Text("\(sortedUpcomingEvents.count)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            
+            // Past Events Section
+            if !sortedPastEvents.isEmpty {
+                Section {
+                    ForEach(sortedPastEvents.prefix(10)) { event in
+                        NavigationLink {
+                            EventEditView(event: event, isNew: false)
+                                .environmentObject(viewModel)
+                                .environmentObject(themeManager)
+                        } label: {
+                            EnhancedEventRow(event: event, isPast: true)
+                                .environmentObject(viewModel)
+                                .environmentObject(themeManager)
+                        }
+                    }
+                    .onDelete { indices in
+                        indices.forEach { index in
+                            let eventToDelete = sortedPastEvents[index]
+                            viewModel.deleteEvent(eventToDelete)
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundColor(.secondary)
+                        Text("Recent Past Events")
+                        Spacer()
+                        if sortedPastEvents.count > 10 {
+                            Text("10+")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("\(sortedPastEvents.count)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(InsetGroupedListStyle())
+    }
+    
+    private var calendarView: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Month/Year selector and calendar grid would go here
+                CalendarGridView(selectedDate: $selectedDate)
+                    .environmentObject(viewModel)
+                    .environmentObject(themeManager)
+                
+                // Events for selected date
+                if !viewModel.events(for: selectedDate).isEmpty {
+                    eventsForSelectedDate
+                }
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+    
+    private var eventsForSelectedDate: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Events for \(selectedDate, style: .date)")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Spacer()
+            }
+            
+            LazyVStack(spacing: 8) {
+                ForEach(viewModel.events(for: selectedDate)) { event in
+                    NavigationLink {
+                        EventEditView(event: event, isNew: false)
+                            .environmentObject(viewModel)
+                            .environmentObject(themeManager)
+                    } label: {
+                        CalendarEventCard(event: event)
+                            .environmentObject(viewModel)
+                            .environmentObject(themeManager)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(12)
+    }
+}
+
+// MARK: - Enhanced Event Row
+struct EnhancedEventRow: View {
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+    let event: Event
+    var isPast: Bool = false
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Date indicator
+            VStack(spacing: 2) {
+                Text("\(Calendar.current.component(.day, from: event.date))")
+                    .font(.title3.weight(.bold))
+                    .foregroundColor(isPast ? .secondary : themeManager.currentTheme.primaryColor)
+                Text(monthShort(from: event.date))
+                    .font(.caption2.weight(.medium))
+                    .foregroundColor(.secondary)
+            }
+            .frame(width: 45)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isPast ? Color(.systemGray6) : themeManager.currentTheme.primaryColor.opacity(0.1))
+            )
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(event.title)
+                    .font(.headline)
+                    .foregroundColor(isPast ? .secondary : .primary)
+                
+                HStack(spacing: 8) {
+                    Label(timeString(from: event.date), systemImage: "clock")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Text(event.category(from: viewModel.categories).name)
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(event.category(from: viewModel.categories).color.opacity(0.2))
+                        .foregroundColor(event.category(from: viewModel.categories).color)
+                        .cornerRadius(8)
+                }
+            }
+            
+            if isPast {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green.opacity(0.7))
+                    .font(.title3)
+            }
+        }
+        .padding(.vertical, 4)
+        .opacity(isPast ? 0.7 : 1.0)
+    }
+    
+    private func monthShort(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM"
+        return formatter.string(from: date)
+    }
+    
+    private func timeString(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Category Row
+struct CategoryRow: View {
+    let category: Category
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(category.color)
+                .frame(width: 28, height: 28)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(.systemBackground), lineWidth: 2)
+                )
+            
+            Text(category.name)
+                .font(.subheadline.weight(.medium))
+            
+            Spacer()
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Calendar Grid View
+struct CalendarGridView: View {
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+    @Binding var selectedDate: Date
+    @State private var currentMonth = Date()
+    
+    private let calendar = Calendar.current
+    private let dateFormatter = DateFormatter()
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            // Month navigation
+            HStack {
+                Button {
+                    withAnimation {
+                        currentMonth = calendar.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                        .padding(8)
+                        .background(Circle().fill(themeManager.currentTheme.primaryColor.opacity(0.1)))
+                }
+                
+                Spacer()
+                
+                Text(currentMonth, format: .dateTime.month(.wide).year())
+                    .font(.title2.weight(.semibold))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                Button {
+                    withAnimation {
+                        currentMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                    }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                        .padding(8)
+                        .background(Circle().fill(themeManager.currentTheme.primaryColor.opacity(0.1)))
+                }
+            }
+            
+            // Calendar grid
+            calendarGrid
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+    }
+    
+    private var calendarGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 8) {
+            // Weekday headers
+            ForEach(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], id: \.self) { day in
+                Text(day)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .frame(height: 30)
+            }
+            
+            // Calendar days
+            ForEach(calendarDays, id: \.self) { date in
+                CalendarDayView(
+                    date: date,
+                    isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
+                    isCurrentMonth: calendar.isDate(date, equalTo: currentMonth, toGranularity: .month),
+                    hasEvents: !viewModel.events(for: date).isEmpty
+                ) {
+                    selectedDate = date
+                }
+                .environmentObject(themeManager)
+            }
+        }
+    }
+    
+    private var calendarDays: [Date] {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: currentMonth),
+              let monthFirstWeek = calendar.dateInterval(of: .weekOfYear, for: monthInterval.start),
+              let monthLastWeek = calendar.dateInterval(of: .weekOfYear, for: monthInterval.end - 1)
+        else { return [] }
+        
+        var days: [Date] = []
+        var date = monthFirstWeek.start
+        
+        while date < monthLastWeek.end {
+            days.append(date)
+            date = calendar.date(byAdding: .day, value: 1, to: date) ?? date
+        }
+        
+        return days
+    }
+}
+
+// MARK: - Calendar Day View
+struct CalendarDayView: View {
+    @EnvironmentObject var themeManager: ThemeManager
+    let date: Date
+    let isSelected: Bool
+    let isCurrentMonth: Bool
+    let hasEvents: Bool
+    let action: () -> Void
+    
+    private let calendar = Calendar.current
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Text("\(calendar.component(.day, from: date))")
+                    .font(.system(size: 16, weight: isSelected ? .bold : .medium))
+                    .foregroundColor(textColor)
+                
+                if hasEvents {
+                    Circle()
+                        .fill(themeManager.currentTheme.secondaryColor)
+                        .frame(width: 6, height: 6)
+                } else {
+                    Circle()
+                        .fill(Color.clear)
+                        .frame(width: 6, height: 6)
+                }
+            }
+            .frame(width: 40, height: 40)
+            .background(backgroundColor)
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+    }
+    
+    private var textColor: Color {
+        if isSelected {
+            return .white
+        } else if isCurrentMonth {
+            return .primary
+        } else {
+            return .secondary
+        }
+    }
+    
+    private var backgroundColor: Color {
+        if isSelected {
+            return themeManager.currentTheme.primaryColor
+        } else if hasEvents && isCurrentMonth {
+            return themeManager.currentTheme.primaryColor.opacity(0.1)
+        } else {
+            return Color.clear
+        }
+    }
+}
+
+// MARK: - Calendar Event Card
+struct CalendarEventCard: View {
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+    let event: Event
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Rectangle()
+                .fill(event.category(from: viewModel.categories).color)
+                .frame(width: 4)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(event.title)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Text(event.date, style: .time)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            Text(event.category(from: viewModel.categories).name)
+                .font(.caption.weight(.medium))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(event.category(from: viewModel.categories).color.opacity(0.2))
+                .foregroundColor(event.category(from: viewModel.categories).color)
+                .cornerRadius(8)
+        }
+        .padding()
+        .background(Color(.systemGray6).opacity(0.5))
+        .cornerRadius(8)
     }
 }
 
@@ -501,9 +1179,10 @@ extension EventsListView {
     }()
 }
 
-// MARK: - AddEventView
+// MARK: - AddEventView (Enhanced)
 struct AddEventView: View {
     @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
     @Binding var isPresented: Bool
     @State private var date = Date()
     @State private var title = ""
@@ -512,21 +1191,34 @@ struct AddEventView: View {
     var body: some View {
         NavigationView {
             Form {
-                DatePicker("Date & Time", selection: $date)
-                TextField("Event Title", text: $title)
-                Picker("Category", selection: $selectedCategory) {
-                    ForEach(viewModel.categories) { cat in
-                        HStack {
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(cat.color)
-                                .frame(width: 16, height: 16)
-                            Text(cat.name)
+                Section {
+                    TextField("Event Title", text: $title)
+                        .font(.headline)
+                    
+                    DatePicker("Date & Time", selection: $date, displayedComponents: [.date, .hourAndMinute])
+                        .datePickerStyle(.compact)
+                } header: {
+                    Text("Event Details")
+                }
+                
+                Section {
+                    Picker("Category", selection: $selectedCategory) {
+                        ForEach(viewModel.categories) { cat in
+                            HStack {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(cat.color)
+                                    .frame(width: 20, height: 20)
+                                Text(cat.name)
+                            }
+                            .tag(Optional(cat))
                         }
-                        .tag(Optional(cat))
                     }
+                } header: {
+                    Text("Category")
                 }
             }
             .navigationTitle("Add Event")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
@@ -536,18 +1228,22 @@ struct AddEventView: View {
                             isPresented = false
                         }
                     }
+                    .disabled(title.isEmpty)
+                    .foregroundColor(title.isEmpty ? .secondary : themeManager.currentTheme.primaryColor)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { isPresented = false }
+                        .foregroundColor(.secondary)
                 }
             }
         }
     }
 }
 
-// MARK: - AddCategoryView
+// MARK: - AddCategoryView (Enhanced)
 struct AddCategoryView: View {
     @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
     @Binding var isPresented: Bool
     @State private var name = ""
     @State private var color: Color = .blue
@@ -555,10 +1251,31 @@ struct AddCategoryView: View {
     var body: some View {
         NavigationView {
             Form {
-                TextField("Category Name", text: $name)
-                ColorPicker("Color", selection: $color)
+                Section {
+                    TextField("Category Name", text: $name)
+                        .font(.headline)
+                    
+                    ColorPicker("Color", selection: $color, supportsOpacity: false)
+                } header: {
+                    Text("Category Details")
+                }
+                
+                Section {
+                    HStack {
+                        Text("Preview")
+                        Spacer()
+                        HStack {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(color)
+                                .frame(width: 20, height: 20)
+                            Text(name.isEmpty ? "Category Name" : name)
+                                .foregroundColor(name.isEmpty ? .secondary : .primary)
+                        }
+                    }
+                }
             }
             .navigationTitle("Add Category")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
@@ -566,46 +1283,61 @@ struct AddCategoryView: View {
                         viewModel.addCategory(cat)
                         isPresented = false
                     }
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { isPresented = false }
+                        .foregroundColor(.secondary)
                 }
             }
         }
     }
 }
 
-// MARK: - EventEditView
+// MARK: - EventEditView (Enhanced)
 struct EventEditView: View {
     @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
     @State var event: Event
     @Environment(\.presentationMode) var presentationMode
     var isNew = false
 
     var body: some View {
         Form {
-            DatePicker("Date & Time", selection: Binding(
-                get: { event.date },
-                set: { event.date = $0 }
-            ))
-            TextField("Event Title", text: Binding(
-                get: { event.title },
-                set: { event.title = $0 }
-            ))
-            let categoryBinding = Binding<Category>(
-                get: { event.category(from: viewModel.categories) },
-                set: { event.categoryId = $0.id }
-            )
-            Picker("Category", selection: categoryBinding) {
-                ForEach(viewModel.categories, id: \.self) { cat in
-                    HStack {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(cat.color)
-                            .frame(width: 16, height: 16)
-                        Text(cat.name)
+            Section {
+                TextField("Event Title", text: Binding(
+                    get: { event.title },
+                    set: { event.title = $0 }
+                ))
+                .font(.headline)
+                
+                DatePicker("Date & Time", selection: Binding(
+                    get: { event.date },
+                    set: { event.date = $0 }
+                ), displayedComponents: [.date, .hourAndMinute])
+                .datePickerStyle(.compact)
+            } header: {
+                Text("Event Details")
+            }
+            
+            Section {
+                let categoryBinding = Binding<Category>(
+                    get: { event.category(from: viewModel.categories) },
+                    set: { event.categoryId = $0.id }
+                )
+                Picker("Category", selection: categoryBinding) {
+                    ForEach(viewModel.categories, id: \.self) { cat in
+                        HStack {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(cat.color)
+                                .frame(width: 20, height: 20)
+                            Text(cat.name)
+                        }
+                        .tag(cat)
                     }
-                    .tag(cat)
                 }
+            } header: {
+                Text("Category")
             }
 
             if !isNew {
@@ -614,12 +1346,16 @@ struct EventEditView: View {
                         viewModel.deleteEvent(event)
                         presentationMode.wrappedValue.dismiss()
                     } label: {
-                        Text("Delete Event")
+                        HStack {
+                            Image(systemName: "trash")
+                            Text("Delete Event")
+                        }
                     }
                 }
             }
         }
         .navigationTitle(isNew ? "Add Event" : "Edit Event")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button(isNew ? "Add" : "Save") {
@@ -627,43 +1363,65 @@ struct EventEditView: View {
                     else { viewModel.updateEvent(event) }
                     presentationMode.wrappedValue.dismiss()
                 }
+                .foregroundColor(themeManager.currentTheme.primaryColor)
             }
         }
     }
 }
 
-// MARK: - CategoryEditView
+// MARK: - CategoryEditView (Enhanced)
 struct CategoryEditView: View {
     @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
     @Binding var category: Category
     @Environment(\.presentationMode) var presentationMode
     var isNew: Bool
 
     var body: some View {
-        VStack {
-            Form {
+        Form {
+            Section {
                 TextField("Category Name", text: $category.name)
-                ColorPicker("Color", selection: $category.color)
+                    .font(.headline)
+                ColorPicker("Color", selection: $category.color, supportsOpacity: false)
+            } header: {
+                Text("Category Details")
             }
-            if !isNew {
-                Button(action: {
-                    viewModel.deleteCategory(category)
-                    presentationMode.wrappedValue.dismiss()
-                }) {
-                    Text("Delete Category")
-                        .frame(maxWidth: .infinity)
+            
+            Section {
+                HStack {
+                    Text("Preview")
+                    Spacer()
+                    HStack {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(category.color)
+                            .frame(width: 20, height: 20)
+                        Text(category.name.isEmpty ? "Category Name" : category.name)
+                            .foregroundColor(category.name.isEmpty ? .secondary : .primary)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .padding()
             }
-            Spacer()
+            
+            if !isNew {
+                Section {
+                    Button(role: .destructive) {
+                        viewModel.deleteCategory(category)
+                        presentationMode.wrappedValue.dismiss()
+                    } label: {
+                        HStack {
+                            Image(systemName: "trash")
+                            Text("Delete Category")
+                        }
+                    }
+                }
+            }
         }
         .navigationTitle(isNew ? "Add Category" : "Edit Category")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if isNew {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { presentationMode.wrappedValue.dismiss() }
+                        .foregroundColor(.secondary)
                 }
             }
             ToolbarItem(placement: .confirmationAction) {
@@ -675,6 +1433,7 @@ struct CategoryEditView: View {
                     }
                     presentationMode.wrappedValue.dismiss()
                 }
+                .foregroundColor(themeManager.currentTheme.primaryColor)
             }
         }
     }
@@ -686,6 +1445,7 @@ struct EventsModule_Previews: PreviewProvider {
         NavigationView {
             EventsListView()
                 .environmentObject(EventViewModel())
+                .environmentObject(ThemeManager())
         }
     }
 }

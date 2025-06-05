@@ -1,28 +1,31 @@
 import SwiftUI
 
 struct CourseDetailView: View {
-    @State var course: Course
+    @ObservedObject var course: Course
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject private var themeManager: ThemeManager
+    @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
+    @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
     
-    // State for the "Final Grade Calculator" section
     @State private var currentGradeInput: String = ""
     @State private var desiredGradeInput: String = ""
     @State private var finalWorthInput: String = ""
     @State private var neededOnFinalOutput: String = ""
-    @State private var showingFinalCalculator = false
-
+    
+    private func requestSave() {
+        NotificationCenter.default.post(name: .courseDataDidChange, object: nil)
+    }
+    
+    private var textColor: Color {
+        course.color.isDark ? .white : .black
+    }
+    
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                // Header with current grade
                 headerView
-                
-                // Assignments section
                 assignmentsSection
-                
-                // Final grade calculator section
                 finalGradeCalculatorSection
-                
                 Spacer(minLength: 50)
             }
             .padding()
@@ -31,36 +34,49 @@ struct CourseDetailView: View {
         .navigationTitle(course.name)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
+        .onAppear {
+            autoFillCalculatorValues()
+        }
+        .onChange(of: course.assignments) { oldValue, newValue in 
+            autoFillCalculatorValues()
+            requestSave()
+        }
+        // Add onChange for individual assignment properties if deeper reactivity is needed,
+        // but the current setup should cover most cases via the assignments array changing
+        // or the onEdit callback in AssignmentRowView.
     }
     
     private var headerView: some View {
         VStack(spacing: 12) {
-            // Course icon and name
             Image(systemName: course.iconName)
                 .font(.system(size: 40))
-                .foregroundColor(course.color)
+                .foregroundColor(textColor)
                 .frame(height: 50)
-            
             Text(course.name)
                 .font(.title2.bold())
+                .foregroundColor(textColor)
                 .multilineTextAlignment(.center)
-            
-            // Current grade display
             VStack(spacing: 4) {
                 Text("Current Grade")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                Text("\(calculateCurrentGrade())%")
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundColor(course.color)
+                    .foregroundColor(textColor.opacity(0.8))
+                let grade = calculateCurrentGrade()
+                if grade != "N/A" {
+                    Text("\(grade)%")
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .foregroundColor(textColor)
+                } else {
+                    Text("Enter grades to calculate")
+                        .font(.subheadline)
+                        .foregroundColor(textColor.opacity(0.7))
+                }
             }
         }
         .padding()
         .frame(maxWidth: .infinity)
         .background(
             LinearGradient(
-                gradient: Gradient(colors: [course.color.opacity(0.1), course.color.opacity(0.05)]),
+                gradient: Gradient(colors: [course.color.opacity(0.9), course.color]),
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -74,7 +90,9 @@ struct CourseDetailView: View {
                 Text("Assignments & Exams")
                     .font(.title3.bold())
                 Spacer()
-                Button(action: { course.assignments.append(Assignment()) }) {
+                Button(action: { 
+                    course.assignments.append(Assignment())
+                }) {
                     Image(systemName: "plus.circle.fill")
                         .font(.title2)
                         .foregroundColor(course.color)
@@ -93,14 +111,17 @@ struct CourseDetailView: View {
                         course.assignments.append(Assignment())
                     }
                     .font(.caption)
-                    .foregroundColor(course.color)
+                    .foregroundColor(course.color) 
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
             } else {
                 LazyVStack(spacing: 8) {
-                    ForEach($course.assignments) { $assignment in
-                        AssignmentRowView(assignment: $assignment, courseColor: course.color)
+                    ForEach(course.assignments.indices, id: \.self) { index in
+                        AssignmentRowView(assignment: course.assignments[index], courseColor: course.color) {
+                            autoFillCalculatorValues()
+                            requestSave()
+                        }
                     }
                     .onDelete(perform: deleteAssignment)
                 }
@@ -111,6 +132,10 @@ struct CourseDetailView: View {
         .cornerRadius(16)
     }
     
+    private func deleteAssignment(offsets: IndexSet) {
+        course.assignments.remove(atOffsets: offsets)
+    }
+
     private var finalGradeCalculatorSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Final Grade Calculator")
@@ -121,21 +146,21 @@ struct CourseDetailView: View {
                     title: "Your current grade:",
                     value: $currentGradeInput,
                     suffix: "%",
-                    placeholder: "88"
+                    placeholder: "e.g. 88" 
                 )
                 
                 CalculatorInputRow(
                     title: "Grade you want:",
                     value: $desiredGradeInput,
                     suffix: "%",
-                    placeholder: "85"
+                    placeholder: "e.g. 85" 
                 )
                 
                 CalculatorInputRow(
                     title: "Final exam weight:",
                     value: $finalWorthInput,
                     suffix: "%",
-                    placeholder: "40"
+                    placeholder: "e.g. 40" 
                 )
             }
             
@@ -143,21 +168,22 @@ struct CourseDetailView: View {
                 Button("Clear") {
                     currentGradeInput = ""
                     desiredGradeInput = ""
-                    finalWorthInput = ""
+                    finalWorthInput = "" 
                     neededOnFinalOutput = ""
+                    autoFillCalculatorValues() 
                 }
                 .font(.subheadline.weight(.medium))
-                .foregroundColor(.secondary)
+                .foregroundColor(course.color)
                 .frame(maxWidth: .infinity)
                 .frame(height: 44)
-                .background(Color(.systemGray5))
+                .background(course.color.opacity(0.15)) 
                 .cornerRadius(8)
                 
                 Button("Calculate") {
                     calculateNeededOnFinal()
                 }
                 .font(.subheadline.weight(.medium))
-                .foregroundColor(.white)
+                .foregroundColor(course.color.isDark ? .white : .black)
                 .frame(maxWidth: .infinity)
                 .frame(height: 44)
                 .background(course.color)
@@ -184,16 +210,16 @@ struct CourseDetailView: View {
                     
                     Text("\(neededOnFinalOutput)%")
                         .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(getGradeColor(for: neededGrade))
+                        .foregroundColor(getGradeColor(for: neededGrade)) 
                     
                     Text("needed on your final exam")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
             } else {
-                Text(neededOnFinalOutput)
+                Text(neededOnFinalOutput) 
                     .font(.subheadline.weight(.medium))
-                    .foregroundColor(.red)
+                    .foregroundColor(.red) 
             }
         }
         .frame(maxWidth: .infinity)
@@ -211,58 +237,57 @@ struct CourseDetailView: View {
         .cornerRadius(12)
     }
     
-    private func deleteAssignment(offsets: IndexSet) {
-        course.assignments.remove(atOffsets: offsets)
-    }
-    
     func calculateCurrentGrade() -> String {
         var totalWeightedGrade = 0.0
         var totalWeight = 0.0
-        
         for assignment in course.assignments {
             if let grade = assignment.gradeValue, let weight = assignment.weightValue {
                 totalWeightedGrade += grade * weight
                 totalWeight += weight
             }
         }
-        
-        if totalWeight == 0 {
-            return "N/A"
-        }
-        
-        let currentGrade = totalWeightedGrade / totalWeight
-        return String(format: "%.1f", currentGrade)
+        if totalWeight == 0 { return "N/A" }
+        let currentGradeVal = totalWeightedGrade / totalWeight
+        return String(format: "%.1f", currentGradeVal)
     }
 
     func calculateNeededOnFinal() {
-        autoFillMissingValues()
-        
         guard let current = Double(currentGradeInput),
               let desired = Double(desiredGradeInput),
               let finalWeight = Double(finalWorthInput), finalWeight > 0, finalWeight <= 100 else {
             neededOnFinalOutput = "Please fill in all fields with valid numbers"
             return
         }
-
         let currentWeightPercentage = (100.0 - finalWeight) / 100.0
         let finalWeightPercentage = finalWeight / 100.0
-        
         let needed = (desired - (current * currentWeightPercentage)) / finalWeightPercentage
         neededOnFinalOutput = String(format: "%.1f", needed)
     }
-    
-    private func autoFillMissingValues() {
-        // If current grade is empty but we have course data, use calculated grade
-        if currentGradeInput.isEmpty {
-            let calculatedGrade = calculateCurrentGrade()
-            if calculatedGrade != "N/A", let grade = Double(calculatedGrade) {
-                currentGradeInput = String(format: "%.1f", grade)
-            }
+
+    private func autoFillCalculatorValues() {
+        let calculatedGrade = calculateCurrentGrade()
+        if calculatedGrade != "N/A" { 
+            currentGradeInput = calculatedGrade
+        } else if currentGradeInput.isEmpty { 
+             currentGradeInput = "" 
         }
         
-        // If final weight is empty, suggest a common value
-        if finalWorthInput.isEmpty {
-            finalWorthInput = "40" // Common final exam weight
+        var totalAssignmentWeight = 0.0
+        for assignment in course.assignments {
+            if let weight = assignment.weightValue {
+                totalAssignmentWeight += weight
+            }
+        }
+        let remainingWeight = max(0, 100 - totalAssignmentWeight) 
+        finalWorthInput = String(format: "%.0f", remainingWeight)
+        
+        if desiredGradeInput.isEmpty {
+            if let currentGradeVal = Double(calculatedGrade), calculatedGrade != "N/A" {
+                let suggestedGrade = max(85.0, currentGradeVal + 5.0)
+                desiredGradeInput = String(format: "%.0f", min(suggestedGrade, 100.0))
+            } else {
+                desiredGradeInput = "85" 
+            }
         }
     }
     
@@ -292,11 +317,11 @@ struct CourseDetailView: View {
         case ..<50:
             return .green
         case 50..<70:
-            return .blue
+            return .blue 
         case 70..<85:
             return course.color
         case 85..<95:
-            return .orange
+            return .orange 
         default:
             return .red
         }
@@ -304,8 +329,10 @@ struct CourseDetailView: View {
 }
 
 struct AssignmentRowView: View {
-    @Binding var assignment: Assignment
+    @ObservedObject var assignment: Assignment
     let courseColor: Color
+    let onEdit: () -> Void
+    
     @FocusState private var isNameFocused: Bool
     @FocusState private var isGradeFocused: Bool
     @FocusState private var isWeightFocused: Bool
@@ -317,6 +344,7 @@ struct AssignmentRowView: View {
                     .font(.subheadline.weight(.medium))
                     .focused($isNameFocused)
                     .textFieldStyle(.plain)
+                    .onChange(of: assignment.name) { _, _ in onEdit() }
                 
                 Spacer()
                 
@@ -328,6 +356,7 @@ struct AssignmentRowView: View {
                         .textFieldStyle(.plain)
                         .frame(width: 60)
                         .multilineTextAlignment(.trailing)
+                        .onChange(of: assignment.grade) { _, _ in onEdit() }
                     
                     Text("•")
                         .font(.caption)
@@ -340,13 +369,13 @@ struct AssignmentRowView: View {
                         .textFieldStyle(.plain)
                         .frame(width: 50)
                         .multilineTextAlignment(.trailing)
+                        .onChange(of: assignment.weight) { _, _ in onEdit() }
                     
                     Text("%")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
-            
             Divider()
         }
         .padding(.horizontal, 12)
@@ -391,11 +420,23 @@ struct CalculatorInputRow: View {
 }
 
 #Preview {
-    NavigationView {
-        CourseDetailView(course: Course(name: "Sample Course", assignments: [
+    struct PreviewWrapper: View {
+        @StateObject var sampleCourse = Course(name: "Sample Course", assignments: [
             Assignment(name: "Homework 1", grade: "95", weight: "15"),
             Assignment(name: "Midterm Exam", grade: "87", weight: "25"),
             Assignment(name: "Final Project", grade: "92", weight: "20")
-        ]))
+        ])
+        
+        var body: some View {
+            NavigationView {
+                CourseDetailView(course: sampleCourse)
+                    .environmentObject(ThemeManager())
+            }
+        }
     }
+    return PreviewWrapper()
+}
+
+extension Notification.Name {
+    static let courseDataDidChange = Notification.Name("courseDataDidChange")
 }

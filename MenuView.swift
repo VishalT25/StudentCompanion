@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MenuView: View {
+    @EnvironmentObject var themeManager: ThemeManager
     @Binding var isShowing: Bool
     @Binding var selectedRoute: AppRoute?
     @State private var happyFaceClickCount = 0
@@ -19,7 +20,8 @@ struct MenuView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     menuItem(.schedule, icon: "calendar", title: "Schedule")
                     menuItem(.events, icon: "list.bullet.clipboard", title: "Events")
-                    menuItem(.gpa, icon: "number", title: "GPA Calculator")
+                    menuItem(.gpa, icon: "graduationcap", title: "Courses")
+                    menuItem(.resources, icon: "book.fill", title: "Resources")
                     menuItem(.settings, icon: "gear", title: "Settings")
                     
                     Spacer() // Pushes the emoji to the bottom
@@ -49,7 +51,7 @@ struct MenuView: View {
                     // END: Easter egg trigger
                 }
                 .frame(width: 250)
-                .background(Color.primaryGreen)
+                .background(themeManager.currentTheme.primaryColor)
                 .offset(x: isShowing ? 0 : -250)
                 
                 Spacer()

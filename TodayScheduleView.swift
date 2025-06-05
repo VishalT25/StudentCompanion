@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TodayScheduleView: View {
     @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
     @State private var showingAddSchedule = false
     @State private var selectedSchedule: ScheduleItem?
     
@@ -70,7 +71,16 @@ struct TodayScheduleView: View {
             }
         }
         .padding(12)
-        .background(Color.primaryGreen.gradient.opacity(0.95))
+        .background(
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    themeManager.currentTheme.primaryColor.opacity(0.9),
+                    themeManager.currentTheme.primaryColor
+                ]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .sheet(isPresented: $showingAddSchedule) {
             if let schedule = selectedSchedule {

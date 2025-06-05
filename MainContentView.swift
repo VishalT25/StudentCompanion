@@ -5,27 +5,34 @@ enum AppRoute: Hashable {
     case events
     case gpa
     case settings
+    case resources
     case islandSmasherGame
 }
 
 struct MainContentView: View {
     @EnvironmentObject private var viewModel: EventViewModel
+    @EnvironmentObject private var themeManager: ThemeManager
+    @StateObject private var weatherService = WeatherService() // Will use the restored WeatherService
+    
     @State private var showMenu = false
     @State private var selectedRoute: AppRoute?
     @State private var path = NavigationPath()
-    @AppStorage("d2lLink") private var d2lLink: String = "https://d2l.youruniversity.edu" // Default URL
+    @AppStorage("d2lLink") private var d2lLink: String = "https://d2l.youruniversity.edu"
+    @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
+    @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
+
+    @State private var showingWeatherPopover = false
 
     var body: some View {
         NavigationStack(path: $path) {
-            ScrollView {
+            ScrollView { // ScrollView is now the direct child
                 VStack(spacing: 20) {
-                    // Header
                     headerView
-                    
                     // Schedule Preview
                     NavigationLink(value: AppRoute.schedule) {
                         TodayScheduleView()
                             .environmentObject(viewModel)
+                            .environmentObject(themeManager)
                     }
                     .buttonStyle(.plain)
                     
@@ -33,6 +40,7 @@ struct MainContentView: View {
                     NavigationLink(value: AppRoute.events) {
                         EventsPreviewView(events: viewModel.events)
                             .environmentObject(viewModel)
+                            .environmentObject(themeManager)
                     }
                     .buttonStyle(.plain)
                     
@@ -45,26 +53,37 @@ struct MainContentView: View {
                 .padding(.top, 10)
             }
             .background(Color(.systemGroupedBackground))
-
             .navigationDestination(for: AppRoute.self) { route in 
                 switch route {
                 case .schedule:
                     ScheduleView()
                         .environmentObject(viewModel)
+                        .environmentObject(themeManager)
                 case .events:
                     EventsListView()
                         .environmentObject(viewModel)
+                        .environmentObject(themeManager)
                 case .gpa:
                     GPAView()
+                        .environmentObject(themeManager)
                 case .settings:
                     SettingsView()
+                        .environmentObject(themeManager)
+                case .resources:
+                    ResourcesView()
+                        .environmentObject(themeManager)
                 case .islandSmasherGame:
                     IslandSmasherGameView()
                 }
             }
+            .onAppear {
+                print("DEBUG: MainContentView .onAppear triggered.")
+                // weatherService.fetchWeatherData() // Handled by WeatherService init/location updates
+            }
             .overlay {
                 if showMenu {
                     MenuView(isShowing: $showMenu, selectedRoute: $selectedRoute)
+                        .environmentObject(themeManager)
                         .transition(.opacity)
                 }
             }
@@ -72,8 +91,11 @@ struct MainContentView: View {
         .onChange(of: selectedRoute) { newRoute in
             if let route = newRoute {
                 path.append(route)
-                selectedRoute = nil // Reset after appending to path
+                selectedRoute = nil
             }
+        }
+        .onAppear {
+            print("DEBUG: MainContentView (NavigationStack) .onAppear triggered.")
         }
     }
     
@@ -86,13 +108,37 @@ struct MainContentView: View {
             } label: {
                 Image(systemName: "line.horizontal.3")
                     .font(.title2)
-                    .foregroundColor(.primaryGreen)
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
                     .padding(8)
-                    .background(Color.primaryGreen.opacity(0.1))
+                    .background(themeManager.currentTheme.primaryColor.opacity(0.1))
                     .cornerRadius(8)
             }
             
             Spacer()
+            
+            if let currentWeather = weatherService.currentWeather {
+                Button {
+                    showingWeatherPopover = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: currentWeather.condition.SFSymbolName)
+                            .font(.headline)
+                            .foregroundColor(currentWeather.condition.iconColor)
+                        Text("\(currentWeather.temperature)°C")
+                            .font(.headline.weight(.regular))
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                    }
+                }
+                .popover(isPresented: $showingWeatherPopover, arrowEdge: .top) {
+                    WeatherWidgetView(weatherService: weatherService)
+                        .environmentObject(themeManager)
+                }
+                .padding(.trailing, 10)
+            } else if weatherService.isLoading {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .padding(.trailing, 10)
+            }
             
             VStack(alignment: .trailing, spacing: 2) {
                 Text("Today")
@@ -100,7 +146,7 @@ struct MainContentView: View {
                     .foregroundColor(.secondary)
                 Text(Date(), style: .date)
                     .font(.headline.weight(.medium))
-                    .foregroundColor(.primaryGreen)
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
             }
         }
     }
@@ -115,9 +161,9 @@ struct MainContentView: View {
                 NavigationLink(value: AppRoute.gpa) {
                     QuickActionCard(
                         title: "Courses",
-                        subtitle: "3.85",
+                        subtitle: calculateDisplayGrade(),
                         icon: "graduationcap.fill",
-                        color: .secondaryGreen
+                        color: themeManager.currentTheme.secondaryColor
                     )
                 }
                 
@@ -126,22 +172,66 @@ struct MainContentView: View {
                         title: "D2L",
                         subtitle: "Portal",
                         icon: "link",
-                        color: .tertiaryGreen
+                        color: themeManager.currentTheme.tertiaryColor
                     )
                 }
                 
-                QuickActionCard(
-                    title: "Resources",
-                    subtitle: "Library",
-                    icon: "book.fill",
-                    color: .quaternaryGreen,
-                    textColor: .black
-                )
+                NavigationLink(value: AppRoute.resources) {
+                    QuickActionCard(
+                        title: "Resources",
+                        subtitle: "Library",
+                        icon: "book.fill",
+                        color: themeManager.currentTheme.quaternaryColor,
+                        textColor: .black
+                    )
+                }
             }
         }
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(16)
+    }
+    
+    private func calculateDisplayGrade() -> String {
+        guard showCurrentGPA else { return "View" }
+        
+        guard let savedCoursesData = UserDefaults.standard.data(forKey: "gpaCourses"),
+              let courses = try? JSONDecoder().decode([Course].self, from: savedCoursesData),
+              !courses.isEmpty else {
+            return "No Data"
+        }
+        
+        var totalGrade = 0.0
+        var courseCount = 0
+        
+        for course in courses {
+            var totalWeightedGrade = 0.0
+            var totalWeight = 0.0
+            
+            for assignment in course.assignments {
+                if let grade = assignment.gradeValue, let weight = assignment.weightValue {
+                    totalWeightedGrade += grade * weight
+                    totalWeight += weight
+                }
+            }
+            
+            if totalWeight > 0 {
+                let courseGrade = totalWeightedGrade / totalWeight
+                totalGrade += courseGrade
+                courseCount += 1
+            }
+        }
+        
+        guard courseCount > 0 else { return "No Grades" }
+        
+        let averageGrade = totalGrade / Double(courseCount)
+        
+        if usePercentageGrades {
+            return String(format: "%.1f%%", averageGrade)
+        } else {
+            let gpa = (averageGrade / 100.0) * 4.0
+            return String(format: "%.2f", gpa)
+        }
     }
     
     private func openCustomD2LLink() {
@@ -187,4 +277,3 @@ struct QuickActionCard: View {
         .cornerRadius(12)
     }
 }
-

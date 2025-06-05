@@ -1,18 +1,20 @@
 import SwiftUI
 
 struct SplashScreenView: View {
+    @EnvironmentObject private var themeManager: ThemeManager
+    
     @State private var scale = 0.7
     @State private var opacity = 0.0
     
     var body: some View {
         ZStack {
-            Color.primaryGreen
+            themeManager.currentTheme.primaryColor
                 .ignoresSafeArea()
             
             VStack(spacing: 20) {
                 Image(systemName: "graduationcap.fill")
                     .font(.system(size: 80))
-                    .foregroundColor(.white)
+                    .foregroundColor(.white) // White icon and text should look good on theme colors
                     .scaleEffect(scale)
                 
                 Text("Student Companion")
@@ -27,5 +29,12 @@ struct SplashScreenView: View {
                 opacity = 1.0
             }
         }
+    }
+}
+
+struct SplashScreenView_Previews: PreviewProvider {
+    static var previews: some View {
+        SplashScreenView()
+            .environmentObject(ThemeManager())
     }
 }
