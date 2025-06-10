@@ -194,9 +194,10 @@ struct ScheduleItem: Identifiable, Codable {
     var endTime: Date
     var daysOfWeek: Set<DayOfWeek>
     var color: Color
+    var skippedWeeks: Set<String> = [] // Store week identifiers (e.g., "2024-W01")
     
     enum CodingKeys: String, CodingKey {
-        case id, title, startTime, endTime, daysOfWeek, color
+        case id, title, startTime, endTime, daysOfWeek, color, skippedWeeks
     }
     
     func encode(to encoder: Encoder) throws {
@@ -207,6 +208,7 @@ struct ScheduleItem: Identifiable, Codable {
         try container.encode(endTime, forKey: .endTime)
         try container.encode(Array(daysOfWeek), forKey: .daysOfWeek)
         try container.encode(UIColor(color).cgColor.components, forKey: .color)
+        try container.encode(Array(skippedWeeks), forKey: .skippedWeeks)
     }
     
     init(from decoder: Decoder) throws {
@@ -218,6 +220,7 @@ struct ScheduleItem: Identifiable, Codable {
         daysOfWeek = Set(try container.decode([DayOfWeek].self, forKey: .daysOfWeek))
         let components = try container.decode([CGFloat].self, forKey: .color)
         color = Color(UIColor(red: components[0], green: components[1], blue: components[2], alpha: components[3]))
+        skippedWeeks = Set(try container.decodeIfPresent([String].self, forKey: .skippedWeeks) ?? [])
     }
     
     init(title: String, startTime: Date, endTime: Date, daysOfWeek: Set<DayOfWeek>, color: Color = .blue) {
@@ -227,6 +230,19 @@ struct ScheduleItem: Identifiable, Codable {
         self.endTime = endTime
         self.daysOfWeek = daysOfWeek
         self.color = color
+        self.skippedWeeks = []
+    }
+    
+    func isSkippedForCurrentWeek() -> Bool {
+        let weekIdentifier = getCurrentWeekIdentifier()
+        return skippedWeeks.contains(weekIdentifier)
+    }
+    
+    private func getCurrentWeekIdentifier() -> String {
+        let calendar = Calendar.current
+        let year = calendar.component(.yearForWeekOfYear, from: Date())
+        let week = calendar.component(.weekOfYear, from: Date())
+        return "\(year)-W\(String(format: "%02d", week))"
     }
 }
 
@@ -309,7 +325,7 @@ class EventViewModel: ObservableObject {
         let gymEnd = calendar.date(from: components)!
         
         scheduleItems = [
-            ScheduleItem(title: "Math 101", 
+            ScheduleItem(title: "Math 101",
                         startTime: mathStart,
                         endTime: mathEnd,
                         daysOfWeek: [.monday, .wednesday, .friday],
@@ -388,13 +404,32 @@ class EventViewModel: ObservableObject {
         saveData()
     }
     
+    func toggleSkipForCurrentWeek(scheduleItem: ScheduleItem) {
+        if let index = scheduleItems.firstIndex(where: { $0.id == scheduleItem.id }) {
+            let weekIdentifier = getCurrentWeekIdentifier()
+            if scheduleItems[index].skippedWeeks.contains(weekIdentifier) {
+                scheduleItems[index].skippedWeeks.remove(weekIdentifier)
+            } else {
+                scheduleItems[index].skippedWeeks.insert(weekIdentifier)
+            }
+            saveData()
+        }
+    }
+    
+    private func getCurrentWeekIdentifier() -> String {
+        let calendar = Calendar.current
+        let year = calendar.component(.yearForWeekOfYear, from: Date())
+        let week = calendar.component(.weekOfYear, from: Date())
+        return "\(year)-W\(String(format: "%02d", week))"
+    }
+    
     func todaysSchedule() -> [ScheduleItem] {
         let calendar = Calendar.current
         let weekday = calendar.component(.weekday, from: Date())
         let today = DayOfWeek(rawValue: weekday)!
         
         return scheduleItems
-            .filter { $0.daysOfWeek.contains(today) }
+            .filter { $0.daysOfWeek.contains(today) && !$0.isSkippedForCurrentWeek() }
             .sorted { $0.startTime < $1.startTime }
     }
     
@@ -506,13 +541,11 @@ struct EventsPreviewView: View {
                 
                 Spacer()
                 
-                Button {
-                    // This could navigate to full events list
-                } label: {
+                NavigationLink(value: AppRoute.events) {
                     Image(systemName: "arrow.right.circle.fill")
                         .foregroundColor(.white)
-                        .font(.title2)
-                        .background(Circle().fill(.white.opacity(0.2)).frame(width: 32, height: 32))
+                        .font(.title2) // Ensure consistent size
+                        .background(Circle().fill(.white.opacity(0.2)).frame(width: 32, height: 32)) // Ensure consistent size
                 }
             }
             
@@ -552,7 +585,6 @@ struct EventsPreviewView: View {
             )
         )
         .cornerRadius(16)
-
     }
     
     private func monthShort(from date: Date) -> String {
@@ -677,11 +709,11 @@ struct EventsListView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 12) {
-                    Button { showingAddEvent = true } label: { 
+                    Button { showingAddEvent = true } label: {
                         Image(systemName: "plus.circle.fill")
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                     }
-                    Button { showingAddCategory = true } label: { 
+                    Button { showingAddCategory = true } label: {
                         Image(systemName: "tag.circle.fill")
                             .foregroundColor(themeManager.currentTheme.secondaryColor)
                     }
@@ -1254,7 +1286,6 @@ struct AddCategoryView: View {
                 Section {
                     TextField("Category Name", text: $name)
                         .font(.headline)
-                    
                     ColorPicker("Color", selection: $color, supportsOpacity: false)
                 } header: {
                     Text("Category Details")

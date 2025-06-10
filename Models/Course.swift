@@ -9,15 +9,24 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
     
     @Published var assignments: [Assignment] {
         didSet {
-            oldValue.forEach { assignment in // Cancel subscriptions from old assignments if any were replaced
-                cancellables.filter { $0.hashValue == assignment.id.hashValue }.forEach { $0.cancel() } // Simplistic way to find; better to store cancellables per assignment if needed
+            oldValue.forEach { assignment in 
+                cancellables.filter { $0.hashValue == assignment.id.hashValue }.forEach { $0.cancel() } 
             }
             setupAssignmentsObservation()
+            triggerGradeUpdate()
         }
     }
     
-    @Published var finalGradeGoal: String
-    @Published var weightOfRemainingTasks: String
+    @Published var finalGradeGoal: String {
+        didSet {
+            triggerGradeUpdate()
+        }
+    }
+    @Published var weightOfRemainingTasks: String {
+        didSet {
+            triggerGradeUpdate()
+        }
+    }
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -26,47 +35,48 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         self.name = name
         self.iconName = iconName
         self.colorHex = colorHex
-        self.assignments = assignments // didSet will call setupAssignmentsObservation
+        self.assignments = assignments 
         self.finalGradeGoal = finalGradeGoal
         self.weightOfRemainingTasks = weightOfRemainingTasks
-        // setupAssignmentsObservation() // Called by didSet of assignments
+        setupAssignmentsObservation()
     }
 
     private func setupAssignmentsObservation() {
-        // Clear existing subscriptions for assignments to avoid duplicates if this is called multiple times
-        // A more robust way would be to manage cancellables per assignment if assignments can be individually replaced.
-        // For now, clearing all and re-subscribing is simpler if the entire array is often reset.
         cancellables.forEach { $0.cancel() }
         cancellables.removeAll()
 
         assignments.forEach { assignment in
             assignment.objectWillChange
-                .receive(on: DispatchQueue.main) // Ensure sink and send operate on main thread
+                .receive(on: DispatchQueue.main) 
                 .sink { [weak self] _ in
                     self?.objectWillChange.send()
+                    self?.debouncedGradeUpdate()
                 }
                 .store(in: &cancellables)
         }
-        // If the assignments array itself changes (add/remove), Course already publishes.
-        // This explicitly makes Course publish if an *element* of assignments changes.
-        // Also, good practice to send objectWillChange if assignments array count changes too.
-        // For example, after an append or remove, explicitly call self.objectWillChange.send()
-        // if just relying on @Published for the array reference change isn't enough for some views.
-        // However, the sink above should cover internal changes to Assignment objects.
     }
     
-    // Call this method explicitly after adding or removing an assignment if needed
-    // to ensure views observing Course update, beyond what @Published on the array does.
+    private func triggerGradeUpdate() {
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastGradeUpdate")
+    }
+    
+    private func debouncedGradeUpdate() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.triggerGradeUpdate()
+        }
+    }
+    
+    private func postDataChangeNotification() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .courseDataDidChange, object: nil)
+        }
+    }
+    
     func refreshObservationsAndSignalChange() {
         setupAssignmentsObservation()
-        // Optionally, you can force a signal if just re-observing isn't enough
-        // DispatchQueue.main.async {
-        //    self.objectWillChange.send()
-        // }
+        triggerGradeUpdate()
     }
 
-
-    // Codable
     enum CodingKeys: String, CodingKey {
         case id, name, iconName, colorHex, assignments, finalGradeGoal, weightOfRemainingTasks
     }
@@ -109,7 +119,6 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
     }
 }
 
-// Color extension remains unchanged
 extension Color {
     func toHex() -> String? {
         guard let components = UIColor(self).cgColor.components, components.count >= 3 else {

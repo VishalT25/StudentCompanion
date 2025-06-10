@@ -10,6 +10,7 @@ struct StudentCompanionApp: App {
             ContentView()
                 .environmentObject(eventViewModel)
                 .environmentObject(themeManager)
+                .preferredColorScheme(.light)
         }
     }
 }

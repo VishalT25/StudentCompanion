@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum AppRoute: Hashable { 
+enum AppRoute: Hashable {
     case schedule
     case events
     case gpa
@@ -12,8 +12,8 @@ enum AppRoute: Hashable {
 struct MainContentView: View {
     @EnvironmentObject private var viewModel: EventViewModel
     @EnvironmentObject private var themeManager: ThemeManager
-    @StateObject private var weatherService = WeatherService() // Will use the restored WeatherService
-    
+    @StateObject private var weatherService = WeatherService()
+
     @State private var showMenu = false
     @State private var selectedRoute: AppRoute?
     @State private var path = NavigationPath()
@@ -22,10 +22,11 @@ struct MainContentView: View {
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
 
     @State private var showingWeatherPopover = false
-
+    @AppStorage("lastGradeUpdate") private var lastGradeUpdate: Double = 0
+    
     var body: some View {
         NavigationStack(path: $path) {
-            ScrollView { // ScrollView is now the direct child
+            ScrollView {
                 VStack(spacing: 20) {
                     headerView
                     // Schedule Preview
@@ -52,50 +53,79 @@ struct MainContentView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 10)
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationDestination(for: AppRoute.self) { route in 
+            .background(Color.white)
+            .navigationDestination(for: AppRoute.self) { route in
                 switch route {
                 case .schedule:
                     ScheduleView()
                         .environmentObject(viewModel)
                         .environmentObject(themeManager)
+                        .background(Color.white)
                 case .events:
                     EventsListView()
                         .environmentObject(viewModel)
                         .environmentObject(themeManager)
+                        .background(Color.white)
                 case .gpa:
                     GPAView()
                         .environmentObject(themeManager)
+                        .background(Color.white)
                 case .settings:
                     SettingsView()
                         .environmentObject(themeManager)
+                        .background(Color.white)
                 case .resources:
                     ResourcesView()
                         .environmentObject(themeManager)
+                        .background(Color.white)
                 case .islandSmasherGame:
                     IslandSmasherGameView()
+                        .background(Color.white)
                 }
             }
-            .onAppear {
-                print("DEBUG: MainContentView .onAppear triggered.")
-                // weatherService.fetchWeatherData() // Handled by WeatherService init/location updates
-            }
             .overlay {
-                if showMenu {
-                    MenuView(isShowing: $showMenu, selectedRoute: $selectedRoute)
-                        .environmentObject(themeManager)
-                        .transition(.opacity)
+                ZStack {
+                    if showMenu {
+                        MenuView(isShowing: $showMenu, selectedRoute: $selectedRoute)
+                            .environmentObject(themeManager)
+                            .transition(.opacity)
+                    }
+                    
+                    if showingWeatherPopover {
+                        ZStack {
+                            Color.clear
+                                .background(.ultraThinMaterial.opacity(0.7))
+                                .ignoresSafeArea()
+                                .onTapGesture {
+                                    withAnimation(.easeInOut(duration: 0.3)) {
+                                        showingWeatherPopover = false
+                                    }
+                                }
+                            
+                            VStack {
+                                HStack {
+                                    Spacer()
+                                    WeatherWidgetView(weatherService: weatherService, isPresented: $showingWeatherPopover)
+                                        .environmentObject(themeManager)
+                                    Spacer()
+                                }
+                                .padding(.top, 80)
+                                
+                                Spacer()
+                            }
+                        }
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        .zIndex(1000)
+                    }
                 }
             }
         }
+        .background(Color.white)
         .onChange(of: selectedRoute) { newRoute in
             if let route = newRoute {
                 path.append(route)
                 selectedRoute = nil
             }
-        }
-        .onAppear {
-            print("DEBUG: MainContentView (NavigationStack) .onAppear triggered.")
         }
     }
     
@@ -118,7 +148,9 @@ struct MainContentView: View {
             
             if let currentWeather = weatherService.currentWeather {
                 Button {
-                    showingWeatherPopover = true
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showingWeatherPopover = true
+                    }
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: currentWeather.condition.SFSymbolName)
@@ -128,10 +160,6 @@ struct MainContentView: View {
                             .font(.headline.weight(.regular))
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                     }
-                }
-                .popover(isPresented: $showingWeatherPopover, arrowEdge: .top) {
-                    WeatherWidgetView(weatherService: weatherService)
-                        .environmentObject(themeManager)
                 }
                 .padding(.trailing, 10)
             } else if weatherService.isLoading {
@@ -143,7 +171,7 @@ struct MainContentView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text("Today")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.gray)
                 Text(Date(), style: .date)
                     .font(.headline.weight(.medium))
                     .foregroundColor(themeManager.currentTheme.primaryColor)
@@ -155,13 +183,13 @@ struct MainContentView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Quick Actions")
                 .font(.title3.bold())
-                .foregroundColor(.primary)
+                .foregroundColor(.black)
             
             HStack(spacing: 12) {
                 NavigationLink(value: AppRoute.gpa) {
                     QuickActionCard(
                         title: "Courses",
-                        subtitle: calculateDisplayGrade(),
+                        subtitle: calculateDisplayGrade(updateTrigger: lastGradeUpdate),
                         icon: "graduationcap.fill",
                         color: themeManager.currentTheme.secondaryColor
                     )
@@ -188,11 +216,11 @@ struct MainContentView: View {
             }
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(Color.white)
         .cornerRadius(16)
     }
     
-    private func calculateDisplayGrade() -> String {
+    private func calculateDisplayGrade(updateTrigger: Double) -> String {
         guard showCurrentGPA else { return "View" }
         
         guard let savedCoursesData = UserDefaults.standard.data(forKey: "gpaCourses"),

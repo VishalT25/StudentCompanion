@@ -8,12 +8,12 @@ enum ForecastTypeSelection: String, CaseIterable, Identifiable {
 
 struct WeatherWidgetView: View {
     @ObservedObject var weatherService: WeatherService
-    @Environment(\.dismiss) var dismiss
     @EnvironmentObject var themeManager: ThemeManager
+    
+    @Binding var isPresented: Bool
 
     @State private var selectedForecastType: ForecastTypeSelection = .hourly
-    @State private var showingCityInputAlert = false
-    @State private var cityInput: String = ""
+    @State private var showingCitySelection = false
     
     private var dynamicBackgroundColor: LinearGradient {
         guard let condition = weatherService.currentWeather?.condition else {
@@ -52,7 +52,11 @@ struct WeatherWidgetView: View {
             } else if let currentWeather = weatherService.currentWeather {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 15) {
-                        CurrentWeatherHeaderView(currentWeather: currentWeather, selectedForecastType: $selectedForecastType, showingCityInputAlert: $showingCityInputAlert)
+                        CurrentWeatherHeaderView(
+                            currentWeather: currentWeather, 
+                            selectedForecastType: $selectedForecastType, 
+                            showingCitySelection: $showingCitySelection
+                        )
                         
                         if selectedForecastType == .hourly {
                             HourlyForecastScrollView(hourlyForecasts: weatherService.hourlyForecasts)
@@ -65,6 +69,14 @@ struct WeatherWidgetView: View {
                                 .font(.caption2)
                                 .foregroundColor(.white.opacity(0.7))
                                 .padding(.top, 10)
+                        }
+                        
+                        if let errorMessage = weatherService.errorMessage {
+                            Text("Using mock data: \(errorMessage)")
+                                .font(.caption2)
+                                .foregroundColor(.yellow.opacity(0.8))
+                                .padding(.horizontal)
+                                .multilineTextAlignment(.center)
                         }
                     }
                     .padding()
@@ -85,25 +97,16 @@ struct WeatherWidgetView: View {
         }
         .background(dynamicBackgroundColor)
         .foregroundColor(.white)
-        .cornerRadius(20)
-        .shadow(radius: 10)
+        .cornerRadius(24)
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+        )
+        .shadow(color: Color.black.opacity(0.1), radius: 20, x: 0, y: 8)
         .frame(maxWidth: .infinity, idealHeight: 400, maxHeight: 500)
-        .padding()
-        .alert("Enter City Name", isPresented: $showingCityInputAlert) {
-            TextField("City Name", text: $cityInput)
-            Button("Set") {
-                if !cityInput.isEmpty {
-                    weatherService.setLocationManually(cityName: cityInput)
-                    cityInput = "" // Reset for next time
-                }
-            }
-            Button("Use Current Location") {
-                weatherService.useCurrentLocation()
-                cityInput = ""
-            }
-            Button("Cancel", role: .cancel) { cityInput = "" }
-        } message: {
-            Text("Enter the name of the city for weather updates, or use your current GPS location.")
+        .padding(16)
+        .sheet(isPresented: $showingCitySelection) {
+            CitySelectionView(weatherService: weatherService)
         }
     }
     
@@ -111,15 +114,23 @@ struct WeatherWidgetView: View {
         HStack {
             Spacer()
             Button {
-                dismiss()
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    isPresented = false
+                }
             } label: {
                 Text("Done")
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 12)
-                    .font(.headline)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 20)
+                    .font(.headline.weight(.medium))
                     .foregroundColor(.white)
-                    .background(Color.white.opacity(0.2))
-                    .clipShape(Capsule())
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.15))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                    )
             }
         }
         .padding(.horizontal)
@@ -130,22 +141,36 @@ struct WeatherWidgetView: View {
 struct CurrentWeatherHeaderView: View {
     let currentWeather: CurrentWeatherInfo
     @Binding var selectedForecastType: ForecastTypeSelection
-    @Binding var showingCityInputAlert: Bool
+    @Binding var showingCitySelection: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Button {
-                    showingCityInputAlert = true
+                    showingCitySelection = true
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 6) {
                         Image(systemName: "location.fill")
+                            .font(.system(size: 14, weight: .medium))
                         Text(currentWeather.locationName)
                             .font(.headline.weight(.medium))
                             .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .medium))
+                            .opacity(0.7)
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.2))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                    )
                 }
-                .buttonStyle(.plain) // Keep text color
+                .buttonStyle(.plain)
                 
                 Spacer()
                 HStack(spacing: 10) {
@@ -163,6 +188,7 @@ struct CurrentWeatherHeaderView: View {
                 Spacer()
                 Text("\(currentWeather.temperature)°")
                     .font(.system(size: 60, weight: .thin))
+                    .foregroundColor(.white)
                 Spacer()
             }
             .padding(.vertical, -10)
@@ -182,6 +208,30 @@ struct CurrentWeatherHeaderView: View {
                 Spacer()
             }
             .foregroundColor(.white.opacity(0.9))
+            
+            HStack {
+                Spacer()
+                HStack(spacing: 20) {
+                    VStack(spacing: 2) {
+                        Text("Humidity")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+                        Text("\(currentWeather.humidity)%")
+                            .font(.caption.weight(.medium))
+                            .foregroundColor(.white)
+                    }
+                    
+                    VStack(spacing: 2) {
+                        Text("Wind")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+                        Text("\(Int(currentWeather.windSpeed)) km/h")
+                            .font(.caption.weight(.medium))
+                            .foregroundColor(.white)
+                    }
+                }
+                Spacer()
+            }
         }
     }
 }
@@ -208,9 +258,11 @@ struct HDToggleButtonStyle: ButtonStyle {
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .frame(minWidth: 30)
-            .background(isSelected ? Color.white.opacity(0.25) : Color.clear)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.white.opacity(0.25) : Color.clear)
+            )
             .foregroundColor(.white)
-            .cornerRadius(6)
             .animation(.easeInOut(duration: 0.2), value: isSelected)
     }
 }
@@ -235,12 +287,14 @@ struct HourlyForecastScrollView: View {
                     VStack(spacing: 8) {
                         Text(formatHour(forecast.date))
                             .font(.subheadline.weight(.medium))
+                            .foregroundColor(.white.opacity(0.8))
                         Image(systemName: forecast.condition.SFSymbolName)
                             .font(.title2)
                             .foregroundColor(forecast.condition.iconColor)
                             .frame(height: 25)
                         Text("\(forecast.temperature)°")
                             .font(.title3.weight(.medium))
+                            .foregroundColor(.white)
                     }
                     .frame(width: 60)
                 }
@@ -270,6 +324,7 @@ struct DailyForecastListView: View {
                     Text(formatDay(forecast.date))
                         .font(.headline.weight(.medium))
                         .frame(width: 70, alignment: .leading)
+                        .foregroundColor(.white)
 
                     Image(systemName: forecast.condition.SFSymbolName)
                         .font(.title3)
@@ -279,6 +334,7 @@ struct DailyForecastListView: View {
                     Spacer()
                     Text("H:\(forecast.highTemp)°")
                         .font(.headline.weight(.medium))
+                        .foregroundColor(.white)
                     Text("L:\(forecast.lowTemp)°")
                         .font(.headline.weight(.regular))
                         .foregroundColor(.white.opacity(0.7))
@@ -289,9 +345,206 @@ struct DailyForecastListView: View {
     }
 }
 
+struct CitySelectionView: View {
+    @ObservedObject var weatherService: WeatherService
+    @Environment(\.dismiss) var dismiss
+    @State private var searchText = ""
+    
+    var filteredCities: [City] {
+        if searchText.isEmpty {
+            return weatherService.availableCities
+        } else {
+            return weatherService.availableCities.filter { city in
+                city.name.localizedCaseInsensitiveContains(searchText) ||
+                city.country.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+    }
+    
+    private let columns = [
+        GridItem(.flexible()),
+        GridItem(.flexible())
+    ]
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                VStack(spacing: 16) {
+                    HStack {
+                        Button("Cancel") {
+                            dismiss()
+                        }
+                        .foregroundColor(.white)
+                        
+                        Spacer()
+                        
+                        Text("Choose Location")
+                            .font(.title2.bold())
+                            .foregroundColor(.white)
+                        
+                        Spacer()
+                        
+                        Button("Done") {
+                            dismiss()
+                        }
+                        .foregroundColor(.white)
+                        .opacity(0) 
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                    
+                    HStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.white.opacity(0.7))
+                            .font(.system(size: 16, weight: .medium))
+                        
+                        TextField("Search cities or countries...", text: $searchText)
+                            .textFieldStyle(PlainTextFieldStyle())
+                            .foregroundColor(.white)
+                            .font(.system(size: 16))
+                            .autocorrectionDisabled()
+                        
+                        if !searchText.isEmpty {
+                            Button {
+                                searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.white.opacity(0.7))
+                                    .font(.system(size: 16))
+                            }
+                        }
+                    }
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.white.opacity(0.2))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(.white.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 16)
+                }
+                .background(
+                    LinearGradient(
+                        gradient: Gradient(colors: [
+                            Color.blue.opacity(0.8),
+                            Color.purple.opacity(0.6)
+                        ]),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 16) {
+                        ForEach(filteredCities) { city in
+                            CityCard(
+                                city: city,
+                                isSelected: city.id == weatherService.selectedCity.id
+                            ) {
+                                weatherService.selectCity(city)
+                                dismiss()
+                            }
+                        }
+                    }
+                    .padding(20)
+                }
+                .background(Color(.systemGroupedBackground))
+            }
+        }
+        .navigationBarHidden(true)
+    }
+}
+
+struct CityCard: View {
+    let city: City
+    let isSelected: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                gradient: Gradient(colors: [
+                                    Color.blue.opacity(0.3),
+                                    Color.purple.opacity(0.2)
+                                ]),
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 50, height: 50)
+                    
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(.blue)
+                }
+                
+                VStack(spacing: 4) {
+                    Text(city.name)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(1)
+                    
+                    Text(city.country)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                if isSelected {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.green)
+                        Text("Selected")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.green)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color.green.opacity(0.1))
+                    )
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .frame(height: 140)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(.systemBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(
+                                isSelected ? Color.green.opacity(0.5) : Color.gray.opacity(0.2),
+                                lineWidth: isSelected ? 2 : 1
+                            )
+                    )
+                    .shadow(
+                        color: Color.black.opacity(0.1),
+                        radius: isSelected ? 8 : 4,
+                        x: 0,
+                        y: isSelected ? 4 : 2
+                    )
+            )
+            .scaleEffect(isSelected ? 1.02 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
 #Preview {
     let previewWeatherService = WeatherService()
-    return WeatherWidgetView(weatherService: previewWeatherService)
+    return WeatherWidgetView(weatherService: previewWeatherService, isPresented: .constant(true))
         .environmentObject(ThemeManager())
         .background(Color.blue.opacity(0.3))
 }

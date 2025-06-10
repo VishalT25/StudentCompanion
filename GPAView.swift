@@ -6,6 +6,7 @@ struct GPAView: View {
     @State private var showingAddCourseSheet = false
     @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
+    @AppStorage("lastGradeUpdate") private var lastGradeUpdate: Double = 0
 
     var body: some View {
         List {
@@ -21,7 +22,7 @@ struct GPAView: View {
         .listStyle(.plain)
         .navigationTitle("Courses")
         .navigationBarTitleDisplayMode(.large)
-        .toolbar {
+        .toolbar(content: {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     showingAddCourseSheet = true
@@ -31,22 +32,16 @@ struct GPAView: View {
                         .font(.title2)
                 }
             }
-        }
+        })
         .sheet(isPresented: $showingAddCourseSheet) {
             AddCourseView(courses: $courses)
                 .environmentObject(themeManager)
         }
-        .onAppear { 
+        .onAppear {
             loadCourses()
-            NotificationCenter.default.addObserver(forName: .courseDataDidChange, object: nil, queue: .main) { _ in
-                // A course's internal data changed, so we need to save the whole courses array.
-                // This is because `onChange(of: courses)` won't detect changes *inside* an element
-                // if the element itself (the class instance reference) doesn't change.
-                saveCourses()
-            }
         }
         .onDisappear {
-            NotificationCenter.default.removeObserver(self, name: .courseDataDidChange, object: nil)
+            // Removed notification observer removal
         }
         .refreshable {
             loadCourses()
@@ -69,6 +64,7 @@ struct GPAView: View {
     private func saveCourses() {
         if let encoded = try? JSONEncoder().encode(courses) {
             UserDefaults.standard.set(encoded, forKey: coursesUserDefaultsKey)
+            lastGradeUpdate = Date().timeIntervalSince1970
         }
     }
 

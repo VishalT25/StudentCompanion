@@ -9,10 +9,8 @@ struct ScheduleView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                // Enhanced Day Selector
                 daySelector
                 
-                // Schedule Items
                 scheduleContent
                 
                 Spacer(minLength: 20)
@@ -45,22 +43,20 @@ struct ScheduleView: View {
                 .font(.headline.weight(.semibold))
                 .foregroundColor(.primary)
             
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(DayOfWeek.allCases, id: \.self) { day in
-                        DayButton(
-                            day: day,
-                            isSelected: selectedDay == day,
-                            themeColor: themeManager.currentTheme.primaryColor
-                        ) {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                selectedDay = day
-                            }
+            HStack(spacing: 8) {
+                ForEach(DayOfWeek.allCases, id: \.self) { day in
+                    DayButton(
+                        day: day,
+                        isSelected: selectedDay == day,
+                        themeColor: themeManager.currentTheme.primaryColor
+                    ) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            selectedDay = day
                         }
                     }
                 }
-                .padding(.horizontal, 4)
             }
+            .padding(.horizontal, 4)
         }
         .padding()
         .background(Color(.systemBackground))
@@ -97,13 +93,20 @@ struct ScheduleView: View {
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(schedules) { item in
-                        NavigationLink {
-                            ScheduleEditView(schedule: item)
-                        } label: {
-                            EnhancedScheduleRow(item: item)
-                                .environmentObject(themeManager)
-                        }
-                        .buttonStyle(.plain)
+                        EnhancedScheduleRow(
+                            item: item,
+                            onEdit: {
+                                // Navigation to edit handled within the row
+                            },
+                            onDelete: {
+                                viewModel.deleteScheduleItem(item)
+                            },
+                            onToggleSkip: {
+                                viewModel.toggleSkipForCurrentWeek(scheduleItem: item)
+                            }
+                        )
+                        .environmentObject(themeManager)
+                        .environmentObject(viewModel)
                     }
                 }
             }
@@ -122,37 +125,43 @@ struct DayButton: View {
     
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 Text(day.shortName)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundColor(isSelected ? .white : .primary)
                 
                 if isSelected {
                     Circle()
                         .fill(Color.white.opacity(0.8))
-                        .frame(width: 6, height: 6)
+                        .frame(width: 4, height: 4)
                 } else {
                     Circle()
                         .fill(Color.clear)
-                        .frame(width: 6, height: 6)
+                        .frame(width: 4, height: 4)
                 }
             }
-            .frame(width: 60, height: 50)
+            .frame(maxWidth: .infinity)
+            .frame(height: 45)
             .background(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 10)
                     .fill(isSelected ? themeColor : Color(.systemGray6))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? themeColor.opacity(0.5) : Color.clear, lineWidth: 2)
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? themeColor.opacity(0.5) : Color.clear, lineWidth: 1.5)
             )
         }
     }
 }
 
 struct EnhancedScheduleRow: View {
-    let item: ScheduleItem
     @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var viewModel: EventViewModel
+    let item: ScheduleItem
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+    let onToggleSkip: () -> Void
+    @State private var showingEditSheet = false
     
     private let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -160,56 +169,109 @@ struct EnhancedScheduleRow: View {
         return f
     }()
     
+    private var shouldShowIndividualDays: Bool {
+        return item.daysOfWeek.count <= 4
+    }
+    
+    private var scheduleDisplayText: String? {
+        let allDays: Set<DayOfWeek> = [.sunday, .monday, .tuesday, .wednesday, .thursday, .friday, .saturday]
+        let weekdays: Set<DayOfWeek> = [.monday, .tuesday, .wednesday, .thursday, .friday]
+        let weekends: Set<DayOfWeek> = [.saturday, .sunday]
+        
+        if item.daysOfWeek == allDays {
+            return "Daily"
+        } else if item.daysOfWeek == weekdays {
+            return "Weekdays"
+        } else if item.daysOfWeek == weekends {
+            return "Weekends"
+        } else if item.daysOfWeek.count > 4 {
+            return "\(item.daysOfWeek.count) days"
+        } else {
+            return nil
+        }
+    }
+    
     var body: some View {
-        HStack(spacing: 16) {
-            // Time section
-            VStack(alignment: .leading, spacing: 4) {
-                Text(timeFormatter.string(from: item.startTime))
-                    .font(.title3.weight(.bold))
-                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                Text(timeFormatter.string(from: item.endTime))
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .frame(width: 80, alignment: .leading)
-            
-            // Content section
-            VStack(alignment: .leading, spacing: 8) {
-                Text(item.title)
-                    .font(.headline.weight(.medium))
-                    .foregroundColor(.primary)
+        Button {
+            showingEditSheet = true
+        } label: {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(timeFormatter.string(from: item.startTime))
+                        .font(.title3.weight(.bold))
+                        .foregroundColor(item.isSkippedForCurrentWeek() ? .secondary : themeManager.currentTheme.primaryColor)
+                    Text(timeFormatter.string(from: item.endTime))
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .frame(width: 80, alignment: .leading)
                 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(item.daysOfWeek).sorted(by: { $0.rawValue < $1.rawValue }), id: \.self) { day in
-                            Text(day.shortName)
-                                .font(.caption2.weight(.medium))
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(item.title)
+                            .font(.headline.weight(.medium))
+                            .foregroundColor(item.isSkippedForCurrentWeek() ? .secondary : .primary)
+                        
+                        if item.isSkippedForCurrentWeek() {
+                            Text("SKIPPED")
+                                .font(.caption2.weight(.bold))
                                 .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.2))
+                                .foregroundColor(.orange)
+                                .cornerRadius(4)
+                        }
+                        
+                        Spacer()
+                    }
+                    
+                    HStack(spacing: 6) {
+                        if let displayText = scheduleDisplayText {
+                            Text(displayText)
+                                .font(.caption.weight(.medium))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
                                 .background(themeManager.currentTheme.secondaryColor.opacity(0.2))
                                 .foregroundColor(themeManager.currentTheme.secondaryColor)
-                                .cornerRadius(6)
+                                .cornerRadius(8)
+                        } else {
+                            ForEach(Array(item.daysOfWeek).sorted(by: { $0.rawValue < $1.rawValue }), id: \.self) { day in
+                                Text(day.shortName)
+                                    .font(.caption2.weight(.medium))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(themeManager.currentTheme.secondaryColor.opacity(0.2))
+                                    .foregroundColor(themeManager.currentTheme.secondaryColor)
+                                    .cornerRadius(6)
+                            }
                         }
+                        Spacer()
                     }
                 }
+                
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(item.isSkippedForCurrentWeek() ? Color.secondary.opacity(0.3) : item.color)
+                    .frame(width: 6, height: 60)
             }
-            
-            Spacer()
-            
-            // Color indicator
-            RoundedRectangle(cornerRadius: 6)
-                .fill(item.color)
-                .frame(width: 6, height: 60)
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.systemGray6).opacity(item.isSkippedForCurrentWeek() ? 0.5 : 0.3))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke((item.isSkippedForCurrentWeek() ? Color.secondary : item.color).opacity(0.3), lineWidth: 1)
+            )
+            .opacity(item.isSkippedForCurrentWeek() ? 0.7 : 1.0)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray6).opacity(0.3))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(item.color.opacity(0.3), lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showingEditSheet) {
+            ScheduleEditView(
+                schedule: item,
+                onDelete: onDelete,
+                onToggleSkip: onToggleSkip
+            )
+        }
     }
 }
 

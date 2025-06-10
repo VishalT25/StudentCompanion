@@ -49,12 +49,15 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
         if manualCityOverride == nil { // Only react to GPS changes if no manual override
-            if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
+            switch authorizationStatus {
+            case .authorizedWhenInUse, .authorizedAlways:
                 manager.startUpdatingLocation()
-            } else if authorizationStatus == .denied || authorizationStatus == .restricted {
-                // Handle cases where permission is denied or restricted
-                // For now, we might default to a preset location or show an error
-                self.locationName = "Location Disabled"
+            case .denied, .restricted:
+                self.locationName = "Location Access Denied"
+            case .notDetermined:
+                self.locationName = "Loading..."
+            @unknown default:
+                self.locationName = "Location Unavailable"
             }
         }
     }
