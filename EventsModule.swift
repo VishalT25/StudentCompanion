@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UserNotifications
 
 // MARK: - Theme System
 enum AppTheme: String, CaseIterable, Identifiable {
@@ -181,9 +182,40 @@ struct Event: Identifiable, Codable {
     var date: Date
     var title: String
     var categoryId: UUID
+    var reminderTime: ReminderTime = .none
 
     func category(from categories: [Category]) -> Category {
         categories.first { $0.id == categoryId } ?? Category(name: "Unknown", color: .gray)
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, date, title, categoryId, reminderTime
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        date = try container.decode(Date.self, forKey: .date)
+        title = try container.decode(String.self, forKey: .title)
+        categoryId = try container.decode(UUID.self, forKey: .categoryId)
+        reminderTime = try container.decodeIfPresent(ReminderTime.self, forKey: .reminderTime) ?? .none
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(date, forKey: .date)
+        try container.encode(title, forKey: .title)
+        try container.encode(categoryId, forKey: .categoryId)
+        try container.encode(reminderTime, forKey: .reminderTime)
+    }
+    
+    init(date: Date, title: String, categoryId: UUID, reminderTime: ReminderTime = .none) {
+        self.id = UUID()
+        self.date = date
+        self.title = title
+        self.categoryId = categoryId
+        self.reminderTime = reminderTime
     }
 }
 
@@ -195,9 +227,10 @@ struct ScheduleItem: Identifiable, Codable {
     var daysOfWeek: Set<DayOfWeek>
     var color: Color
     var skippedWeeks: Set<String> = [] // Store week identifiers (e.g., "2024-W01")
+    var reminderTime: ReminderTime = .none
     
     enum CodingKeys: String, CodingKey {
-        case id, title, startTime, endTime, daysOfWeek, color, skippedWeeks
+        case id, title, startTime, endTime, daysOfWeek, color, skippedWeeks, reminderTime
     }
     
     func encode(to encoder: Encoder) throws {
@@ -209,6 +242,7 @@ struct ScheduleItem: Identifiable, Codable {
         try container.encode(Array(daysOfWeek), forKey: .daysOfWeek)
         try container.encode(UIColor(color).cgColor.components, forKey: .color)
         try container.encode(Array(skippedWeeks), forKey: .skippedWeeks)
+        try container.encode(reminderTime, forKey: .reminderTime)
     }
     
     init(from decoder: Decoder) throws {
@@ -221,9 +255,10 @@ struct ScheduleItem: Identifiable, Codable {
         let components = try container.decode([CGFloat].self, forKey: .color)
         color = Color(UIColor(red: components[0], green: components[1], blue: components[2], alpha: components[3]))
         skippedWeeks = Set(try container.decodeIfPresent([String].self, forKey: .skippedWeeks) ?? [])
+        reminderTime = try container.decodeIfPresent(ReminderTime.self, forKey: .reminderTime) ?? .none
     }
     
-    init(title: String, startTime: Date, endTime: Date, daysOfWeek: Set<DayOfWeek>, color: Color = .blue) {
+    init(title: String, startTime: Date, endTime: Date, daysOfWeek: Set<DayOfWeek>, color: Color = .blue, reminderTime: ReminderTime = .none) {
         self.id = UUID()
         self.title = title
         self.startTime = startTime
@@ -231,6 +266,7 @@ struct ScheduleItem: Identifiable, Codable {
         self.daysOfWeek = daysOfWeek
         self.color = color
         self.skippedWeeks = []
+        self.reminderTime = reminderTime
     }
     
     func isSkippedForCurrentWeek() -> Bool {
@@ -262,6 +298,7 @@ enum DayOfWeek: Int, Codable, CaseIterable {
     }
 }
 
+
 class EventViewModel: ObservableObject {
     @Published var categories: [Category] = []
     @Published var events: [Event] = []
@@ -270,9 +307,13 @@ class EventViewModel: ObservableObject {
     private let categoriesKey = "savedCategories"
     private let eventsKey = "savedEvents"
     private let scheduleKey = "savedSchedule"
+    private let notificationManager = NotificationManager.shared
     
     init() {
         loadData()
+        Task {
+            await notificationManager.requestAuthorization()
+        }
     }
     
     private func loadData() {
@@ -355,18 +396,28 @@ class EventViewModel: ObservableObject {
     
     func addEvent(_ event: Event) {
         events.append(event)
+        if event.reminderTime != .none {
+            notificationManager.scheduleEventNotification(for: event, reminderTime: event.reminderTime, categories: categories)
+        }
         saveData()
     }
     
     func updateEvent(_ event: Event) {
         if let idx = events.firstIndex(where: { $0.id == event.id }) {
+            let oldEvent = events[idx]
             events[idx] = event
+            
+            notificationManager.removeAllEventNotifications(for: oldEvent)
+            if event.reminderTime != .none {
+                notificationManager.scheduleEventNotification(for: event, reminderTime: event.reminderTime, categories: categories)
+            }
             saveData()
         }
     }
     
     func deleteEvent(_ event: Event) {
         events.removeAll { $0.id == event.id }
+        notificationManager.removeAllEventNotifications(for: event)
         saveData()
     }
     
@@ -389,18 +440,28 @@ class EventViewModel: ObservableObject {
     
     func addScheduleItem(_ item: ScheduleItem) {
         scheduleItems.append(item)
+        if item.reminderTime != .none {
+            notificationManager.scheduleScheduleItemNotifications(for: item, reminderTime: item.reminderTime)
+        }
         saveData()
     }
     
     func updateScheduleItem(_ item: ScheduleItem) {
         if let idx = scheduleItems.firstIndex(where: { $0.id == item.id }) {
+            let oldItem = scheduleItems[idx]
             scheduleItems[idx] = item
+            
+            notificationManager.removeAllScheduleItemNotifications(for: oldItem)
+            if item.reminderTime != .none {
+                notificationManager.scheduleScheduleItemNotifications(for: item, reminderTime: item.reminderTime)
+            }
             saveData()
         }
     }
     
     func deleteScheduleItem(_ item: ScheduleItem) {
         scheduleItems.removeAll { $0.id == item.id }
+        notificationManager.removeAllScheduleItemNotifications(for: item)
         saveData()
     }
     
@@ -411,6 +472,12 @@ class EventViewModel: ObservableObject {
                 scheduleItems[index].skippedWeeks.remove(weekIdentifier)
             } else {
                 scheduleItems[index].skippedWeeks.insert(weekIdentifier)
+            }
+            
+            let item = scheduleItems[index]
+            if item.reminderTime != .none {
+                notificationManager.removeAllScheduleItemNotifications(for: item)
+                notificationManager.scheduleScheduleItemNotifications(for: item, reminderTime: item.reminderTime)
             }
             saveData()
         }
@@ -1219,6 +1286,7 @@ struct AddEventView: View {
     @State private var date = Date()
     @State private var title = ""
     @State private var selectedCategory: Category?
+    @State private var reminderTime: ReminderTime = .none
 
     var body: some View {
         NavigationView {
@@ -1248,6 +1316,23 @@ struct AddEventView: View {
                 } header: {
                     Text("Category")
                 }
+                
+                Section {
+                    Picker("Reminder", selection: $reminderTime) {
+                        ForEach(ReminderTime.allCases) { time in
+                            Text(time.displayName).tag(time)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("Reminder")
+                } footer: {
+                    if reminderTime != .none {
+                        Text("You'll be notified \(reminderTime.displayName.lowercased()) the event starts.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             .navigationTitle("Add Event")
             .navigationBarTitleDisplayMode(.inline)
@@ -1255,7 +1340,7 @@ struct AddEventView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
                         if let category = selectedCategory ?? viewModel.categories.first {
-                            let newEvent = Event(date: date, title: title, categoryId: category.id)
+                            let newEvent = Event(date: date, title: title, categoryId: category.id, reminderTime: reminderTime)
                             viewModel.addEvent(newEvent)
                             isPresented = false
                         }
@@ -1369,6 +1454,26 @@ struct EventEditView: View {
                 }
             } header: {
                 Text("Category")
+            }
+            
+            Section {
+                Picker("Reminder", selection: Binding(
+                    get: { event.reminderTime },
+                    set: { event.reminderTime = $0 }
+                )) {
+                    ForEach(ReminderTime.allCases) { time in
+                        Text(time.displayName).tag(time)
+                    }
+                }
+                .pickerStyle(.menu)
+            } header: {
+                Text("Reminder")
+            } footer: {
+                if event.reminderTime != .none {
+                    Text("You'll be notified \(event.reminderTime.displayName.lowercased()) the event starts.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             if !isNew {

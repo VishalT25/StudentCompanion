@@ -2,15 +2,19 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var themeManager: ThemeManager
+    @EnvironmentObject private var notificationManager: NotificationManager
     @AppStorage("d2lLink") private var d2lLink: String = "https://d2l.youruniversity.edu"
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
     @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
+    @State private var showingNotificationSettings = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 // Theme Selection
                 themeSelectionSection
+                
+                notificationSection
                 
                 // Grade Display Settings
                 gradeDisplaySection
@@ -26,6 +30,59 @@ struct SettingsView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingNotificationSettings) {
+            NotificationSettingsView()
+                .environmentObject(notificationManager)
+        }
+    }
+    
+    private var notificationSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Notifications")
+                .font(.title3.bold())
+                .foregroundColor(.primary)
+            
+            VStack(spacing: 12) {
+                Button {
+                    showingNotificationSettings = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "bell.fill")
+                            .font(.title2)
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                            .frame(width: 30)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Manage Notifications")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.primary)
+                            
+                            Text(notificationManager.isAuthorized ? "Notifications enabled" : "Notifications disabled")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        // Status indicator
+                        Circle()
+                            .fill(notificationManager.isAuthorized ? .green : .red)
+                            .frame(width: 8, height: 8)
+                        
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(12)
+                    .background(Color(.systemGray6).opacity(0.5))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
     }
     
     private var themeSelectionSection: some View {
@@ -218,6 +275,7 @@ struct SettingsView_Previews: PreviewProvider {
         NavigationView {
             SettingsView()
                 .environmentObject(ThemeManager())
+                .environmentObject(NotificationManager())
         }
     }
 }

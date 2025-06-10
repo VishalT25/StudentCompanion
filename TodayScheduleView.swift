@@ -116,14 +116,26 @@ struct CompactScheduleItemView: View {
                 .foregroundColor(.white.opacity(0.9))
             
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
-                    .font(.callout)
-                    .foregroundColor(.white)
+                HStack(spacing: 6) {
+                    Text(item.title)
+                        .font(.callout)
+                        .foregroundColor(.white)
+                    
+                    if item.reminderTime != .none {
+                        Image(systemName: "bell.fill")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                }
                 
                 if item.isSkippedForCurrentWeek() {
                     Text("SKIPPED THIS WEEK")
                         .font(.caption2.weight(.bold))
                         .foregroundColor(.orange.opacity(0.8))
+                } else if item.reminderTime != .none {
+                    Text("Reminder: \(item.reminderTime.shortDisplayName)")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.7))
                 }
             }
             
@@ -163,11 +175,29 @@ struct CompactEventItemView: View {
                 .font(.callout)
                 .foregroundColor(.white.opacity(0.9))
             
-            Text(event.title)
-                .font(.callout)
-                .foregroundColor(.white)
+            HStack(spacing: 6) {
+                Text(event.title)
+                    .font(.callout)
+                    .foregroundColor(.white)
+                
+                if event.reminderTime != .none {
+                    Image(systemName: "bell.fill")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.7))
+                }
+            }
             
             Spacer()
+            
+            if event.reminderTime != .none {
+                Text(event.reminderTime.shortDisplayName)
+                    .font(.caption2.weight(.medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.white.opacity(0.15))
+                    .cornerRadius(6)
+            }
         }
         .padding(.vertical, 4)
     }
