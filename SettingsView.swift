@@ -2,7 +2,10 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var themeManager: ThemeManager
-    @EnvironmentObject private var notificationManager: NotificationManager
+    @EnvironmentObject private var notificationManager: StudentCompanion.NotificationManager
+    @AppStorage("liveActivitiesEnabled") private var liveActivitiesEnabled: Bool = true
+    @EnvironmentObject private var eventViewModel: EventViewModel
+
     @AppStorage("d2lLink") private var d2lLink: String = "https://d2l.youruniversity.edu"
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
     @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
@@ -15,6 +18,8 @@ struct SettingsView: View {
                 themeSelectionSection
                 
                 notificationSection
+
+                liveActivitySection
                 
                 // Grade Display Settings
                 gradeDisplaySection
@@ -32,10 +37,42 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingNotificationSettings) {
             NotificationSettingsView()
-                .environmentObject(notificationManager)
+                .environmentObject(notificationManager) // This should be okay as notificationManager is already qualified.
+                                                        // If preview fails, qualify the init: .environmentObject(StudentCompanion.NotificationManager.shared)
+                                                        // but given it's passed, the type inference should work.
+        }
+        .onChange(of: liveActivitiesEnabled) { oldValue, newValue in
+            Task { @MainActor in 
+                if !newValue {
+                    // If toggled off, end all activities
+                    LiveActivityManager.shared.endAllActivities() 
+                } else {
+                    // If toggled on, try to manage/start activities
+                    eventViewModel.manageLiveActivities(themeManager: themeManager)
+                }
+            }
         }
     }
     
+    private var liveActivitySection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Live Activities")
+                .font(.title3.bold())
+                .foregroundColor(.primary)
+            
+            SettingToggleRow(
+                title: "Show Current Event",
+                subtitle: "Display ongoing schedule items in the Dynamic Island and on the Lock Screen.",
+                isOn: $liveActivitiesEnabled,
+                icon: "sparkles", 
+                color: themeManager.currentTheme.secondaryColor 
+            )
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+    }
+
     private var notificationSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Notifications")
@@ -64,7 +101,6 @@ struct SettingsView: View {
                         
                         Spacer()
                         
-                        // Status indicator
                         Circle()
                             .fill(notificationManager.isAuthorized ? .green : .red)
                             .frame(width: 8, height: 8)
@@ -179,7 +215,6 @@ struct ThemeSelectionRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 16) {
-                // Theme color preview
                 HStack(spacing: 4) {
                     Circle()
                         .fill(theme.primaryColor)
@@ -275,7 +310,8 @@ struct SettingsView_Previews: PreviewProvider {
         NavigationView {
             SettingsView()
                 .environmentObject(ThemeManager())
-                .environmentObject(NotificationManager())
+                .environmentObject(StudentCompanion.NotificationManager.shared) 
+                .environmentObject(EventViewModel())
         }
     }
 }

@@ -21,6 +21,8 @@ struct MainContentView: View {
     @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
 
+    @Environment(\.scenePhase) var scenePhase
+
     @State private var showingWeatherPopover = false
     @AppStorage("lastGradeUpdate") private var lastGradeUpdate: Double = 0
     
@@ -39,7 +41,7 @@ struct MainContentView: View {
                     
                     // Events Preview
                     NavigationLink(value: AppRoute.events) {
-                        EventsPreviewView(events: viewModel.events)
+                        EventsPreviewView()
                             .environmentObject(viewModel)
                             .environmentObject(themeManager)
                     }
@@ -53,7 +55,7 @@ struct MainContentView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 10)
             }
-            .background(Color.white)
+            .background(Color.white) // Consider .background(themeManager.currentTheme.quaternaryColor.opacity(0.3)) or similar for theming
             .navigationDestination(for: AppRoute.self) { route in
                 switch route {
                 case .schedule:
@@ -83,48 +85,69 @@ struct MainContentView: View {
                         .background(Color.white)
                 }
             }
-            .overlay {
-                ZStack {
-                    if showMenu {
-                        MenuView(isShowing: $showMenu, selectedRoute: $selectedRoute)
-                            .environmentObject(themeManager)
-                            .transition(.opacity)
-                    }
-                    
-                    if showingWeatherPopover {
-                        ZStack {
-                            Color.clear
-                                .background(.ultraThinMaterial.opacity(0.7))
-                                .ignoresSafeArea()
-                                .onTapGesture {
-                                    withAnimation(.easeInOut(duration: 0.3)) {
-                                        showingWeatherPopover = false
-                                    }
-                                }
-                            
-                            VStack {
-                                HStack {
-                                    Spacer()
-                                    WeatherWidgetView(weatherService: weatherService, isPresented: $showingWeatherPopover)
-                                        .environmentObject(themeManager)
-                                    Spacer()
-                                }
-                                .padding(.top, 80)
-                                
-                                Spacer()
-                            }
-                        }
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                        .zIndex(1000)
-                    }
-                }
-            }
+            .overlay(mainOverlayView)
         }
-        .background(Color.white)
+        .background(Color.white) // This might be redundant if the ScrollView has a background
         .onChange(of: selectedRoute) { newRoute in
             if let route = newRoute {
                 path.append(route)
                 selectedRoute = nil
+            }
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            if newPhase == .active {
+                Task { @MainActor in // Ensure it runs on the main actor
+                    viewModel.manageLiveActivities(themeManager: themeManager)
+                }
+            }
+        }
+        .onAppear {
+            Task { @MainActor in // Ensure it runs on the main actor
+                viewModel.manageLiveActivities(themeManager: themeManager)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var mainOverlayView: some View {
+        ZStack {
+            if showMenu {
+                MenuView(isShowing: $showMenu, selectedRoute: $selectedRoute)
+                    .environmentObject(themeManager)
+                    .transition(.opacity) // Consider a more distinct transition like .move(edge: .leading)
+            }
+            
+            if showingWeatherPopover {
+                ZStack {
+                    // Transparent background to catch taps for dismissal
+                    Color.clear 
+                        .background(.ultraThinMaterial.opacity(0.7)) // Or .black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showingWeatherPopover = false
+                            }
+                        }
+                    
+                    // Weather Widget Content
+                    VStack {
+                        // Spacer to push content down, or adjust padding as needed
+                        HStack {
+                            Spacer()
+                            WeatherWidgetView(weatherService: weatherService, isPresented: $showingWeatherPopover)
+                                .environmentObject(themeManager)
+                                .padding(.top, UIApplication.shared.connectedScenes
+                                    .compactMap { $0 as? UIWindowScene }
+                                    .first?.windows.first?.safeAreaInsets.top ?? 20) // Adjust top padding dynamically
+                            Spacer()
+                        }
+                        .padding(.top, 40) // Adjust this padding as needed
+                        
+                        Spacer()
+                    }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top))) // Nicer transition
+                .zIndex(1000) // Ensure it's on top
             }
         }
     }
