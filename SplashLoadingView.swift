@@ -21,7 +21,7 @@ class SplashState: ObservableObject {
     
     init() {
         // Simulate some loading
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { // Ensure a clear 2-second delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { // Faster transition
             withAnimation(.easeInOut(duration: 0.3)) { // Smooth transition
                 self.isLoading = false
             }

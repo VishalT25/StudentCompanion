@@ -375,7 +375,7 @@ struct NaturalLanguageInputView: View {
         let result: NLPResult
         
         if isInFollowUpMode, let context = followUpContext {
-            result = nlpEngine.parseFollowUp(inputText: inputText, context: context, existingCourses: existingCourses)
+            result = nlpEngine.parseFollowUp(inputText: inputText, context: context, conversationId: nil, existingCourses: existingCourses)
         } else {
             result = nlpEngine.parse(inputText: inputText,
                                      availableCategories: eventViewModel.categories,
@@ -389,8 +389,8 @@ struct NaturalLanguageInputView: View {
             handleAddScheduleItem(title: title, days: days, startTimeComponents: startTimeComponents, endTimeComponents: endTimeComponents, duration: duration, reminderTime: reminderTime)
         case .parsedGrade(let courseName, let assignmentName, let grade, let weight):
             handleAddGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: weight)
-        case .needsMoreInfo(let prompt, _, let context):
-            handleFollowUpQuestion(prompt: prompt, context: context)
+        case .needsMoreInfo(let prompt, _, let context, let conversationId):
+            handleFollowUpQuestion(prompt: prompt, context: context, conversationId: conversationId)
         case .unrecognized(_):
             showSimpleAlert(title: "Input Not Understood", message: "Sorry, I couldn't understand that. Please try rephrasing. Examples:\n'Meeting tomorrow at 2pm about project'\n'Math class every Monday 9am'\n'Got 95% on CS101 midterm'")
         case .notAttempted:
@@ -398,7 +398,7 @@ struct NaturalLanguageInputView: View {
         }
     }
     
-    private func handleFollowUpQuestion(prompt: String, context: ParseContext?) {
+    private func handleFollowUpQuestion(prompt: String, context: ParseContext?, conversationId: UUID?) {
         withAnimation(.easeInOut) {
             conversationHistory.append("You: \(inputText)")
             conversationHistory.append("Assistant: \(prompt)")
