@@ -30,6 +30,11 @@ class LiveActivityManager {
 
     @MainActor
     func startActivity(for item: ScheduleItem, themeManager: ThemeManager) {
+        guard item.isLiveActivityEnabled else {
+            print("Live Activity is disabled for item \(item.title).")
+            return
+        }
+
         // Ensure no duplicate activity for the same item
         guard currentActivities[item.id.uuidString] == nil else {
             print("Activity for item \(item.title) already exists.")

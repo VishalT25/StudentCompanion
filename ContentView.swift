@@ -18,10 +18,8 @@ struct ContentView: View {
                             }
                         }
                 } else {
-                    NavigationStack {
-                        MainContentView()
-                            .transition(.opacity)
-                    }
+                    MainContentView()
+                        .transition(.opacity)
                 }
             }
         }

@@ -95,14 +95,12 @@ struct ScheduleView: View {
                     ForEach(schedules) { item in
                         EnhancedScheduleRow(
                             item: item,
+                            selectedDay: selectedDay,
                             onEdit: {
                                 // Navigation to edit handled within the row
                             },
                             onDelete: {
-                                viewModel.deleteScheduleItem(item)
-                            },
-                            onToggleSkip: {
-                                viewModel.toggleSkipForCurrentWeek(scheduleItem: item)
+                                viewModel.deleteScheduleItem(item, themeManager: themeManager)
                             }
                         )
                         .environmentObject(themeManager)
@@ -158,9 +156,9 @@ struct EnhancedScheduleRow: View {
     @EnvironmentObject var themeManager: ThemeManager
     @EnvironmentObject var viewModel: EventViewModel
     let item: ScheduleItem
+    let selectedDay: DayOfWeek
     let onEdit: () -> Void
     let onDelete: () -> Void
-    let onToggleSkip: () -> Void
     @State private var showingEditSheet = false
     
     private let timeFormatter: DateFormatter = {
@@ -191,6 +189,26 @@ struct EnhancedScheduleRow: View {
         }
     }
     
+    private var instanceDateForSelectedDay: Date {
+        let calendar = Calendar.current
+        let today = Date()
+        
+        let todayWeekday = calendar.component(.weekday, from: today) 
+        let targetWeekday = selectedDay.rawValue 
+        
+        if selectedDay.rawValue == Calendar.current.component(.weekday, from: Date()) {
+            return Calendar.current.startOfDay(for: Date())
+        }
+        var components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: today)
+        components.weekday = selectedDay.rawValue
+        return calendar.date(from: components) ?? today 
+    }
+
+    private var isActuallySkippedForDisplay: Bool {
+        let dateToCheck = instanceDateForSelectedDay
+        return item.isSkipped(onDate: dateToCheck)
+    }
+
     var body: some View {
         Button {
             showingEditSheet = true
@@ -199,7 +217,7 @@ struct EnhancedScheduleRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(timeFormatter.string(from: item.startTime))
                         .font(.title3.weight(.bold))
-                        .foregroundColor(item.isSkippedForCurrentWeek() ? .secondary : themeManager.currentTheme.primaryColor)
+                        .foregroundColor(isActuallySkippedForDisplay ? .secondary : themeManager.currentTheme.primaryColor)
                     Text(timeFormatter.string(from: item.endTime))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -210,9 +228,9 @@ struct EnhancedScheduleRow: View {
                     HStack {
                         Text(item.title)
                             .font(.headline.weight(.medium))
-                            .foregroundColor(item.isSkippedForCurrentWeek() ? .secondary : .primary)
+                            .foregroundColor(isActuallySkippedForDisplay ? .secondary : .primary)
                         
-                        if item.isSkippedForCurrentWeek() {
+                        if isActuallySkippedForDisplay {
                             Text("SKIPPED")
                                 .font(.caption2.weight(.bold))
                                 .padding(.horizontal, 6)
@@ -250,26 +268,25 @@ struct EnhancedScheduleRow: View {
                 }
                 
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(item.isSkippedForCurrentWeek() ? Color.secondary.opacity(0.3) : item.color)
+                    .fill(isActuallySkippedForDisplay ? Color.secondary.opacity(0.3) : item.color)
                     .frame(width: 6, height: 60)
             }
             .padding(16)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemGray6).opacity(item.isSkippedForCurrentWeek() ? 0.5 : 0.3))
+                    .fill(Color(.systemGray6).opacity(isActuallySkippedForDisplay ? 0.5 : 0.3))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke((item.isSkippedForCurrentWeek() ? Color.secondary : item.color).opacity(0.3), lineWidth: 1)
+                    .stroke((isActuallySkippedForDisplay ? Color.secondary : item.color).opacity(0.3), lineWidth: 1)
             )
-            .opacity(item.isSkippedForCurrentWeek() ? 0.7 : 1.0)
+            .opacity(isActuallySkippedForDisplay ? 0.7 : 1.0)
         }
         .buttonStyle(.plain)
         .sheet(isPresented: $showingEditSheet) {
             ScheduleEditView(
                 schedule: item,
-                onDelete: onDelete,
-                onToggleSkip: onToggleSkip
+                onDelete: onDelete
             )
         }
     }

@@ -25,12 +25,12 @@ struct MainContentView: View {
 
     @State private var showingWeatherPopover = false
     @AppStorage("lastGradeUpdate") private var lastGradeUpdate: Double = 0
+    @State private var showingNaturalLanguageInput = false
     
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(spacing: 20) {
-                    headerView
+                VStack(spacing: 12) { // Reduced spacing from 20 to 12
                     // Schedule Preview
                     NavigationLink(value: AppRoute.schedule) {
                         TodayScheduleView()
@@ -49,13 +49,13 @@ struct MainContentView: View {
                     
                     // Quick Actions
                     quickActionsView
-                    
-                    Spacer(minLength: 40)
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 10)
+                .padding(.top, 8) // Reduced top padding
             }
-            .background(Color.white) // Consider .background(themeManager.currentTheme.quaternaryColor.opacity(0.3)) or similar for theming
+            .background(Color.white)
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: AppRoute.self) { route in
                 switch route {
                 case .schedule:
@@ -85,9 +85,132 @@ struct MainContentView: View {
                         .background(Color.white)
                 }
             }
-            .overlay(mainOverlayView)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        withAnimation(.spring()) {
+                            showMenu.toggle()
+                            // Dismiss weather popover when menu opens
+                            if showMenu {
+                                showingWeatherPopover = false
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "line.horizontal.3")
+                            .font(.title2)
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                            .padding(8)
+                            .background(themeManager.currentTheme.primaryColor.opacity(0.1))
+                            .cornerRadius(8)
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    HStack(spacing: 12) {
+                        if let currentWeather = weatherService.currentWeather {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    showingWeatherPopover = true
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: currentWeather.condition.SFSymbolName)
+                                        .font(.subheadline)
+                                        .foregroundColor(currentWeather.condition.iconColor)
+                                    Text("\(currentWeather.temperature)°C")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                                }
+                            }
+                        } else if weatherService.isLoading {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                        }
+                        
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text("Today")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Text(Date(), style: .date)
+                                .font(.caption.weight(.medium))
+                                .foregroundColor(themeManager.currentTheme.primaryColor)
+                        }
+                    }
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                Button {
+                    showingNaturalLanguageInput = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .resizable()
+                        .frame(width: 56, height: 56)
+                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                        .background(Color.white.opacity(0.7))
+                        .clipShape(Circle())
+                        .shadow(radius: 5)
+                        .padding()
+                }
+            }
         }
-        .background(Color.white) // This might be redundant if the ScrollView has a background
+        .background(Color.white)
+        .sheet(isPresented: $showingNaturalLanguageInput) {
+            NaturalLanguageInputView()
+                .environmentObject(themeManager)
+        }
+        .overlay {
+            // Menu overlay with proper animation
+            if showMenu {
+                ZStack {
+                    // Static background blur that doesn't move
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showMenu = false
+                            }
+                        }
+                    
+                    // Menu panel that slides in
+                    HStack {
+                        MenuContentView(isShowing: $showMenu, selectedRoute: $selectedRoute)
+                            .environmentObject(themeManager)
+                            .transition(.move(edge: .leading))
+                        
+                        Spacer()
+                    }
+                }
+                .zIndex(100)
+            }
+        }
+        .overlay {
+            // Weather popover overlay with highest z-index
+            if showingWeatherPopover {
+                ZStack {
+                    Color.clear
+                        .background(.ultraThinMaterial.opacity(0.7))
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showingWeatherPopover = false
+                            }
+                        }
+                    
+                    VStack {
+                        HStack {
+                            Spacer()
+                            WeatherWidgetView(weatherService: weatherService, isPresented: $showingWeatherPopover)
+                                .environmentObject(themeManager)
+                                .padding(.top, 100) // Adjust positioning
+                            Spacer()
+                        }
+                        Spacer()
+                    }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
+                .zIndex(200) // Highest z-index for weather popover
+            }
+        }
         .onChange(of: selectedRoute) { newRoute in
             if let route = newRoute {
                 path.append(route)
@@ -96,114 +219,20 @@ struct MainContentView: View {
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .active {
-                Task { @MainActor in // Ensure it runs on the main actor
+                Task { @MainActor in
                     viewModel.manageLiveActivities(themeManager: themeManager)
                 }
             }
         }
         .onAppear {
-            Task { @MainActor in // Ensure it runs on the main actor
+            Task { @MainActor in
                 viewModel.manageLiveActivities(themeManager: themeManager)
             }
         }
     }
     
-    @ViewBuilder
-    private var mainOverlayView: some View {
-        ZStack {
-            if showMenu {
-                MenuView(isShowing: $showMenu, selectedRoute: $selectedRoute)
-                    .environmentObject(themeManager)
-                    .transition(.opacity) // Consider a more distinct transition like .move(edge: .leading)
-            }
-            
-            if showingWeatherPopover {
-                ZStack {
-                    // Transparent background to catch taps for dismissal
-                    Color.clear 
-                        .background(.ultraThinMaterial.opacity(0.7)) // Or .black.opacity(0.4)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                showingWeatherPopover = false
-                            }
-                        }
-                    
-                    // Weather Widget Content
-                    VStack {
-                        // Spacer to push content down, or adjust padding as needed
-                        HStack {
-                            Spacer()
-                            WeatherWidgetView(weatherService: weatherService, isPresented: $showingWeatherPopover)
-                                .environmentObject(themeManager)
-                                .padding(.top, UIApplication.shared.connectedScenes
-                                    .compactMap { $0 as? UIWindowScene }
-                                    .first?.windows.first?.safeAreaInsets.top ?? 20) // Adjust top padding dynamically
-                            Spacer()
-                        }
-                        .padding(.top, 40) // Adjust this padding as needed
-                        
-                        Spacer()
-                    }
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top))) // Nicer transition
-                .zIndex(1000) // Ensure it's on top
-            }
-        }
-    }
-    
-    private var headerView: some View {
-        HStack {
-            Button {
-                withAnimation(.spring()) {
-                    showMenu.toggle()
-                }
-            } label: {
-                Image(systemName: "line.horizontal.3")
-                    .font(.title2)
-                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                    .padding(8)
-                    .background(themeManager.currentTheme.primaryColor.opacity(0.1))
-                    .cornerRadius(8)
-            }
-            
-            Spacer()
-            
-            if let currentWeather = weatherService.currentWeather {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        showingWeatherPopover = true
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: currentWeather.condition.SFSymbolName)
-                            .font(.headline)
-                            .foregroundColor(currentWeather.condition.iconColor)
-                        Text("\(currentWeather.temperature)°C")
-                            .font(.headline.weight(.regular))
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
-                    }
-                }
-                .padding(.trailing, 10)
-            } else if weatherService.isLoading {
-                ProgressView()
-                    .scaleEffect(0.6)
-                    .padding(.trailing, 10)
-            }
-            
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("Today")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                Text(Date(), style: .date)
-                    .font(.headline.weight(.medium))
-                    .foregroundColor(themeManager.currentTheme.primaryColor)
-            }
-        }
-    }
-    
     private var quickActionsView: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) { // Reduced spacing
             Text("Quick Actions")
                 .font(.title3.bold())
                 .foregroundColor(.black)

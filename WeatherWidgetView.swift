@@ -17,26 +17,26 @@ struct WeatherWidgetView: View {
     
     private var dynamicBackgroundColor: LinearGradient {
         guard let condition = weatherService.currentWeather?.condition else {
-            return LinearGradient(gradient: Gradient(colors: [Color.gray.opacity(0.8), Color.gray.opacity(0.6)]), startPoint: .top, endPoint: .bottom)
+            return LinearGradient(gradient: Gradient(colors: [Color.gray.opacity(0.85), Color.gray.opacity(0.65)]), startPoint: .top, endPoint: .bottom)
         }
         
         switch condition {
         case .clearDay:
-            return LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.6), Color.orange.opacity(0.5)]), startPoint: .topLeading, endPoint: .bottomTrailing)
+            return LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.65), Color.orange.opacity(0.55)]), startPoint: .topLeading, endPoint: .bottomTrailing)
         case .clearNight:
-            return LinearGradient(gradient: Gradient(colors: [Color(red: 20/255, green: 30/255, blue: 60/255), Color(red: 40/255, green: 60/255, blue: 100/255)]), startPoint: .top, endPoint: .bottom)
+            return LinearGradient(gradient: Gradient(colors: [Color(red: 20/255, green: 30/255, blue: 60/255).opacity(0.90), Color(red: 40/255, green: 60/255, blue: 100/255).opacity(0.85)]), startPoint: .top, endPoint: .bottom)
         case .partlyCloudyDay, .cloudy:
-            return LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.5), Color.gray.opacity(0.6)]), startPoint: .top, endPoint: .bottom)
+            return LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.55), Color.gray.opacity(0.65)]), startPoint: .top, endPoint: .bottom)
         case .partlyCloudyNight:
-            return LinearGradient(gradient: Gradient(colors: [Color(red: 30/255, green: 50/255, blue: 80/255), Color.gray.opacity(0.7)]), startPoint: .top, endPoint: .bottom)
+            return LinearGradient(gradient: Gradient(colors: [Color(red: 30/255, green: 50/255, blue: 80/255).opacity(0.75), Color.gray.opacity(0.75)]), startPoint: .top, endPoint: .bottom)
         case .rain, .showerRain:
-            return LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.7), Color.gray.opacity(0.8)]), startPoint: .top, endPoint: .bottom)
+            return LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.75), Color.gray.opacity(0.85)]), startPoint: .top, endPoint: .bottom)
         case .thunderstorm:
-            return LinearGradient(gradient: Gradient(colors: [Color.indigo.opacity(0.8), Color.gray.opacity(0.7)]), startPoint: .top, endPoint: .bottom)
+            return LinearGradient(gradient: Gradient(colors: [Color.indigo.opacity(0.85), Color.gray.opacity(0.75)]), startPoint: .top, endPoint: .bottom)
         case .snow:
-            return LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.4), Color.purple.opacity(0.5)]), startPoint: .top, endPoint: .bottom)
+            return LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.45), Color.purple.opacity(0.55)]), startPoint: .top, endPoint: .bottom)
         case .mist:
-            return LinearGradient(gradient: Gradient(colors: [Color.gray.opacity(0.6), Color.white.opacity(0.3)]), startPoint: .top, endPoint: .bottom)
+            return LinearGradient(gradient: Gradient(colors: [Color.gray.opacity(0.65), Color.white.opacity(0.35)]), startPoint: .top, endPoint: .bottom)
         }
     }
     
@@ -53,8 +53,8 @@ struct WeatherWidgetView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 15) {
                         CurrentWeatherHeaderView(
-                            currentWeather: currentWeather, 
-                            selectedForecastType: $selectedForecastType, 
+                            currentWeather: currentWeather,
+                            selectedForecastType: $selectedForecastType,
                             showingCitySelection: $showingCitySelection
                         )
                         
@@ -388,7 +388,7 @@ struct CitySelectionView: View {
                             dismiss()
                         }
                         .foregroundColor(.white)
-                        .opacity(0) 
+                        .opacity(0)
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 10)

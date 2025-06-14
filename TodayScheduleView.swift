@@ -42,6 +42,8 @@ struct TodayScheduleView: View {
                     if !schedule.isEmpty {
                         ForEach(schedule) { item in
                             CompactScheduleItemView(item: item)
+                                .environmentObject(themeManager)
+                                .environmentObject(viewModel)
                         }
                     }
                     
@@ -80,6 +82,7 @@ struct TodayScheduleView: View {
 
 struct CompactScheduleItemView: View {
     @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
     let item: ScheduleItem
     
     private let timeFormatter: DateFormatter = {
@@ -128,11 +131,11 @@ struct CompactScheduleItemView: View {
                     }
                 }
                 
-                if item.isSkippedForCurrentWeek() {
-                    Text("SKIPPED THIS WEEK")
+                if item.isSkipped(onDate: Date()) {
+                    Text("SKIPPED TODAY")
                         .font(.caption2.weight(.bold))
-                        .foregroundColor(.orange.opacity(0.8))
-                } else if item.reminderTime != .none {
+                        .foregroundColor(.orange.opacity(0.9))
+                } else if item.reminderTime != .none && !item.isSkipped(onDate: Date()) {
                     Text("Reminder: \(item.reminderTime.shortDisplayName)")
                         .font(.caption2)
                         .foregroundColor(.white.opacity(0.7))
@@ -152,11 +155,19 @@ struct CompactScheduleItemView: View {
             }
             
             RoundedRectangle(cornerRadius: 2)
-                .fill(item.isSkippedForCurrentWeek() ? .white.opacity(0.3) : item.color)
+                .fill(item.isSkipped(onDate: Date()) ? .white.opacity(0.3) : item.color)
                 .frame(width: 3, height: 20)
         }
         .padding(.vertical, 4)
-        .opacity(item.isSkippedForCurrentWeek() ? 0.6 : 1.0)
+        .opacity(item.isSkipped(onDate: Date()) ? 0.6 : 1.0)
+        .contextMenu {
+            Button {
+                viewModel.toggleSkip(forInstance: item, onDate: Date(), themeManager: themeManager)
+            } label: {
+                Label(item.isSkipped(onDate: Date()) ? "Unskip for Today" : "Skip for Today",
+                      systemImage: item.isSkipped(onDate: Date()) ? "arrow.clockwise" : "xmark.circle.fill")
+            }
+        }
     }
 }
 

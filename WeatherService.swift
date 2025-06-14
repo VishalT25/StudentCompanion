@@ -95,8 +95,8 @@ struct OpenWeatherResponse: Codable {
 
 struct MainWeather: Codable {
     let temp: Double
-    let tempMin: Double
-    let tempMax: Double
+    let tempMin: Double?
+    let tempMax: Double?
     let humidity: Int
 }
 
@@ -107,7 +107,7 @@ struct WeatherDescription: Codable {
 }
 
 struct Wind: Codable {
-    let speed: Double
+    let speed: Double?
 }
 
 struct ForecastResponse: Codable {
@@ -157,7 +157,6 @@ class WeatherService: ObservableObject {
     ]
 
     init() {
-        // Default to Toronto
         self.selectedCity = availableCities.first { $0.name == "Toronto" } ?? availableCities[0]
         
         DispatchQueue.main.async {
@@ -176,6 +175,7 @@ class WeatherService: ObservableObject {
         isLoading = true
         errorMessage = nil
         
+        print("Starting weather data fetch for \(selectedCity.displayName)")
         fetchCurrentWeather()
     }
     
@@ -187,25 +187,71 @@ class WeatherService: ObservableObject {
             return
         }
         
-        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+        print("Fetching weather from URL: \(urlString)")
+        
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15.0
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 
                 if let error = error {
+                    print("Network error: \(error)")
                     self.handleAPIError("Network error: \(error.localizedDescription)")
                     return
                 }
                 
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("HTTP Status Code: \(httpResponse.statusCode)")
+                    
+                    switch httpResponse.statusCode {
+                    case 200:
+                        break
+                    case 401:
+                        print("API Key invalid or unauthorized")
+                        self.handleAPIError("Invalid API key")
+                        return
+                    case 429:
+                        print("API rate limit exceeded")
+                        self.handleAPIError("API rate limit exceeded")
+                        return
+                    case 404:
+                        print("Location not found")
+                        self.handleAPIError("Location not found")
+                        return
+                    default:
+                        print("HTTP Error: \(httpResponse.statusCode)")
+                        self.handleAPIError("HTTP Error: \(httpResponse.statusCode)")
+                        return
+                    }
+                }
+                
                 guard let data = data else {
+                    print("No data received from API")
                     self.handleAPIError("No data received")
                     return
                 }
                 
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("Raw API Response: \(responseString)")
+                }
+                
                 do {
                     let weatherResponse = try JSONDecoder().decode(OpenWeatherResponse.self, from: data)
+                    print("✅ Successfully decoded weather response!")
+                    print("Temperature: \(weatherResponse.main.temp)°C")
+                    print("Condition: \(weatherResponse.weather.first?.main ?? "Unknown")")
+                    
                     self.processCurrentWeather(weatherResponse)
-                    self.fetchForecast() // Get forecast data
+                    self.fetchForecast()
                 } catch {
+                    print("❌ Decode error: \(error)")
+                    if let decodingError = error as? DecodingError {
+                        print("Detailed decoding error: \(decodingError)")
+                    }
                     self.handleAPIError("Failed to decode weather data: \(error.localizedDescription)")
                 }
             }
@@ -215,27 +261,42 @@ class WeatherService: ObservableObject {
     private func fetchForecast() {
         let urlString = "https://api.openweathermap.org/data/2.5/forecast?lat=\(selectedCity.latitude)&lon=\(selectedCity.longitude)&appid=\(apiKey)&units=metric"
         
-        guard let url = URL(string: urlString) else { 
+        guard let url = URL(string: urlString) else {
             self.isLoading = false
             self.lastUpdateTime = Date()
-            return 
+            return
         }
         
-        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+        print("Fetching forecast from URL: \(urlString)")
+        
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15.0
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 
-                if let data = data {
+                if let error = error {
+                    print("Forecast fetch error: \(error)")
+                } else if let data = data {
                     do {
                         let forecastResponse = try JSONDecoder().decode(ForecastResponse.self, from: data)
+                        print("✅ Successfully decoded forecast response!")
                         self.processForecastData(forecastResponse)
                     } catch {
-                        print("Failed to decode forecast data: \(error)")
+                        print("❌ Failed to decode forecast data: \(error)")
                     }
                 }
                 
                 self.isLoading = false
                 self.lastUpdateTime = Date()
+                
+                if self.currentWeather != nil {
+                    self.errorMessage = nil
+                    print("✅ Weather data fetch completed successfully!")
+                }
             }
         }.resume()
     }
@@ -243,22 +304,30 @@ class WeatherService: ObservableObject {
     private func processCurrentWeather(_ response: OpenWeatherResponse) {
         let condition = mapOpenWeatherToCondition(response.weather.first?.main ?? "", icon: response.weather.first?.icon ?? "")
         
+        print("Processing weather data:")
+        print("- Temperature: \(response.main.temp)°C")
+        print("- High: \(response.main.tempMax ?? response.main.temp)°C, Low: \(response.main.tempMin ?? response.main.temp)°C")
+        print("- Humidity: \(response.main.humidity)%")
+        print("- Wind Speed: \(response.wind.speed ?? 0.0) m/s")
+        print("- Condition: \(condition.description)")
+        
         currentWeather = CurrentWeatherInfo(
             temperature: Int(response.main.temp.rounded()),
             condition: condition,
             locationName: selectedCity.displayName,
-            todayHigh: Int(response.main.tempMax.rounded()),
-            todayLow: Int(response.main.tempMin.rounded()),
+            todayHigh: Int((response.main.tempMax ?? response.main.temp).rounded()),
+            todayLow: Int((response.main.tempMin ?? response.main.temp).rounded()),
             humidity: response.main.humidity,
-            windSpeed: response.wind.speed
+            windSpeed: response.wind.speed ?? 0.0
         )
+        
+        print("✅ Current weather processed and published!")
     }
-    
+
     private func processForecastData(_ response: ForecastResponse) {
         let calendar = Calendar.current
-        let now = Date()
-        
-        // Hourly forecast (next 8 hours)
+        print("Processing forecast data with \(response.list.count) items.")
+
         var hourlyData: [HourlyForecastInfo] = []
         for item in response.list.prefix(8) {
             let date = Date(timeIntervalSince1970: item.dt)
@@ -270,16 +339,26 @@ class WeatherService: ObservableObject {
                 condition: condition
             ))
         }
-        hourlyForecasts = hourlyData
-        
-        // Daily forecast (group by day)
+        self.hourlyForecasts = hourlyData
+        print("Processed \(hourlyData.count) hourly forecasts.")
+
         var dailyData: [DailyForecastInfo] = []
         var dailyGroups: [String: [ForecastItem]] = [:]
         
+        if response.list.isEmpty {
+            print("Forecast list is empty. No daily data to process.")
+            self.dailyForecasts = []
+            return
+        }
+
         for item in response.list {
             let date = Date(timeIntervalSince1970: item.dt)
-            let dayKey = calendar.dateComponents([.year, .month, .day], from: date)
-            let dayString = "\(dayKey.year!)-\(dayKey.month!)-\(dayKey.day!)"
+            let dayKeyComponents = calendar.dateComponents([.year, .month, .day], from: date)
+            guard let year = dayKeyComponents.year, let month = dayKeyComponents.month, let day = dayKeyComponents.day else {
+                print("Could not get year/month/day from date \(date) for forecast item.")
+                continue
+            }
+            let dayString = "\(year)-\(month)-\(day)"
             
             if dailyGroups[dayString] == nil {
                 dailyGroups[dayString] = []
@@ -287,14 +366,20 @@ class WeatherService: ObservableObject {
             dailyGroups[dayString]?.append(item)
         }
         
-        for (_, items) in dailyGroups.sorted(by: { $0.key < $1.key }).prefix(5) {
+        print("Found \(dailyGroups.count) unique days for daily forecast.")
+
+        for (dayKey, items) in dailyGroups.sorted(by: { $0.key < $1.key }).prefix(5) {
             guard let firstItem = items.first else { continue }
             
+            print("Processing daily forecast for day: \(dayKey)")
+
             let date = Date(timeIntervalSince1970: firstItem.dt)
-            let high = items.map { $0.main.tempMax }.max() ?? 0
-            let low = items.map { $0.main.tempMin }.min() ?? 0
+            let high = items.map { $0.main.tempMax ?? $0.main.temp }.compactMap { $0 }.max() ?? firstItem.main.temp
+            let low = items.map { $0.main.tempMin ?? $0.main.temp }.compactMap { $0 }.min() ?? firstItem.main.temp
             let condition = mapOpenWeatherToCondition(firstItem.weather.first?.main ?? "", icon: firstItem.weather.first?.icon ?? "")
             
+            print(" - Date: \(date), High: \(high), Low: \(low), Condition: \(condition.rawValue)")
+
             dailyData.append(DailyForecastInfo(
                 date: date,
                 highTemp: Int(high.rounded()),
@@ -302,7 +387,9 @@ class WeatherService: ObservableObject {
                 condition: condition
             ))
         }
-        dailyForecasts = dailyData
+        self.dailyForecasts = dailyData
+        self.dailyForecasts = dailyData
+        print("Processed \(dailyData.count) daily forecasts.")
     }
     
     private func mapOpenWeatherToCondition(_ main: String, icon: String) -> WeatherCondition {
@@ -331,36 +418,40 @@ class WeatherService: ObservableObject {
     }
     
     private func handleAPIError(_ message: String) {
+        print("🔴 API Error: \(message)")
         errorMessage = message
         isLoading = false
-        // Fallback to mock data only if API fails
+        
+        print("⚠️ Falling back to mock weather data due to API error")
         generateMockWeatherData()
     }
 
     private func generateMockWeatherData() {
+        print("🎲 Generating mock weather data for \(selectedCity.displayName)")
         let calendar = Calendar.current
         let now = Date()
 
-        let mockHigh = 20 + Int.random(in: -3...3)
-        let mockLow = mockHigh - Int.random(in: 4...7)
+        let (baseTemp, commonCondition) = getMockDataForLocation(selectedCity)
+        let mockHigh = baseTemp + Int.random(in: 2...5)
+        let mockLow = baseTemp - Int.random(in: 2...5)
         
         self.currentWeather = CurrentWeatherInfo(
-            temperature: 18 + Int.random(in: -2...2),
-            condition: WeatherCondition.allCases.randomElement() ?? .partlyCloudyDay,
+            temperature: baseTemp + Int.random(in: -3...3),
+            condition: commonCondition,
             locationName: selectedCity.displayName,
             todayHigh: mockHigh,
             todayLow: mockLow,
-            humidity: 60 + Int.random(in: -20...20),
-            windSpeed: Double.random(in: 5...15)
+            humidity: 60 + Int.random(in: -25...25),
+            windSpeed: Double.random(in: 5...20)
         )
 
         var hourly: [HourlyForecastInfo] = []
         for i in 0..<8 {
             if let hourDate = calendar.date(byAdding: .hour, value: i + 1, to: now) {
                 hourly.append(HourlyForecastInfo(
-                    date: hourDate, 
-                    temperature: (self.currentWeather?.temperature ?? 18) - i/2 + Int.random(in: -1...1), 
-                    condition: WeatherCondition.allCases.randomElement()!
+                    date: hourDate,
+                    temperature: baseTemp + Int.random(in: -5...5),
+                    condition: getRandomConditionForLocation(selectedCity)
                 ))
             }
         }
@@ -369,17 +460,66 @@ class WeatherService: ObservableObject {
         var daily: [DailyForecastInfo] = []
         for i in 0..<7 {
             if let dayDate = calendar.date(byAdding: .day, value: i + 1, to: now) {
-                let high = mockHigh + Int.random(in: -2...2) - i/2
+                let dayHigh = baseTemp + Int.random(in: 0...8)
                 daily.append(DailyForecastInfo(
-                    date: dayDate, 
-                    highTemp: high, 
-                    lowTemp: high - Int.random(in: 4...7), 
-                    condition: WeatherCondition.allCases.randomElement()!
+                    date: dayDate,
+                    highTemp: dayHigh,
+                    lowTemp: dayHigh - Int.random(in: 5...10),
+                    condition: getRandomConditionForLocation(selectedCity)
                 ))
             }
         }
         self.dailyForecasts = daily
         
         self.lastUpdateTime = Date()
+        
+        print("✅ Mock weather data generated successfully")
+    }
+    
+    private func getMockDataForLocation(_ city: City) -> (Int, WeatherCondition) {
+        switch city.name {
+        case "Toronto", "Montreal", "Vancouver":
+            return (18, .partlyCloudyDay)
+        case "New York", "Chicago":
+            return (22, .clearDay)
+        case "London":
+            return (15, .cloudy)
+        case "Paris", "Berlin", "Amsterdam":
+            return (20, .partlyCloudyDay)
+        case "Tokyo", "Seoul":
+            return (25, .clearDay)
+        case "Sydney":
+            return (23, .clearDay)
+        case "Los Angeles", "Miami":
+            return (28, .clearDay)
+        case "Rome", "Madrid":
+            return (26, .clearDay)
+        case "Singapore":
+            return (31, .partlyCloudyDay)
+        case "Mumbai":
+            return (32, .partlyCloudyDay)
+        case "Dubai":
+            return (35, .clearDay)
+        case "São Paulo":
+            return (24, .partlyCloudyDay)
+        default:
+            return (20, .partlyCloudyDay)
+        }
+    }
+    
+    private func getRandomConditionForLocation(_ city: City) -> WeatherCondition {
+        let tropicalCities = ["Singapore", "Mumbai", "Miami"]
+        let temperateCities = ["London", "Paris", "Toronto", "New York"]
+        let desertCities = ["Dubai"]
+        
+        if tropicalCities.contains(city.name) {
+            return [.clearDay, .partlyCloudyDay, .rain, .thunderstorm].randomElement() ?? .partlyCloudyDay
+        } else if temperateCities.contains(city.name) {
+            return [.clearDay, .partlyCloudyDay, .cloudy, .rain].randomElement() ?? .partlyCloudyDay
+        } else if desertCities.contains(city.name) {
+            return [.clearDay, .clearDay, .clearDay, .partlyCloudyDay].randomElement() ?? .clearDay
+        } else {
+            return WeatherCondition.allCases.randomElement() ?? .partlyCloudyDay
+        }
     }
 }

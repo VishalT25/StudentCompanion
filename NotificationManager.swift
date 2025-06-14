@@ -154,9 +154,8 @@ class NotificationManager: ObservableObject {
                     // Skip if the reminder date is in the past
                     guard reminderDate > Date() else { continue }
                     
-                    // Check if this week is skipped
-                    let weekIdentifier = getWeekIdentifier(for: notificationDate)
-                    if item.skippedWeeks.contains(weekIdentifier) { continue }
+                    // Check if this specific instance is skipped using the new method
+                    if item.isSkipped(onDate: notificationDate) { continue }
                     
                     let content = UNMutableNotificationContent()
                     content.title = "📚 Class Starting Soon"
@@ -215,13 +214,6 @@ class NotificationManager: ObservableObject {
         components.minute = timeComponents.minute
         
         return calendar.date(from: components)
-    }
-    
-    private func getWeekIdentifier(for date: Date) -> String {
-        let calendar = Calendar.current
-        let year = calendar.component(.yearForWeekOfYear, from: date)
-        let week = calendar.component(.weekOfYear, from: date)
-        return "\(year)-W\(String(format: "%02d", week))"
     }
     
     private func getEmojiForCategory(_ categoryName: String) -> String {

@@ -13,6 +13,17 @@ enum AppTheme: String, CaseIterable, Identifiable {
     
     var displayName: String { rawValue }
     
+    var alternateIconName: String? {
+        switch self {
+        case .forest:
+            return "ForestThemeIcon"
+        case .ice:
+            return "IceThemeIcon"
+        case .fire:
+            return "FireThemeIcon"
+        }
+    }
+    
     var primaryColor: Color {
         switch self {
         case .forest:
@@ -143,6 +154,21 @@ class ThemeManager: ObservableObject {
     func setTheme(_ theme: AppTheme) {
         currentTheme = theme
         UserDefaults.standard.set(theme.rawValue, forKey: "selectedTheme")
+        
+        DispatchQueue.main.async {
+            let currentIconName = UIApplication.shared.alternateIconName
+            let newIconName = theme.alternateIconName
+            
+            if currentIconName != newIconName {
+                UIApplication.shared.setAlternateIconName(newIconName) { error in
+                    if let error = error {
+                        print("Error setting alternate app icon: \(error.localizedDescription)")
+                    } else {
+                        print("App icon changed successfully to \(newIconName ?? "Primary").")
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -160,7 +186,7 @@ struct Category: Identifiable, Hashable, Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
-        try container.encode(UIColor(color).cgColor.components ?? [0,0,0,1], forKey: .color) // Provide default if components nil
+        try container.encode(UIColor(color).cgColor.components ?? [0,0,0,1], forKey: .color)
     }
     
     init(from decoder: Decoder) throws {
@@ -171,7 +197,6 @@ struct Category: Identifiable, Hashable, Codable {
         if components.count == 4 {
             color = Color(UIColor(red: components[0], green: components[1], blue: components[2], alpha: components[3]))
         } else {
-            // Handle cases where color components might not be as expected, e.g. grayscale
             color = Color(UIColor(red: components[0], green: components[0], blue: components[0], alpha: components.count > 1 ? components[1] : 1.0))
         }
     }
@@ -232,11 +257,12 @@ struct ScheduleItem: Identifiable, Codable {
     var endTime: Date
     var daysOfWeek: Set<DayOfWeek>
     var color: Color
-    var skippedWeeks: Set<String> = [] // Store week identifiers (e.g., "2024-W01")
+    var skippedInstanceIdentifiers: Set<String> = []
     var reminderTime: ReminderTime = .none
+    var isLiveActivityEnabled: Bool = true
     
     enum CodingKeys: String, CodingKey {
-        case id, title, startTime, endTime, daysOfWeek, color, skippedWeeks, reminderTime
+        case id, title, startTime, endTime, daysOfWeek, color, skippedInstanceIdentifiers, reminderTime, isLiveActivityEnabled
     }
     
     func encode(to encoder: Encoder) throws {
@@ -246,9 +272,10 @@ struct ScheduleItem: Identifiable, Codable {
         try container.encode(startTime, forKey: .startTime)
         try container.encode(endTime, forKey: .endTime)
         try container.encode(Array(daysOfWeek), forKey: .daysOfWeek)
-        try container.encode(UIColor(color).cgColor.components ?? [0,0,0,1], forKey: .color) // Provide default
-        try container.encode(Array(skippedWeeks), forKey: .skippedWeeks)
+        try container.encode(UIColor(color).cgColor.components ?? [0,0,0,1], forKey: .color)
+        try container.encode(Array(skippedInstanceIdentifiers), forKey: .skippedInstanceIdentifiers)
         try container.encode(reminderTime, forKey: .reminderTime)
+        try container.encode(isLiveActivityEnabled, forKey: .isLiveActivityEnabled)
     }
     
     init(from decoder: Decoder) throws {
@@ -264,41 +291,33 @@ struct ScheduleItem: Identifiable, Codable {
         } else {
             color = Color(UIColor(red: components[0], green: components[0], blue: components[0], alpha: components.count > 1 ? components[1] : 1.0))
         }
-        skippedWeeks = Set(try container.decodeIfPresent([String].self, forKey: .skippedWeeks) ?? [])
+        skippedInstanceIdentifiers = Set(try container.decodeIfPresent([String].self, forKey: .skippedInstanceIdentifiers) ?? [])
         reminderTime = try container.decodeIfPresent(ReminderTime.self, forKey: .reminderTime) ?? .none
+        isLiveActivityEnabled = try container.decodeIfPresent(Bool.self, forKey: .isLiveActivityEnabled) ?? true
     }
     
-    init(title: String, startTime: Date, endTime: Date, daysOfWeek: Set<DayOfWeek>, color: Color = .blue, reminderTime: ReminderTime = .none) {
+    init(title: String, startTime: Date, endTime: Date, daysOfWeek: Set<DayOfWeek>, color: Color = .blue, reminderTime: ReminderTime = .none, isLiveActivityEnabled: Bool = true) {
         self.id = UUID()
         self.title = title
         self.startTime = startTime
         self.endTime = endTime
         self.daysOfWeek = daysOfWeek
         self.color = color
-        self.skippedWeeks = []
+        self.skippedInstanceIdentifiers = []
         self.reminderTime = reminderTime
+        self.isLiveActivityEnabled = isLiveActivityEnabled
     }
     
-    func isSkippedForCurrentWeek() -> Bool {
-        let weekIdentifier = ScheduleItem.sharedForWeekIdentifier.getCurrentWeekIdentifier() // Use shared utility
-        return skippedWeeks.contains(weekIdentifier)
+    static func instanceIdentifier(for itemID: UUID, onDate: Date) -> String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        return "\(itemID.uuidString)_\(dateFormatter.string(from: onDate))"
     }
-}
 
-fileprivate struct ScheduleItemWeekIdentifierFetcher {
-    static let shared = ScheduleItemWeekIdentifierFetcher()
-    private init() {}
-
-    func getCurrentWeekIdentifier() -> String {
-        let calendar = Calendar.current
-        let year = calendar.component(.yearForWeekOfYear, from: Date())
-        let week = calendar.component(.weekOfYear, from: Date())
-        return "\(year)-W\(String(format: "%02d", week))"
+    func isSkipped(onDate: Date) -> Bool {
+        let identifier = ScheduleItem.instanceIdentifier(for: self.id, onDate: onDate)
+        return skippedInstanceIdentifiers.contains(identifier)
     }
-}
-extension ScheduleItem {
-    // Make it static or provide a mechanism for ScheduleItem to call it
-    fileprivate static var sharedForWeekIdentifier = ScheduleItemWeekIdentifierFetcher.shared
 }
 
 enum DayOfWeek: Int, Codable, CaseIterable {
@@ -325,7 +344,7 @@ class EventViewModel: ObservableObject {
     private let categoriesKey = "savedCategories"
     private let eventsKey = "savedEvents"
     private let scheduleKey = "savedSchedule"
-    private let notificationManager = NotificationManager.shared // Assuming NotificationManager is a singleton
+    private let notificationManager = NotificationManager.shared
     
     init() {
         loadData()
@@ -335,7 +354,6 @@ class EventViewModel: ObservableObject {
     }
     
     private func loadData() {
-        // ... (existing loadData implementation, ensure Color decoding is robust)
         if let categoriesData = UserDefaults.standard.data(forKey: categoriesKey),
            let eventsData = UserDefaults.standard.data(forKey: eventsKey),
            let scheduleData = UserDefaults.standard.data(forKey: scheduleKey) {
@@ -361,7 +379,7 @@ class EventViewModel: ObservableObject {
             Category(name: "Personal", color: .purple)
         ]
         
-        guard let defaultCatID = categories.first?.id, 
+        guard let defaultCatID = categories.first?.id,
               let labCatID = categories.dropFirst().first?.id else {
             print("Default categories not set up correctly.")
             return
@@ -460,14 +478,13 @@ class EventViewModel: ObservableObject {
         saveData()
     }
     
-    // MARK: - Live Activity Management
     func currentActiveClass(at date: Date = Date()) -> ScheduleItem? {
         let calendar = Calendar.current
         let currentWeekday = calendar.component(.weekday, from: date)
         guard let todayDayOfWeek = DayOfWeek(rawValue: currentWeekday) else { return nil }
 
         return scheduleItems
-            .filter { $0.daysOfWeek.contains(todayDayOfWeek) && !$0.isSkippedForCurrentWeek() }
+            .filter { $0.daysOfWeek.contains(todayDayOfWeek) && !$0.isSkipped(onDate: date) }
             .first { item in
                 let itemStartTimeToday = LiveActivityManager.shared.getAbsoluteTime(for: item.startTime, on: date)
                 let itemEndTimeToday = LiveActivityManager.shared.getAbsoluteTime(for: item.endTime, on: date)
@@ -478,23 +495,29 @@ class EventViewModel: ObservableObject {
     @MainActor
     func manageLiveActivities(themeManager: ThemeManager) {
         // Reading directly from UserDefaults. Ensure "liveActivitiesEnabled" is the correct key used in SettingsView's AppStorage.
-        let liveActivitiesEnabled = UserDefaults.standard.bool(forKey: "liveActivitiesEnabled")
+        let globalLiveActivitiesEnabled = UserDefaults.standard.bool(forKey: "liveActivitiesEnabled") // Renamed for clarity
 
-        guard liveActivitiesEnabled else {
+        guard globalLiveActivitiesEnabled else { // Use the renamed variable
             LiveActivityManager.shared.endAllActivities() // End all if setting is off
-            print("Live Activities are disabled in settings.")
+            print("Live Activities are disabled globally in settings.")
             return
         }
 
         LiveActivityManager.shared.cleanupEndedActivities(scheduleItems: self.scheduleItems)
 
-        if let activeClass = currentActiveClass() { // 'activeClass' implies schedule item, consistent with current implementation
+        // The check for isLiveActivityEnabled is now inside LiveActivityManager.startActivity
+        if let activeClass = currentActiveClass() {
+            // The activeClass here is just the one that *could* be active based on time and skip status.
+            // The LiveActivityManager will make the final decision based on activeClass.isLiveActivityEnabled.
             LiveActivityManager.shared.startActivity(for: activeClass, themeManager: themeManager)
         } else {
-            // Logic for when no class is active
-            // Optional: If no class is active, one might ensure all *class* activities are ended.
-            // LiveActivityManager.shared.endAllActivities() // Or a more specific "endAllClassActivities()"
-            // However, cleanupEndedActivities and the guard for liveActivitiesEnabled should mostly cover this.
+            // If no class is potentially active (due to time/skip), ensure all class activities are ended.
+            // This part might be redundant if cleanupEndedActivities is robust, but can be a safeguard.
+            // Consider if a more targeted endAllClassActivities() is needed or if endAllActivities() is acceptable here.
+            // For now, if no class is active, we don't necessarily need to end all activities,
+            // as individual activities might be managed (e.g., if one was manually stopped).
+            // The existing `startActivity` will handle not starting if one is already running for the item.
+            // And `cleanupEndedActivities` handles those that should have ended.
         }
     }
     
@@ -504,7 +527,7 @@ class EventViewModel: ObservableObject {
             notificationManager.scheduleScheduleItemNotifications(for: item, reminderTime: item.reminderTime)
         }
         saveData()
-        if let themeManager {
+        if let themeManager, item.isLiveActivityEnabled {
             Task { @MainActor in
                 self.manageLiveActivities(themeManager: themeManager)
             }
@@ -516,15 +539,26 @@ class EventViewModel: ObservableObject {
             let oldItem = scheduleItems[idx]
             scheduleItems[idx] = item
             
+            // Preserve skipped instances when updating, unless explicitly cleared elsewhere
+            scheduleItems[idx].skippedInstanceIdentifiers = oldItem.skippedInstanceIdentifiers 
+
             notificationManager.removeAllScheduleItemNotifications(for: oldItem)
             if item.reminderTime != .none {
                 notificationManager.scheduleScheduleItemNotifications(for: item, reminderTime: item.reminderTime)
             }
             saveData()
+
             if let themeManager {
                 Task { @MainActor in
-                    LiveActivityManager.shared.updateActivity(for: item, themeManager: themeManager) // Update existing
-                    self.manageLiveActivities(themeManager: themeManager) // Re-evaluate current overall
+                    if !item.isLiveActivityEnabled && oldItem.isLiveActivityEnabled {
+                        // If live activity was just disabled for this item, end it.
+                        LiveActivityManager.shared.endActivity(for: item.id.uuidString)
+                    } else if item.isLiveActivityEnabled {
+                        // If enabled (or was already enabled and details changed), update or manage.
+                        // manageLiveActivities will re-evaluate and call startActivity (which internally updates or starts new)
+                        self.manageLiveActivities(themeManager: themeManager)
+                    }
+                    // If it was disabled and remains disabled, no action needed for live activities.
                 }
             }
         }
@@ -544,44 +578,53 @@ class EventViewModel: ObservableObject {
         }
     }
     
-    func toggleSkipForCurrentWeek(scheduleItem: ScheduleItem, themeManager: ThemeManager? = nil) {
-        if let index = scheduleItems.firstIndex(where: { $0.id == scheduleItem.id }) {
-            let weekIdentifier = self.getCurrentWeekIdentifier() // Call within EventViewModel
-            if scheduleItems[index].skippedWeeks.contains(weekIdentifier) {
-                scheduleItems[index].skippedWeeks.remove(weekIdentifier)
-            } else {
-                scheduleItems[index].skippedWeeks.insert(weekIdentifier)
-            }
-            
-            let item = scheduleItems[index]
-            if item.reminderTime != .none {
-                notificationManager.removeAllScheduleItemNotifications(for: item)
-                notificationManager.scheduleScheduleItemNotifications(for: item, reminderTime: item.reminderTime)
-            }
-            saveData()
-            if let themeManager {
-                 Task { @MainActor in
-                    // If the currently active class is the one being skipped/unskipped, its activity needs to end or restart.
-                    // manageLiveActivities will handle this logic.
-                    if scheduleItem.id == currentActiveClass()?.id {
-                        // End the specific activity if it was the one active and is now skipped
-                        if item.isSkippedForCurrentWeek() {
-                             LiveActivityManager.shared.endActivity(for: item.id.uuidString)
-                        }
+    func toggleSkip(forInstance scheduleItem: ScheduleItem, onDate: Date, themeManager: ThemeManager? = nil) {
+        guard let index = scheduleItems.firstIndex(where: { $0.id == scheduleItem.id }) else { return }
+        
+        let instanceIdentifier = ScheduleItem.instanceIdentifier(for: scheduleItem.id, onDate: onDate)
+        
+        if scheduleItems[index].skippedInstanceIdentifiers.contains(instanceIdentifier) {
+            scheduleItems[index].skippedInstanceIdentifiers.remove(instanceIdentifier)
+        } else {
+            scheduleItems[index].skippedInstanceIdentifiers.insert(instanceIdentifier)
+        }
+        
+        let updatedItem = scheduleItems[index] // Get the modified item
+        
+        // Reschedule notifications if reminder time is set
+        if updatedItem.reminderTime != .none {
+            notificationManager.removeAllScheduleItemNotifications(for: updatedItem) // Use updatedItem
+            notificationManager.scheduleScheduleItemNotifications(for: updatedItem, reminderTime: updatedItem.reminderTime)
+        }
+        
+        saveData()
+        
+        if let themeManager {
+            Task { @MainActor in
+                // If this specific instance was active and is now skipped, end its Live Activity
+                // Or if it was skipped and now unskipped, and is currently active time-wise, manageLiveActivities will handle it.
+                let now = Date()
+                let calendar = Calendar.current
+                if calendar.isDate(onDate, inSameDayAs: now) { // Only manage live activities if the skip is for today
+                    if updatedItem.isSkipped(onDate: now) && updatedItem.id == currentActiveClass(at: now)?.id {
+                         LiveActivityManager.shared.endActivity(for: updatedItem.id.uuidString)
+                    } else {
+                        // If unskipped or a different item, re-evaluate live activities
+                        self.manageLiveActivities(themeManager: themeManager)
                     }
-                    self.manageLiveActivities(themeManager: themeManager)
-                 }
+                }
             }
         }
     }
     
     func todaysSchedule() -> [ScheduleItem] {
         let calendar = Calendar.current
-        let weekday = calendar.component(.weekday, from: Date())
-        guard let today = DayOfWeek(rawValue: weekday) else { return [] }
+        let todayDate = Date() // Use a consistent "today"
+        let weekday = calendar.component(.weekday, from: todayDate)
+        guard let todayDayOfWeek = DayOfWeek(rawValue: weekday) else { return [] }
         
         return scheduleItems
-            .filter { $0.daysOfWeek.contains(today) && !$0.isSkippedForCurrentWeek() }
+            .filter { $0.daysOfWeek.contains(todayDayOfWeek) && !$0.isSkipped(onDate: todayDate) }
             .sorted { $0.startTime < $1.startTime }
     }
     
@@ -621,13 +664,6 @@ class EventViewModel: ObservableObject {
             let eventYear = calendar.component(.year, from: event.date)
             return eventMonth == month && eventYear == year
         }
-    }
-
-    private func getCurrentWeekIdentifier() -> String {
-        let calendar = Calendar.current
-        let year = calendar.component(.yearForWeekOfYear, from: Date())
-        let week = calendar.component(.weekOfYear, from: Date())
-        return "\(year)-W\(String(format: "%02d", week))"
     }
 }
 
@@ -689,7 +725,6 @@ extension Color {
 struct EventsPreviewView: View {
     @EnvironmentObject var viewModel: EventViewModel
     @EnvironmentObject var themeManager: ThemeManager
-    // Removed 'let events: [Event]' as it's fetched from viewModel
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -700,7 +735,7 @@ struct EventsPreviewView: View {
                 
                 Spacer()
                 
-                NavigationLink(value: AppRoute.events) { // Assuming AppRoute is defined elsewhere
+                NavigationLink(value: AppRoute.events) {
                     Image(systemName: "arrow.right.circle.fill")
                         .foregroundColor(.white)
                         .font(.title2)
@@ -716,12 +751,11 @@ struct EventsPreviewView: View {
                 VStack(spacing: 8) {
                     ForEach(upcomingEvents.prefix(3)) { event in
                         EventPreviewCard(event: event)
-                            .environmentObject(viewModel) // Already available via @EnvironmentObject
+                            .environmentObject(viewModel)
                     }
                     
                     if upcomingEvents.count > 3 {
-                        // NavigationLink or Button to navigate to full events list
-                        NavigationLink(value: AppRoute.events) { // Assuming AppRoute
+                        NavigationLink(value: AppRoute.events) {
                              HStack {
                                 Spacer()
                                 Text("View All \(upcomingEvents.count) Events...")
@@ -867,12 +901,12 @@ struct EventsListView: View {
             }
         }
         .sheet(isPresented: $showingAddEvent) {
-            AddEventView(isPresented: $showingAddEvent) // Pass ThemeManager if needed directly
+            AddEventView(isPresented: $showingAddEvent)
                 .environmentObject(viewModel)
                 .environmentObject(themeManager)
         }
         .sheet(isPresented: $showingAddCategory) {
-            AddCategoryView(isPresented: $showingAddCategory) // Pass ThemeManager if needed directly
+            AddCategoryView(isPresented: $showingAddCategory)
                 .environmentObject(viewModel)
                 .environmentObject(themeManager)
         }
@@ -888,7 +922,7 @@ struct EventsListView: View {
                 .pickerStyle(SegmentedPickerStyle())
                 .padding(.horizontal)
             }
-            .padding(.top, 8) // Added padding to top
+            .padding(.top, 8)
             
             if !showCalendarView {
                 HStack {
@@ -918,7 +952,7 @@ struct EventsListView: View {
             }
         }
         .padding(.vertical, 8)
-        .background(Color(.systemGroupedBackground)) // Or systemBackground for theme consistency
+        .background(Color(.systemGroupedBackground))
     }
     
     private var listView: some View {
@@ -926,11 +960,10 @@ struct EventsListView: View {
             if showCategories {
                 Section {
                     ForEach(viewModel.categories.indices, id: \.self) { idx in
-                        // Use a stable ID if categories can be reordered/deleted often, otherwise index is fine for now
                         NavigationLink {
                             CategoryEditView(category: $viewModel.categories[idx], isNew: false)
-                                .environmentObject(viewModel) // Already available
-                                .environmentObject(themeManager) // Already available
+                                .environmentObject(viewModel)
+                                .environmentObject(themeManager)
                         } label: {
                             CategoryRow(category: viewModel.categories[idx])
                         }
@@ -995,9 +1028,7 @@ struct EventsListView: View {
                         Text("Recent Past Events")
                         Spacer()
                         if sortedPastEvents.count > 10 {
-                            Text("10+") // Or actual count if preferred
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            Text("10+")
                         } else {
                             Text("\(sortedPastEvents.count)")
                                 .font(.caption)
@@ -1033,7 +1064,7 @@ struct EventsListView: View {
 
     private func deletePastEvent(at offsets: IndexSet) {
         offsets.forEach { index in
-            let eventToDelete = sortedPastEvents[index] // Be careful with prefix(10) if indices don't match
+            let eventToDelete = sortedPastEvents[index]
             viewModel.deleteEvent(eventToDelete)
         }
     }
@@ -1059,7 +1090,7 @@ struct EventsListView: View {
         .background(Color(.systemGroupedBackground))
     }
     
-    private var eventsForSelectedDateView: some View { // Renamed from eventsForSelectedDate
+    private var eventsForSelectedDateView: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Events for \(selectedDate, style: .date)")
@@ -1068,7 +1099,7 @@ struct EventsListView: View {
                 Spacer()
             }
             
-            LazyVStack(spacing: 8) { // Changed to LazyVStack
+            LazyVStack(spacing: 8) {
                 ForEach(viewModel.events(for: selectedDate)) { event in
                     NavigationLink {
                         EventEditView(event: event, isNew: false)
@@ -1084,7 +1115,7 @@ struct EventsListView: View {
             }
         }
         .padding()
-        .background(Color(.secondarySystemGroupedBackground)) // Slightly different background
+        .background(Color(.secondarySystemGroupedBackground))
         .cornerRadius(12)
     }
 }
@@ -1169,7 +1200,7 @@ struct CategoryRow: View {
                 .frame(width: 28, height: 28)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(.systemBackground), lineWidth: 2) // Use systemBackground for better adaptability
+                        .stroke(Color(.systemBackground), lineWidth: 2)
                 )
             
             Text(category.name)
@@ -1188,7 +1219,7 @@ struct CalendarGridView: View {
     @Binding var selectedDate: Date
     @State private var currentMonth = Date()
     
-    private var calendar: Calendar { Calendar.current } // Make it a computed property
+    private var calendar: Calendar { Calendar.current }
     
     var body: some View {
         VStack(spacing: 16) {
@@ -1227,7 +1258,7 @@ struct CalendarGridView: View {
             calendarGrid
         }
         .padding()
-        .background(Color(.systemBackground)) // Or secondarySystemGroupedBackground
+        .background(Color(.systemBackground))
         .cornerRadius(16)
     }
     
@@ -1237,10 +1268,10 @@ struct CalendarGridView: View {
                  Text(daySymbol)
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
-                    .frame(height: 30) // Ensure consistent height
+                    .frame(height: 30)
             }
             
-            ForEach(calendarDays(), id: \.self) { date in // Call calendarDays()
+            ForEach(calendarDays(), id: \.self) { date in
                 CalendarDayView(
                     date: date,
                     isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
@@ -1249,22 +1280,20 @@ struct CalendarGridView: View {
                 ) {
                     selectedDate = date
                 }
-                .environmentObject(themeManager) // Pass if needed, or ensure it's inherited
+                .environmentObject(themeManager)
             }
         }
     }
     
-    private func calendarDays() -> [Date] { // Changed to a function
+    private func calendarDays() -> [Date] {
         guard let monthInterval = calendar.dateInterval(of: .month, for: currentMonth),
               let monthFirstWeek = calendar.dateInterval(of: .weekOfYear, for: monthInterval.start),
-              // Ensure monthInterval.end - 1 is valid, or just use monthInterval.end for the last week
-              let monthLastWeek = calendar.dateInterval(of: .weekOfYear, for: calendar.date(byAdding: .day, value: -1, to: monthInterval.end)!) 
+              let monthLastWeek = calendar.dateInterval(of: .weekOfYear, for: calendar.date(byAdding: .day, value: -1, to: monthInterval.end)!)
         else { return [] }
         
         var days: [Date] = []
         var date = monthFirstWeek.start
         
-        // Loop through days from the start of the first week to the end of the last week
         while date < monthLastWeek.end {
             days.append(date)
             guard let nextDay = calendar.date(byAdding: .day, value: 1, to: date) else { break }
@@ -1298,12 +1327,12 @@ struct CalendarDayView: View {
                         .fill(themeManager.currentTheme.secondaryColor)
                         .frame(width: 6, height: 6)
                 } else {
-                    Circle() // Keep for layout consistency
+                    Circle()
                         .fill(Color.clear)
                         .frame(width: 6, height: 6)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 40) // Make it flexible and ensure min height
+            .frame(maxWidth: .infinity, minHeight: 40)
             .background(backgroundColor)
             .cornerRadius(8)
         }
@@ -1316,7 +1345,7 @@ struct CalendarDayView: View {
         } else if isCurrentMonth {
             return .primary
         } else {
-            return .secondary.opacity(0.5) // Dim non-current month days more
+            return .secondary.opacity(0.5)
         }
     }
     
@@ -1325,7 +1354,7 @@ struct CalendarDayView: View {
             return themeManager.currentTheme.primaryColor
         } else if hasEvents && isCurrentMonth {
             return themeManager.currentTheme.primaryColor.opacity(0.1)
-        } else if calendar.isDateInToday(date) && isCurrentMonth { // Highlight today
+        } else if calendar.isDateInToday(date) && isCurrentMonth {
             return Color.gray.opacity(0.15)
         }
         else {
@@ -1367,12 +1396,12 @@ struct CalendarEventCard: View {
                 .cornerRadius(8)
         }
         .padding()
-        .background(Color(.tertiarySystemFill)) // Use semantic color
+        .background(Color(.tertiarySystemFill))
         .cornerRadius(8)
     }
 }
 
-extension EventsListView { // Kept for DateFormatter, though not directly used in visible code
+extension EventsListView {
     static let dateFormatter: DateFormatter = {
         let f = DateFormatter(); f.dateStyle = .short; f.timeStyle = .short; return f
     }()
@@ -1385,7 +1414,7 @@ struct AddEventView: View {
     @Binding var isPresented: Bool
     @State private var date = Date()
     @State private var title = ""
-    @State private var selectedCategory: Category? // Use optional Category
+    @State private var selectedCategory: Category?
     @State private var reminderTime: ReminderTime = .none
 
     var body: some View {
@@ -1395,19 +1424,18 @@ struct AddEventView: View {
                     TextField("Event Title", text: $title)
                         .font(.headline)
                     DatePicker("Date & Time", selection: $date, displayedComponents: [.date, .hourAndMinute])
-                        .datePickerStyle(.graphical) // Or .compact
+                        .datePickerStyle(.graphical)
                 } header: {
                     Text("Event Details")
                 }
                 
                 Section {
-                    // Ensure categories are loaded for the picker
                     if viewModel.categories.isEmpty {
                         Text("No categories available. Please add a category first.")
                             .foregroundColor(.secondary)
                     } else {
                         Picker("Category", selection: $selectedCategory) {
-                            Text("None").tag(nil as Category?) // Option for no category
+                            Text("None").tag(nil as Category?)
                             ForEach(viewModel.categories) { cat in
                                 HStack {
                                     RoundedRectangle(cornerRadius: 4)
@@ -1415,10 +1443,10 @@ struct AddEventView: View {
                                         .frame(width: 20, height: 20)
                                     Text(cat.name)
                                 }
-                                .tag(Optional(cat)) // Tag as Optional<Category>
+                                .tag(Optional(cat))
                             }
                         }
-                        .onAppear { // Set default selection
+                        .onAppear {
                             if selectedCategory == nil, let firstCategory = viewModel.categories.first {
                                 selectedCategory = firstCategory
                             }
@@ -1451,8 +1479,6 @@ struct AddEventView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
                         guard let category = selectedCategory else {
-                            // Handle case where no category is selected, if required
-                            // For now, assume a category must be selected or use a default
                             print("No category selected")
                             return
                         }
@@ -1460,12 +1486,12 @@ struct AddEventView: View {
                         viewModel.addEvent(newEvent)
                         isPresented = false
                     }
-                    .disabled(title.isEmpty || selectedCategory == nil) // Disable if no title or category
+                    .disabled(title.isEmpty || selectedCategory == nil)
                     .foregroundColor((title.isEmpty || selectedCategory == nil) ? .secondary : themeManager.currentTheme.primaryColor)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { isPresented = false }
-                        .foregroundColor(.secondary) // Standard cancel color
+                        .foregroundColor(.secondary)
                 }
             }
         }
@@ -1478,7 +1504,7 @@ struct AddCategoryView: View {
     @EnvironmentObject var themeManager: ThemeManager
     @Binding var isPresented: Bool
     @State private var name = ""
-    @State private var color: Color = .blue // Default color
+    @State private var color: Color = .blue
 
     var body: some View {
         NavigationView {
@@ -1514,7 +1540,7 @@ struct AddCategoryView: View {
                         viewModel.addCategory(cat)
                         isPresented = false
                     }
-                    .disabled(name.isEmpty) // Disable if name is empty
+                    .disabled(name.isEmpty)
                     .foregroundColor(name.isEmpty ? .secondary : themeManager.currentTheme.primaryColor)
                 }
                 ToolbarItem(placement: .cancellationAction) {
@@ -1530,13 +1556,9 @@ struct AddCategoryView: View {
 struct EventEditView: View {
     @EnvironmentObject var viewModel: EventViewModel
     @EnvironmentObject var themeManager: ThemeManager
-    @State var event: Event // Use @State for mutable copy
-    @Environment(\.dismiss) var dismiss // Use new dismiss
-    var isNew = false // This determines if we are adding or editing
-
-    // Initializer to handle both new and existing events if needed,
-    // or rely on how this view is presented.
-    // For simplicity, assuming `event` is appropriately set before this view appears.
+    @State var event: Event
+    @Environment(\.dismiss) var dismiss
+    var isNew = false
 
     var body: some View {
         Form {
@@ -1545,30 +1567,28 @@ struct EventEditView: View {
                     .font(.headline)
                 
                 DatePicker("Date & Time", selection: $event.date, displayedComponents: [.date, .hourAndMinute])
-                    .datePickerStyle(.graphical) // Or .compact
+                    .datePickerStyle(.graphical)
             } header: {
                 Text("Event Details")
             }
             
             Section {
-                // Binding for Picker requires Category to be Hashable if used directly
-                // We use categoryId and find the category.
                 let categoryBinding = Binding<UUID>(
                     get: { event.categoryId },
                     set: { event.categoryId = $0 }
                 )
                 Picker("Category", selection: categoryBinding) {
-                    ForEach(viewModel.categories, id: \.id) { cat in // Use id for Hashable
+                    ForEach(viewModel.categories, id: \.id) { cat in
                         HStack {
                             RoundedRectangle(cornerRadius: 4)
                                 .fill(cat.color)
                                 .frame(width: 20, height: 20)
                             Text(cat.name)
                         }
-                        .tag(cat.id) // Tag with ID
+                        .tag(cat.id)
                     }
                 }
-                 .onAppear { // Ensure categoryId matches an existing category or set a default
+                 .onAppear {
                     if !viewModel.categories.contains(where: { $0.id == event.categoryId }), let firstCategory = viewModel.categories.first {
                         event.categoryId = firstCategory.id
                     }
@@ -1594,7 +1614,7 @@ struct EventEditView: View {
                 }
             }
 
-            if !isNew { // Show delete only if editing an existing event
+            if !isNew {
                 Section {
                     Button(role: .destructive) {
                         viewModel.deleteEvent(event)
@@ -1616,17 +1636,17 @@ struct EventEditView: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button(isNew ? "Add" : "Save") {
-                    if isNew { // Logic based on how this view is presented
+                    if isNew {
                         viewModel.addEvent(event)
                     } else {
                         viewModel.updateEvent(event)
                     }
                     dismiss()
                 }
-                .disabled(event.title.isEmpty) // Basic validation
+                .disabled(event.title.isEmpty)
                 .foregroundColor(event.title.isEmpty ? .secondary : themeManager.currentTheme.primaryColor)
             }
-            if isNew { // Show cancel only if adding a new event
+            if isNew {
                  ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                         .foregroundColor(.secondary)
@@ -1638,11 +1658,11 @@ struct EventEditView: View {
 
 // MARK: - CategoryEditView (Enhanced)
 struct CategoryEditView: View {
-    @EnvironmentObject var viewModel: EventViewModel // Not strictly needed if only mutating binding
+    @EnvironmentObject var viewModel: EventViewModel
     @EnvironmentObject var themeManager: ThemeManager
-    @Binding var category: Category // Use Binding to directly mutate the source
+    @Binding var category: Category
     @Environment(\.dismiss) var dismiss
-    var isNew: Bool // To control "Add" vs "Save" and "Delete" button
+    var isNew: Bool
 
     var body: some View {
         Form {
@@ -1668,10 +1688,10 @@ struct CategoryEditView: View {
                 }
             }
             
-            if !isNew { // Show delete only if editing an existing category
+            if !isNew {
                 Section {
                     Button(role: .destructive) {
-                        viewModel.deleteCategory(category) // Use viewModel to handle deletion from the source
+                        viewModel.deleteCategory(category)
                         dismiss()
                     } label: {
                         HStack {
@@ -1691,28 +1711,16 @@ struct CategoryEditView: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button(isNew ? "Add" : "Save") {
                     if isNew {
-                        // If it's a new category, it should have been added via AddCategoryView.
-                        // This view with isNew=true might be part of a different flow.
-                        // For now, assume if isNew, the category is transient and needs to be added.
-                        // However, AddCategoryView handles new category creation.
-                        // This `isNew` here usually means this view is FOR a new category before adding it.
-                        // The viewModel.addCategory might be called by the presenting view.
-                        // If `isNew` means "create and dismiss", then:
-                        // if isNew { viewModel.addCategory(category) } else { viewModel.updateCategory(category) }
-                        // This depends on how CategoryEditView is used for "new" categories.
-                        // For simplicity, let's assume `updateCategory` is for existing, and if `isNew` were true,
-                        // it's added *before* this view or by a different mechanism.
-                        // The current structure where CategoryRow navigates here implies it's for editing.
-                        viewModel.updateCategory(category) // Existing categories are updated
+                        viewModel.addCategory(category)
                     } else {
-                         viewModel.updateCategory(category)
+                        viewModel.updateCategory(category)
                     }
                     dismiss()
                 }
                 .disabled(category.name.isEmpty)
                 .foregroundColor(category.name.isEmpty ? .secondary : themeManager.currentTheme.primaryColor)
             }
-             if isNew { // Show cancel only if presented for a new, unadded category
+             if isNew {
                  ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                         .foregroundColor(.secondary)
@@ -1725,14 +1733,10 @@ struct CategoryEditView: View {
 // MARK: - Previews
 struct EventsModule_Previews: PreviewProvider {
     static var previews: some View {
-        // Create a sample EventViewModel for previews
-        let sampleViewModel = EventViewModel()
-        // Optionally populate with more specific sample data if needed for previewing states
-        
-        return NavigationView {
+        NavigationView {
             EventsListView()
-                .environmentObject(sampleViewModel)
-                .environmentObject(ThemeManager()) // Assuming ThemeManager can be initialized simply
+                .environmentObject(EventViewModel())
+                .environmentObject(ThemeManager())
         }
     }
 }
