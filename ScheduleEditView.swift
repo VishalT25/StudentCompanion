@@ -12,6 +12,7 @@ struct ScheduleEditView: View {
     @State private var isLiveActivityEnabled: Bool = true
     @State private var reminderTime: ReminderTime = .none
     @State private var showingSkipOptions = false
+    @State private var showingReminderPicker = false
     
     // Individual state for each day - simpler for compiler
     @State private var sunday = false
@@ -81,12 +82,20 @@ struct ScheduleEditView: View {
                 }
                 
                 Section("Reminder") {
-                    Picker("Reminder", selection: $reminderTime) {
-                        ForEach(ReminderTime.allCases) { time in
-                            Text(time.displayName).tag(time)
+                    Button(action: {
+                        showingReminderPicker = true
+                    }) {
+                        HStack {
+                            Text("Reminder")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Text(reminderTime.displayName)
+                                .foregroundColor(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                     }
-                    .pickerStyle(.menu)
                 }
                 
                 Section("Color") {
@@ -149,6 +158,9 @@ struct ScheduleEditView: View {
                     }
                     .disabled(title.isEmpty || selectedDays.isEmpty || endTime <= startTime)
                 }
+            }
+            .sheet(isPresented: $showingReminderPicker) {
+                CustomReminderPickerView(selectedReminder: $reminderTime)
             }
         }
         .alert("Delete Schedule Item", isPresented: $showingDeleteAlert) {

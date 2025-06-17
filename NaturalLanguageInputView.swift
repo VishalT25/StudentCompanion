@@ -389,8 +389,8 @@ struct NaturalLanguageInputView: View {
         switch result {
         case .parsedEvent(let title, let date, let categoryName, let reminderTime):
             handleAddEvent(title: title, date: date, categoryName: categoryName, reminderTime: reminderTime)
-        case .parsedScheduleItem(let title, let days, let startTimeComponents, let endTimeComponents, let duration, let reminderTime):
-            handleAddScheduleItem(title: title, days: days, startTimeComponents: startTimeComponents, endTimeComponents: endTimeComponents, duration: duration, reminderTime: reminderTime)
+        case .parsedScheduleItem(let title, let days, let startTimeComponents, let endTimeComponents, let duration, let reminderTime, let colorHex):
+            handleAddScheduleItem(title: title, days: days, startTimeComponents: startTimeComponents, endTimeComponents: endTimeComponents, duration: duration, reminderTime: reminderTime, colorHex: colorHex)
         case .parsedGrade(let courseName, let assignmentName, let grade, let weight):
             handleAddGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: weight)
         case .needsMoreInfo(let prompt, _, let context, let conversationId):
@@ -428,14 +428,19 @@ struct NaturalLanguageInputView: View {
         let eventDate = date ?? Date() 
 
         var finalCategoryId: UUID? = nil
+        
+        // FIXED: Only auto-assign category if one was explicitly provided by NLP engine
         if let catName = categoryName, let foundCategory = eventViewModel.categories.first(where: { $0.name.lowercased() == catName.lowercased() }) {
             finalCategoryId = foundCategory.id
-        } else if let firstCategory = eventViewModel.categories.first { 
-            finalCategoryId = firstCategory.id
+        } else if categoryName != nil {
+            // If NLP engine provided a category name but we can't find it, show error
+            showSimpleAlert(title: "Category Not Found", message: "The category '\(categoryName!)' was not found. Please add this category first or choose from existing categories.")
+            return
         }
+        // FIXED: Don't auto-assign first category - this should have been handled by NLP engine asking for category
 
         guard let categoryId = finalCategoryId else {
-            showSimpleAlert(title: "Event Error", message: "No categories available or specified category not found. Please add a category first or check the name.")
+            showSimpleAlert(title: "Event Error", message: "No category was specified. The NLP engine should have asked for this information.")
             return
         }
 
@@ -444,7 +449,7 @@ struct NaturalLanguageInputView: View {
         dismiss() 
     }
 
-    private func handleAddScheduleItem(title: String, days: Set<DayOfWeek>, startTimeComponents: DateComponents?, endTimeComponents: DateComponents?, duration: TimeInterval?, reminderTime: ReminderTime?) {
+    private func handleAddScheduleItem(title: String, days: Set<DayOfWeek>, startTimeComponents: DateComponents?, endTimeComponents: DateComponents?, duration: TimeInterval?, reminderTime: ReminderTime?, colorHex: String?) {
         guard !title.isEmpty else {
             showSimpleAlert(title: "Schedule Item Error", message: "Please provide a title for the schedule item (e.g., 'Math class').")
             return
@@ -487,7 +492,13 @@ struct NaturalLanguageInputView: View {
         let startTimeDate = calendar.date(bySettingHour: startHour, minute: startMinute, second: 0, of: Date()) ?? Date()
         let endTimeDate = calendar.date(bySettingHour: endHour, minute: endMinute, second: 0, of: Date()) ?? Date()
         
-        let itemColor = themeManager.currentTheme.secondaryColor
+        // Use provided color or default to theme color
+        let itemColor: Color
+        if let hexColor = colorHex {
+            itemColor = Color(hex: hexColor) ?? themeManager.currentTheme.secondaryColor
+        } else {
+            itemColor = themeManager.currentTheme.secondaryColor
+        }
 
         let newScheduleItem = ScheduleItem(
             title: title,

@@ -135,6 +135,7 @@ struct EventReminderRow: View {
     @EnvironmentObject var notificationManager: NotificationManager
     @EnvironmentObject var themeManager: ThemeManager
     let event: Event
+    @State private var showingReminderPicker = false
     
     var body: some View {
         HStack(spacing: 12) {
@@ -164,16 +165,30 @@ struct EventReminderRow: View {
             
             Spacer()
             
-            // Reminder picker
-            Picker("Reminder", selection: reminderBinding) {
-                ForEach(ReminderTime.allCases) { time in
-                    Text(time.shortDisplayName).tag(time)
+            // Reminder button with custom picker
+            Button(action: {
+                showingReminderPicker = true
+            }) {
+                HStack(spacing: 4) {
+                    Text(event.reminderTime.shortDisplayName)
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(.systemGray6))
+                .cornerRadius(6)
             }
-            .pickerStyle(.menu)
-            .frame(width: 80)
+            .buttonStyle(PlainButtonStyle())
         }
         .padding(.vertical, 2)
+        .sheet(isPresented: $showingReminderPicker) {
+            CustomReminderPickerView(selectedReminder: reminderBinding)
+        }
     }
     
     private var reminderBinding: Binding<ReminderTime> {
@@ -200,6 +215,7 @@ struct ScheduleReminderRow: View {
     @EnvironmentObject var notificationManager: NotificationManager
     @EnvironmentObject var themeManager: ThemeManager
     let scheduleItem: ScheduleItem
+    @State private var showingReminderPicker = false
     
     var body: some View {
         HStack(spacing: 12) {
@@ -230,16 +246,30 @@ struct ScheduleReminderRow: View {
             
             Spacer()
             
-            // Reminder picker
-            Picker("Reminder", selection: reminderBinding) {
-                ForEach(ReminderTime.allCases) { time in
-                    Text(time.shortDisplayName).tag(time)
+            // Reminder button with custom picker
+            Button(action: {
+                showingReminderPicker = true
+            }) {
+                HStack(spacing: 4) {
+                    Text(scheduleItem.reminderTime.shortDisplayName)
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(.systemGray6))
+                .cornerRadius(6)
             }
-            .pickerStyle(.menu)
-            .frame(width: 80)
+            .buttonStyle(PlainButtonStyle())
         }
         .padding(.vertical, 2)
+        .sheet(isPresented: $showingReminderPicker) {
+            CustomReminderPickerView(selectedReminder: reminderBinding)
+        }
     }
     
     private var reminderBinding: Binding<ReminderTime> {

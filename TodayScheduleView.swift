@@ -60,6 +60,7 @@ struct TodayScheduleView: View {
                         
                         ForEach(events) { event in
                             CompactEventItemView(event: event)
+                                .environmentObject(viewModel)
                         }
                     }
                 }
@@ -135,10 +136,6 @@ struct CompactScheduleItemView: View {
                     Text("SKIPPED TODAY")
                         .font(.caption2.weight(.bold))
                         .foregroundColor(.orange.opacity(0.9))
-                } else if item.reminderTime != .none && !item.isSkipped(onDate: Date()) {
-                    Text("Reminder: \(item.reminderTime.shortDisplayName)")
-                        .font(.caption2)
-                        .foregroundColor(.white.opacity(0.7))
                 }
             }
             
@@ -172,6 +169,7 @@ struct CompactScheduleItemView: View {
 }
 
 struct CompactEventItemView: View {
+    @EnvironmentObject var viewModel: EventViewModel
     let event: Event
     
     private let timeFormatter: DateFormatter = {
@@ -200,15 +198,14 @@ struct CompactEventItemView: View {
             
             Spacer()
             
-            if event.reminderTime != .none {
-                Text(event.reminderTime.shortDisplayName)
-                    .font(.caption2.weight(.medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(.white.opacity(0.15))
-                    .cornerRadius(6)
+            Button(action: {
+                viewModel.markEventCompleted(event)
+            }) {
+                Image(systemName: "checkmark.circle")
+                    .font(.title2)
+                    .foregroundColor(.white.opacity(0.8))
             }
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 4)
     }

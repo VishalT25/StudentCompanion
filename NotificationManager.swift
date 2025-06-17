@@ -3,49 +3,189 @@ import UserNotifications
 import UIKit
 
 // MARK: - Reminder Time Options
-enum ReminderTime: Int, CaseIterable, Identifiable, Codable {
-    case none = 0
-    case fiveMinutes = 5
-    case fifteenMinutes = 15
-    case thirtyMinutes = 30
-    case oneHour = 60
-    case twoHours = 120
-    case oneDay = 1440
-    case twoDays = 2880
-    case oneWeek = 10080
+enum ReminderTime: Codable, Equatable, Identifiable {
+    case none
+    case minutes(Int)
+    case hours(Int)
+    case days(Int)
+    case weeks(Int)
     
-    var id: Int { rawValue }
+    var id: String {
+        switch self {
+        case .none:
+            return "none"
+        case .minutes(let m):
+            return "minutes-\(m)"
+        case .hours(let h):
+            return "hours-\(h)"
+        case .days(let d):
+            return "days-\(d)"
+        case .weeks(let w):
+            return "weeks-\(w)"
+        }
+    }
     
     var displayName: String {
         switch self {
-        case .none: return "No reminder"
-        case .fiveMinutes: return "5 minutes before"
-        case .fifteenMinutes: return "15 minutes before"
-        case .thirtyMinutes: return "30 minutes before"
-        case .oneHour: return "1 hour before"
-        case .twoHours: return "2 hours before"
-        case .oneDay: return "1 day before"
-        case .twoDays: return "2 days before"
-        case .oneWeek: return "1 week before"
+        case .none:
+            return "No reminder"
+        case .minutes(let m):
+            return m == 1 ? "1 minute before" : "\(m) minutes before"
+        case .hours(let h):
+            return h == 1 ? "1 hour before" : "\(h) hours before"
+        case .days(let d):
+            return d == 1 ? "1 day before" : "\(d) days before"
+        case .weeks(let w):
+            return w == 1 ? "1 week before" : "\(w) weeks before"
         }
     }
     
     var shortDisplayName: String {
         switch self {
-        case .none: return "None"
-        case .fiveMinutes: return "5m"
-        case .fifteenMinutes: return "15m"
-        case .thirtyMinutes: return "30m"
-        case .oneHour: return "1h"
-        case .twoHours: return "2h"
-        case .oneDay: return "1d"
-        case .twoDays: return "2d"
-        case .oneWeek: return "1w"
+        case .none:
+            return "None"
+        case .minutes(let m):
+            return "\(m)m"
+        case .hours(let h):
+            return "\(h)h"
+        case .days(let d):
+            return "\(d)d"
+        case .weeks(let w):
+            return "\(w)w"
         }
     }
     
     var timeInterval: TimeInterval {
-        TimeInterval(rawValue * 60)
+        switch self {
+        case .none:
+            return 0
+        case .minutes(let m):
+            return TimeInterval(m * 60)
+        case .hours(let h):
+            return TimeInterval(h * 3600)
+        case .days(let d):
+            return TimeInterval(d * 86400)
+        case .weeks(let w):
+            return TimeInterval(w * 604800)
+        }
+    }
+    
+    var totalMinutes: Int {
+        switch self {
+        case .none:
+            return 0
+        case .minutes(let m):
+            return m
+        case .hours(let h):
+            return h * 60
+        case .days(let d):
+            return d * 1440
+        case .weeks(let w):
+            return w * 10080
+        }
+    }
+    
+    // Common presets for UI convenience
+    static let commonPresets: [ReminderTime] = [
+        .none,
+        .minutes(1),
+        .minutes(5),
+        .minutes(10),
+        .minutes(15),
+        .minutes(30),
+        .hours(1),
+        .hours(2),
+        .days(1),
+        .days(2),
+        .weeks(1)
+    ]
+    
+    // MARK: - Codable Implementation
+    enum CodingKeys: String, CodingKey {
+        case type, value
+    }
+    
+    enum ReminderType: String, Codable {
+        case none, minutes, hours, days, weeks
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(ReminderType.self, forKey: .type)
+        
+        switch type {
+        case .none:
+            self = .none
+        case .minutes:
+            let value = try container.decode(Int.self, forKey: .value)
+            self = .minutes(value)
+        case .hours:
+            let value = try container.decode(Int.self, forKey: .value)
+            self = .hours(value)
+        case .days:
+            let value = try container.decode(Int.self, forKey: .value)
+            self = .days(value)
+        case .weeks:
+            let value = try container.decode(Int.self, forKey: .value)
+            self = .weeks(value)
+        }
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        switch self {
+        case .none:
+            try container.encode(ReminderType.none, forKey: .type)
+        case .minutes(let value):
+            try container.encode(ReminderType.minutes, forKey: .type)
+            try container.encode(value, forKey: .value)
+        case .hours(let value):
+            try container.encode(ReminderType.hours, forKey: .type)
+            try container.encode(value, forKey: .value)
+        case .days(let value):
+            try container.encode(ReminderType.days, forKey: .type)
+            try container.encode(value, forKey: .value)
+        case .weeks(let value):
+            try container.encode(ReminderType.weeks, forKey: .type)
+            try container.encode(value, forKey: .value)
+        }
+    }
+    
+    // MARK: - Factory Methods
+    static func fromMinutes(_ minutes: Int) -> ReminderTime {
+        if minutes == 0 {
+            return .none
+        } else if minutes < 60 {
+            return .minutes(minutes)
+        } else if minutes < 1440 && minutes % 60 == 0 {
+            return .hours(minutes / 60)
+        } else if minutes >= 1440 && minutes % 1440 == 0 {
+            let days = minutes / 1440
+            if days >= 7 && days % 7 == 0 {
+                return .weeks(days / 7)
+            } else {
+                return .days(days)
+            }
+        } else {
+            return .minutes(minutes)
+        }
+    }
+    
+    // For backward compatibility with old enum values
+    static func fromLegacyRawValue(_ rawValue: Int) -> ReminderTime {
+        switch rawValue {
+        case 0: return .none
+        case 5: return .minutes(5)
+        case 15: return .minutes(15)
+        case 30: return .minutes(30)
+        case 60: return .hours(1)
+        case 120: return .hours(2)
+        case 1440: return .days(1)
+        case 2880: return .days(2)
+        case 10080: return .weeks(1)
+        default: return .fromMinutes(rawValue)
+        }
     }
 }
 
@@ -109,7 +249,7 @@ class NotificationManager: ObservableObject {
         let dateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: notificationDate)
         let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: false)
         
-        let identifier = "event-\(event.id.uuidString)-\(reminderTime.rawValue)"
+        let identifier = "event-\(event.id.uuidString)-\(reminderTime.totalMinutes)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
         
         notificationCenter.add(request) { error in
@@ -122,12 +262,16 @@ class NotificationManager: ObservableObject {
     }
     
     func removeEventNotification(for event: Event, reminderTime: ReminderTime) {
-        let identifier = "event-\(event.id.uuidString)-\(reminderTime.rawValue)"
+        let identifier = "event-\(event.id.uuidString)-\(reminderTime.totalMinutes)"
         notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
     }
     
     func removeAllEventNotifications(for event: Event) {
-        let identifiers = ReminderTime.allCases.map { "event-\(event.id.uuidString)-\($0.rawValue)" }
+        let reminderTimeOptions: [ReminderTime] = [
+            .none, .minutes(5), .minutes(15), .minutes(30), .hours(1), .hours(2), 
+            .days(1), .days(2), .weeks(1)
+        ]
+        let identifiers = reminderTimeOptions.map { "event-\(event.id.uuidString)-\($0.totalMinutes)" }
         notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
     }
     
@@ -166,7 +310,7 @@ class NotificationManager: ObservableObject {
                     let dateComponents = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: reminderDate)
                     let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: false)
                     
-                    let identifier = "schedule-\(item.id.uuidString)-\(weekOffset)-\(dayOfWeek.rawValue)-\(reminderTime.rawValue)"
+                    let identifier = "schedule-\(item.id.uuidString)-\(weekOffset)-\(dayOfWeek.rawValue)-\(reminderTime.totalMinutes)"
                     let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
                     
                     notificationCenter.add(request) { error in
@@ -183,14 +327,18 @@ class NotificationManager: ObservableObject {
         // Remove notifications for the next 4 weeks
         for weekOffset in 0..<4 {
             for dayOfWeek in item.daysOfWeek {
-                let identifier = "schedule-\(item.id.uuidString)-\(weekOffset)-\(dayOfWeek.rawValue)-\(reminderTime.rawValue)"
+                let identifier = "schedule-\(item.id.uuidString)-\(weekOffset)-\(dayOfWeek.rawValue)-\(reminderTime.totalMinutes)"
                 notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
             }
         }
     }
     
     func removeAllScheduleItemNotifications(for item: ScheduleItem) {
-        ReminderTime.allCases.forEach { reminderTime in
+        let reminderTimeOptions: [ReminderTime] = [
+            .none, .minutes(5), .minutes(15), .minutes(30), .hours(1), .hours(2), 
+            .days(1), .days(2), .weeks(1)
+        ]
+        reminderTimeOptions.forEach { reminderTime in
             removeScheduleItemNotification(for: item, reminderTime: reminderTime)
         }
     }
@@ -266,13 +414,21 @@ class NotificationManager: ObservableObject {
     
     func setReminderTime(_ reminderTime: ReminderTime, for id: UUID, type: NotificationType) {
         let key = "\(type == .event ? "event" : "schedule")-reminder-\(id.uuidString)"
-        UserDefaults.standard.set(reminderTime.rawValue, forKey: key)
+        
+        // Store as total minutes for simplicity
+        UserDefaults.standard.set(reminderTime.totalMinutes, forKey: key)
     }
     
     func getReminderTime(for id: UUID, type: NotificationType) -> ReminderTime {
         let key = "\(type == .event ? "event" : "schedule")-reminder-\(id.uuidString)"
-        let rawValue = UserDefaults.standard.integer(forKey: key)
-        return ReminderTime(rawValue: rawValue) ?? .none
+        let minutes = UserDefaults.standard.integer(forKey: key)
+        
+        // Handle migration from old enum values
+        if UserDefaults.standard.object(forKey: key) == nil {
+            return .none
+        }
+        
+        return ReminderTime.fromMinutes(minutes)
     }
     
     // MARK: - Debug Methods

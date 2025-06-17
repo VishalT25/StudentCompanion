@@ -107,27 +107,53 @@ class NLPEngineTestSuite {
         var robustnessScores: [String: Double] = [:]
         
         for input in testInputs {
-            let testResults = engine.runRobustnessTests(on: input, categories: testCategories, courses: testCourses)
+            // Simple robustness test without the removed function
+            let originalResult = engine.parse(inputText: input, availableCategories: testCategories, existingCourses: testCourses)
             
-            let consistentResults = testResults.filter { $0.isConsistent }
-            let consistencyScore = Double(consistentResults.count) / Double(max(testResults.count, 1))
+            // Test with some perturbations manually
+            let perturbations = [
+                input.uppercased(),
+                "  \(input)  ",
+                input.replacingOccurrences(of: "meeting", with: "meetng"),
+                input.replacingOccurrences(of: "assignment", with: "assigment")
+            ]
             
+            var consistentCount = 0
+            var totalTests = 0
+            
+            for perturbedInput in perturbations {
+                if perturbedInput != input {
+                    let perturbedResult = engine.parse(inputText: perturbedInput, availableCategories: testCategories, existingCourses: testCourses)
+                    let isConsistent = areResultsConsistent(originalResult, perturbedResult)
+                    if isConsistent { consistentCount += 1 }
+                    totalTests += 1
+                }
+            }
+            
+            let consistencyScore = totalTests > 0 ? Double(consistentCount) / Double(totalTests) : 1.0
             robustnessScores[input] = consistencyScore
             
             print("\nRobustness Test for: '\(input)'")
             print("Consistency Score: \(String(format: "%.2f", consistencyScore * 100))%")
-            print("Total Tests: \(testResults.count), Consistent: \(consistentResults.count)")
-            
-            for result in testResults.prefix(3) { // Show first 3 perturbations
-                print("  Original: '\(result.originalInput)'")
-                print("  Perturbed: '\(result.perturbedInput)'")
-                print("  Consistent: \(result.isConsistent ? "✅" : "❌")")
-                print("  Confidence: \(String(format: "%.2f", result.confidence))")
-                print("")
-            }
+            print("Total Tests: \(totalTests), Consistent: \(consistentCount)")
         }
         
         return robustnessScores
+    }
+    
+    private func areResultsConsistent(_ result1: NLPResult, _ result2: NLPResult) -> Bool {
+        switch (result1, result2) {
+        case (.parsedEvent, .parsedEvent), (.parsedScheduleItem, .parsedScheduleItem), (.parsedGrade, .parsedGrade):
+            return true
+        case (.needsMoreInfo, .needsMoreInfo):
+            return true
+        case (.unrecognized, .unrecognized), (.notAttempted, .notAttempted):
+            return true
+        case (.needsMoreInfo, .parsedEvent), (.needsMoreInfo, .parsedScheduleItem), (.needsMoreInfo, .parsedGrade):
+            return true
+        default:
+            return false
+        }
     }
     
     // MARK: - Configuration-Based Pattern Tests
@@ -332,7 +358,7 @@ class NLPEngineTestSuite {
         switch result {
         case .parsedEvent(let title, let date, let categoryName, let reminderTime):
             print("  -> Event: '\(title)' on \(date?.description ?? "unspecified date") in \(categoryName ?? "no category") with \(reminderTime?.displayName ?? "no reminder")")
-        case .parsedScheduleItem(let title, let days, _, _, let duration, let reminderTime):
+        case .parsedScheduleItem(let title, let days, _, _, let duration, let reminderTime, _):
             print("  -> Schedule: '\(title)' on \(days.map(\.shortName).joined(separator: ", ")) for \(duration != nil ? "\(Int(duration!/3600))h" : "unspecified duration") with \(reminderTime?.displayName ?? "no reminder")")
         case .parsedGrade(let courseName, let assignmentName, let grade, let weight):
             print("  -> Grade: \(grade) on '\(assignmentName)' in \(courseName) with weight \(weight ?? "unspecified")")

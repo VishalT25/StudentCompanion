@@ -214,13 +214,14 @@ struct Event: Identifiable, Codable {
     var title: String
     var categoryId: UUID
     var reminderTime: ReminderTime = .none
+    var isCompleted: Bool = false
 
     func category(from categories: [Category]) -> Category {
         categories.first { $0.id == categoryId } ?? Category(name: "Unknown", color: .gray)
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, date, title, categoryId, reminderTime
+        case id, date, title, categoryId, reminderTime, isCompleted
     }
     
     init(from decoder: Decoder) throws {
@@ -230,6 +231,7 @@ struct Event: Identifiable, Codable {
         title = try container.decode(String.self, forKey: .title)
         categoryId = try container.decode(UUID.self, forKey: .categoryId)
         reminderTime = try container.decodeIfPresent(ReminderTime.self, forKey: .reminderTime) ?? .none
+        isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
     }
     
     func encode(to encoder: Encoder) throws {
@@ -239,14 +241,16 @@ struct Event: Identifiable, Codable {
         try container.encode(title, forKey: .title)
         try container.encode(categoryId, forKey: .categoryId)
         try container.encode(reminderTime, forKey: .reminderTime)
+        try container.encode(isCompleted, forKey: .isCompleted)
     }
     
-    init(date: Date, title: String, categoryId: UUID, reminderTime: ReminderTime = .none) {
+    init(date: Date, title: String, categoryId: UUID, reminderTime: ReminderTime = .none, isCompleted: Bool = false) {
         self.id = UUID()
         self.date = date
         self.title = title
         self.categoryId = categoryId
         self.reminderTime = reminderTime
+        self.isCompleted = isCompleted
     }
 }
 
@@ -461,6 +465,24 @@ class EventViewModel: ObservableObject {
         saveData()
     }
     
+    func markEventCompleted(_ event: Event) {
+        if let idx = events.firstIndex(where: { $0.id == event.id }) {
+            events[idx].isCompleted = true
+            notificationManager.removeAllEventNotifications(for: event)
+            saveData()
+        }
+    }
+    
+    func markEventIncomplete(_ event: Event) {
+        if let idx = events.firstIndex(where: { $0.id == event.id }) {
+            events[idx].isCompleted = false
+            if event.reminderTime != .none {
+                notificationManager.scheduleEventNotification(for: event, reminderTime: event.reminderTime, categories: categories)
+            }
+            saveData()
+        }
+    }
+    
     func addCategory(_ category: Category) {
         categories.append(category)
         saveData()
@@ -476,49 +498,6 @@ class EventViewModel: ObservableObject {
     func deleteCategory(_ category: Category) {
         categories.removeAll { $0.id == category.id }
         saveData()
-    }
-    
-    func currentActiveClass(at date: Date = Date()) -> ScheduleItem? {
-        let calendar = Calendar.current
-        let currentWeekday = calendar.component(.weekday, from: date)
-        guard let todayDayOfWeek = DayOfWeek(rawValue: currentWeekday) else { return nil }
-
-        return scheduleItems
-            .filter { $0.daysOfWeek.contains(todayDayOfWeek) && !$0.isSkipped(onDate: date) }
-            .first { item in
-                let itemStartTimeToday = LiveActivityManager.shared.getAbsoluteTime(for: item.startTime, on: date)
-                let itemEndTimeToday = LiveActivityManager.shared.getAbsoluteTime(for: item.endTime, on: date)
-                return date >= itemStartTimeToday && date < itemEndTimeToday
-            }
-    }
-
-    @MainActor
-    func manageLiveActivities(themeManager: ThemeManager) {
-        // Reading directly from UserDefaults. Ensure "liveActivitiesEnabled" is the correct key used in SettingsView's AppStorage.
-        let globalLiveActivitiesEnabled = UserDefaults.standard.bool(forKey: "liveActivitiesEnabled") // Renamed for clarity
-
-        guard globalLiveActivitiesEnabled else { // Use the renamed variable
-            LiveActivityManager.shared.endAllActivities() // End all if setting is off
-            print("Live Activities are disabled globally in settings.")
-            return
-        }
-
-        LiveActivityManager.shared.cleanupEndedActivities(scheduleItems: self.scheduleItems)
-
-        // The check for isLiveActivityEnabled is now inside LiveActivityManager.startActivity
-        if let activeClass = currentActiveClass() {
-            // The activeClass here is just the one that *could* be active based on time and skip status.
-            // The LiveActivityManager will make the final decision based on activeClass.isLiveActivityEnabled.
-            LiveActivityManager.shared.startActivity(for: activeClass, themeManager: themeManager)
-        } else {
-            // If no class is potentially active (due to time/skip), ensure all class activities are ended.
-            // This part might be redundant if cleanupEndedActivities is robust, but can be a safeguard.
-            // Consider if a more targeted endAllClassActivities() is needed or if endAllActivities() is acceptable here.
-            // For now, if no class is active, we don't necessarily need to end all activities,
-            // as individual activities might be managed (e.g., if one was manually stopped).
-            // The existing `startActivity` will handle not starting if one is already running for the item.
-            // And `cleanupEndedActivities` handles those that should have ended.
-        }
     }
     
     func addScheduleItem(_ item: ScheduleItem, themeManager: ThemeManager? = nil) {
@@ -617,9 +596,16 @@ class EventViewModel: ObservableObject {
         }
     }
     
+    func todaysEvents() -> [Event] {
+        let calendar = Calendar.current
+        return events.filter {
+            calendar.isDate($0.date, inSameDayAs: Date()) && !$0.isCompleted
+        }.sorted { $0.date < $1.date }
+    }
+    
     func todaysSchedule() -> [ScheduleItem] {
         let calendar = Calendar.current
-        let todayDate = Date() // Use a consistent "today"
+        let todayDate = Date()
         let weekday = calendar.component(.weekday, from: todayDate)
         guard let todayDayOfWeek = DayOfWeek(rawValue: weekday) else { return [] }
         
@@ -628,22 +614,15 @@ class EventViewModel: ObservableObject {
             .sorted { $0.startTime < $1.startTime }
     }
     
-    func todaysEvents() -> [Event] {
-        let calendar = Calendar.current
-        return events.filter {
-            calendar.isDate($0.date, inSameDayAs: Date())
-        }.sorted { $0.date < $1.date }
-    }
-    
     func upcomingEvents() -> [Event] {
         let now = Date()
-        return events.filter { $0.date > now }
+        return events.filter { $0.date > now && !$0.isCompleted }
             .sorted { $0.date < $1.date }
     }
     
     func pastEvents() -> [Event] {
         let now = Date()
-        return events.filter { $0.date <= now }
+        return events.filter { ($0.date <= now || $0.isCompleted) }
             .sorted { $0.date > $1.date }
     }
     
@@ -665,6 +644,50 @@ class EventViewModel: ObservableObject {
             return eventMonth == month && eventYear == year
         }
     }
+    
+    @MainActor
+    func manageLiveActivities(themeManager: ThemeManager) {
+        // Reading directly from UserDefaults. Ensure "liveActivitiesEnabled" is the correct key used in SettingsView's AppStorage.
+        let globalLiveActivitiesEnabled = UserDefaults.standard.bool(forKey: "liveActivitiesEnabled") // Renamed for clarity
+
+        guard globalLiveActivitiesEnabled else { // Use the renamed variable
+            LiveActivityManager.shared.endAllActivities() // End all if setting is off
+            print("Live Activities are disabled globally in settings.")
+            return
+        }
+
+        LiveActivityManager.shared.cleanupEndedActivities(scheduleItems: self.scheduleItems)
+
+        // The check for isLiveActivityEnabled is now inside LiveActivityManager.startActivity
+        if let activeClass = currentActiveClass() {
+            // The activeClass here is just the one that *could* be active based on time and skip status.
+            // The LiveActivityManager will make the final decision based on activeClass.isLiveActivityEnabled.
+            LiveActivityManager.shared.startActivity(for: activeClass, themeManager: themeManager)
+        } else {
+            // If no class is potentially active (due to time/skip), ensure all class activities are ended.
+            // This part might be redundant if cleanupEndedActivities is robust, but can be a safeguard.
+            // Consider if a more targeted endAllClassActivities() is needed or if endAllActivities() is acceptable here.
+            // For now, if no class is active, we don't necessarily need to end all activities,
+            // as individual activities might be managed (e.g., if one was manually stopped).
+            // The existing `startActivity` will handle not starting if one is already running for the item.
+            // And `cleanupEndedActivities` handles those that should have ended.
+        }
+    }
+    
+    func currentActiveClass(at date: Date = Date()) -> ScheduleItem? {
+        let calendar = Calendar.current
+        let currentWeekday = calendar.component(.weekday, from: date)
+        guard let todayDayOfWeek = DayOfWeek(rawValue: currentWeekday) else { return nil }
+
+        return scheduleItems
+            .filter { $0.daysOfWeek.contains(todayDayOfWeek) && !$0.isSkipped(onDate: date) }
+            .first { item in
+                let itemStartTimeToday = LiveActivityManager.shared.getAbsoluteTime(for: item.startTime, on: date)
+                let itemEndTimeToday = LiveActivityManager.shared.getAbsoluteTime(for: item.endTime, on: date)
+                return date >= itemStartTimeToday && date < itemEndTimeToday
+            }
+    }
+
 }
 
 // MARK: - Color Palette (Updated to use ThemeManager)
@@ -827,16 +850,25 @@ struct EventPreviewCard: View {
                 Text(event.title)
                     .font(.headline.weight(.medium))
                     .foregroundColor(.white)
-                Text(timeString(from: event.date))
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.7))
+                
+                HStack(spacing: 8) {
+                    Label(timeString(from: event.date), systemImage: "clock")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.7))
+                    
+                    Spacer()
+                    
+                    Text(event.category(from: viewModel.categories).name)
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(event.category(from: viewModel.categories).color.opacity(0.2))
+                        .foregroundColor(event.category(from: viewModel.categories).color)
+                        .cornerRadius(8)
+                }
             }
             
             Spacer()
-            
-            RoundedRectangle(cornerRadius: 3)
-                .fill(event.category(from: viewModel.categories).color)
-                .frame(width: 4, height: 35)
         }
         .padding(12)
         .background(Color.white.opacity(0.1))
@@ -856,7 +888,7 @@ struct EventPreviewCard: View {
     }
 }
 
-// MARK: - Enhanced EventsListView with Calendar
+// MARK: - EventsListView with Calendar
 struct EventsListView: View {
     @EnvironmentObject var viewModel: EventViewModel
     @EnvironmentObject var themeManager: ThemeManager
@@ -1132,7 +1164,7 @@ struct EnhancedEventRow: View {
             VStack(spacing: 2) {
                 Text("\(Calendar.current.component(.day, from: event.date))")
                     .font(.title3.weight(.bold))
-                    .foregroundColor(isPast ? .secondary : themeManager.currentTheme.primaryColor)
+                    .foregroundColor(isPast || event.isCompleted ? .secondary : themeManager.currentTheme.primaryColor)
                 Text(monthShort(from: event.date))
                     .font(.caption2.weight(.medium))
                     .foregroundColor(.secondary)
@@ -1141,13 +1173,14 @@ struct EnhancedEventRow: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isPast ? Color(.systemGray6) : themeManager.currentTheme.primaryColor.opacity(0.1))
+                    .fill(isPast || event.isCompleted ? Color(.systemGray6) : themeManager.currentTheme.primaryColor.opacity(0.1))
             )
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(event.title)
                     .font(.headline)
-                    .foregroundColor(isPast ? .secondary : .primary)
+                    .foregroundColor(isPast || event.isCompleted ? .secondary : .primary)
+                    .strikethrough(event.isCompleted)
                 
                 HStack(spacing: 8) {
                     Label(timeString(from: event.date), systemImage: "clock")
@@ -1166,14 +1199,23 @@ struct EnhancedEventRow: View {
                 }
             }
             
-            if isPast {
+            if isPast || event.isCompleted {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green.opacity(0.7))
                     .font(.title3)
+            } else {
+                Button(action: {
+                    viewModel.markEventCompleted(event)
+                }) {
+                    Image(systemName: "circle")
+                        .foregroundColor(.secondary)
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 4)
-        .opacity(isPast ? 0.7 : 1.0)
+        .opacity(isPast || event.isCompleted ? 0.7 : 1.0)
     }
     
     private func monthShort(from date: Date) -> String {
@@ -1416,6 +1458,7 @@ struct AddEventView: View {
     @State private var title = ""
     @State private var selectedCategory: Category?
     @State private var reminderTime: ReminderTime = .none
+    @State private var showingReminderPicker = false
 
     var body: some View {
         NavigationView {
@@ -1457,12 +1500,20 @@ struct AddEventView: View {
                 }
                 
                 Section {
-                    Picker("Reminder", selection: $reminderTime) {
-                        ForEach(ReminderTime.allCases) { time in
-                            Text(time.displayName).tag(time)
+                    Button(action: {
+                        showingReminderPicker = true
+                    }) {
+                        HStack {
+                            Text("Reminder")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Text(reminderTime.displayName)
+                                .foregroundColor(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                     }
-                    .pickerStyle(.menu)
                 } header: {
                     Text("Reminder")
                 } footer: {
@@ -1471,6 +1522,17 @@ struct AddEventView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
+                }
+                
+                Section {
+                    Toggle("Mark as Completed", isOn: .constant(false))
+                        .tint(themeManager.currentTheme.primaryColor)
+                } header: {
+                    Text("Status")
+                } footer: {
+                    Text("Note: This is only for adding new events. Marking events as completed is typically done after they have passed or are completed.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
             .navigationTitle("Add Event")
@@ -1482,7 +1544,7 @@ struct AddEventView: View {
                             print("No category selected")
                             return
                         }
-                        let newEvent = Event(date: date, title: title.isEmpty ? "Untitled Event" : title, categoryId: category.id, reminderTime: reminderTime)
+                        let newEvent = Event(date: date, title: title.isEmpty ? "Untitled Event" : title, categoryId: category.id, reminderTime: reminderTime, isCompleted: false)
                         viewModel.addEvent(newEvent)
                         isPresented = false
                     }
@@ -1493,6 +1555,9 @@ struct AddEventView: View {
                     Button("Cancel") { isPresented = false }
                         .foregroundColor(.secondary)
                 }
+            }
+            .sheet(isPresented: $showingReminderPicker) {
+                CustomReminderPickerView(selectedReminder: $reminderTime)
             }
         }
     }
@@ -1558,7 +1623,8 @@ struct EventEditView: View {
     @EnvironmentObject var themeManager: ThemeManager
     @State var event: Event
     @Environment(\.dismiss) var dismiss
-    var isNew = false
+    @State private var showingReminderPicker = false
+    var isNew: Bool
 
     var body: some View {
         Form {
@@ -1598,17 +1664,38 @@ struct EventEditView: View {
             }
             
             Section {
-                Picker("Reminder", selection: $event.reminderTime) {
-                    ForEach(ReminderTime.allCases) { time in
-                        Text(time.displayName).tag(time)
+                Button(action: {
+                    showingReminderPicker = true
+                }) {
+                    HStack {
+                        Text("Reminder")
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Text(event.reminderTime.displayName)
+                            .foregroundColor(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
-                .pickerStyle(.menu)
             } header: {
                 Text("Reminder")
             } footer: {
                 if event.reminderTime != .none {
                     Text("You'll be notified \(event.reminderTime.displayName.lowercased()) before the event.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            Section {
+                Toggle("Mark as Completed", isOn: $event.isCompleted)
+                    .tint(themeManager.currentTheme.primaryColor)
+            } header: {
+                Text("Status")
+            } footer: {
+                if event.isCompleted {
+                    Text("This event is marked as completed and won't appear in today's events.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -1652,6 +1739,9 @@ struct EventEditView: View {
                         .foregroundColor(.secondary)
                  }
             }
+        }
+        .sheet(isPresented: $showingReminderPicker) {
+            CustomReminderPickerView(selectedReminder: $event.reminderTime)
         }
     }
 }
