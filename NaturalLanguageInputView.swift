@@ -304,7 +304,12 @@ struct NaturalLanguageInputView: View {
                 }
             }
             .alert(alertTitle, isPresented: $showAlert) {
-                Button("OK", role: .cancel) { }
+                Button("OK", role: .cancel) {
+                    // Check if this is a grade success alert and dismiss the view
+                    if alertTitle == "Grade Added" {
+                        dismiss()
+                    }
+                }
             } message: {
                 Text(alertMessage)
             }
@@ -363,11 +368,10 @@ struct NaturalLanguageInputView: View {
     }
 
     private func loadCourses() {
-        if let savedCoursesData = UserDefaults.standard.data(forKey: "gpaCourses"),
-           let courses = try? JSONDecoder().decode([Course].self, from: savedCoursesData) {
-            self.existingCourses = courses
-        } else {
-            self.existingCourses = []
+        self.existingCourses = CourseStorage.load()
+        print("🔍 NLP Debug - Loaded \(existingCourses.count) courses from CourseStorage")
+        for course in existingCourses {
+            print("🔍 NLP Debug - Course: '\(course.name)' with \(course.assignments.count) assignments")
         }
     }
 
@@ -500,58 +504,100 @@ struct NaturalLanguageInputView: View {
     }
 
     private func handleAddGrade(courseName: String, assignmentName: String, grade: String, weight: String?) {
+        print("🔍 =================================")
+        print("🔍 SAVE Debug - Course: '\(courseName)'")
+        print("🔍 SAVE Debug - Assignment: '\(assignmentName)'")
+        print("🔍 SAVE Debug - Grade: '\(grade)'")
+        print("🔍 SAVE Debug - Weight: '\(weight ?? "nil")'")
+        print("🔍 =================================")
+        
         guard let courseIndex = existingCourses.firstIndex(where: { $0.name.lowercased() == courseName.lowercased() }) else {
             showSimpleAlert(title: "Grade Error", message: "Course '\(courseName)' not found.")
             return
         }
         
         var courseToUpdate = existingCourses[courseIndex]
-        
         let normalizedGrade = normalizeGradeForStorage(grade)
+        let normalizedWeight = weight != nil ? normalizeWeightForStorage(weight!) : ""
+        
+        print("🔍 SAVE Debug - Normalized grade: '\(normalizedGrade)'")
+        print("🔍 SAVE Debug - Normalized weight: '\(normalizedWeight)'")
 
-        if let assignmentIndex = courseToUpdate.assignments.firstIndex(where: { $0.name.lowercased() == assignmentName.lowercased() }) {
-            courseToUpdate.assignments[assignmentIndex].grade = normalizedGrade
-            if let weightValue = weight {
-                let normalizedWeight = normalizeWeightForStorage(weightValue)
-                courseToUpdate.assignments[assignmentIndex].weight = normalizedWeight
+        let existingAssignment = courseToUpdate.assignments.first(where: { $0.name.lowercased() == assignmentName.lowercased() })
+        
+        var finalAssignmentName = assignmentName
+        if existingAssignment != nil {
+            // Find a unique name by adding a number
+            var counter = 2
+            while courseToUpdate.assignments.contains(where: { $0.name.lowercased() == "\(assignmentName) \(counter)".lowercased() }) {
+                counter += 1
             }
-        } else {
-            let normalizedWeight = weight != nil ? normalizeWeightForStorage(weight!) : ""
-            let newAssignment = Assignment(name: assignmentName, grade: normalizedGrade, weight: normalizedWeight)
-            courseToUpdate.assignments.append(newAssignment)
+            finalAssignmentName = "\(assignmentName) \(counter)"
+            print("🔍 SAVE Debug - Duplicate name detected, using: '\(finalAssignmentName)'")
+        }
+        
+        print("🔍 SAVE Debug - Creating new assignment")
+        let newAssignment = Assignment(name: finalAssignmentName, grade: normalizedGrade, weight: normalizedWeight)
+        print("🔍 SAVE Debug - New assignment created: name='\(newAssignment.name)', grade='\(newAssignment.grade)', weight='\(newAssignment.weight)'")
+        courseToUpdate.assignments.append(newAssignment)
+        
+        var totalWeight = 0.0
+        for assignment in courseToUpdate.assignments {
+            if let weight = assignment.weightValue, weight > 0 {
+                totalWeight += weight
+            }
         }
         
         existingCourses[courseIndex] = courseToUpdate
-            
-        if let encoded = try? JSONEncoder().encode(existingCourses) {
-            UserDefaults.standard.set(encoded, forKey: "gpaCourses")
-            NotificationCenter.default.post(name: .courseDataDidChange, object: nil)
-            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastGradeUpdate")
-            dismiss()
-        } else {
-            showSimpleAlert(title: "Save Error", message: "Could not save the updated grade.")
+        
+        print("🔍 SAVE Debug - About to save using CourseStorage...")
+        CourseStorage.save(existingCourses)
+        print("🔍 SAVE Debug - Successfully saved using CourseStorage")
+        
+        let displayGrade = grade.hasSuffix("%") ? grade : "\(grade)%"
+        var successMessage = "Added \(displayGrade) for \(finalAssignmentName) in \(courseName)"
+        
+        // Add duplicate name notification
+        if existingAssignment != nil {
+            successMessage += "\n\n📝 Note: '\(assignmentName)' already exists, so this was saved as '\(finalAssignmentName)'"
         }
+        
+        if totalWeight > 100.0 {
+            let excess = totalWeight - 100.0
+            successMessage += "\n\n⚠️ Warning: Assignment weights now exceed 100% by \(String(format: "%.1f", excess))%. You may want to adjust the weights."
+        }
+        
+        showSimpleAlert(title: "Grade Added", message: successMessage)
+        
     }
     
     private func normalizeGradeForStorage(_ grade: String) -> String {
         var normalized = grade.trimmingCharacters(in: .whitespacesAndNewlines)
         
+        print("🔍 NORMALIZE Grade - Input: '\(grade)' -> After trim: '\(normalized)'")
+        
         // For percentage grades, remove the % sign for storage so calculations work
         if normalized.hasSuffix("%") {
             normalized = String(normalized.dropLast())
+            print("🔍 NORMALIZE Grade - Removed % sign: '\(normalized)'")
         }
         
+        print("🔍 NORMALIZE Grade - Final result: '\(normalized)'")
         return normalized
     }
     
     private func normalizeWeightForStorage(_ weight: String) -> String {
         var normalized = weight.trimmingCharacters(in: .whitespacesAndNewlines)
         
+        print("🔍 NORMALIZE Weight - Input: '\(weight)' -> After trim: '\(normalized)'")
+        
         // Remove % sign from weight for storage
         if normalized.hasSuffix("%") {
             normalized = String(normalized.dropLast())
+            print("🔍 NORMALIZE Weight - Removed % sign: '\(normalized)'")
         }
         
+        print("🔍 NORMALIZE Weight - Final result: '\(normalized)'")
         return normalized
     }
 

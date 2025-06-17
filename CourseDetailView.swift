@@ -13,6 +13,32 @@ struct CourseDetailView: View {
     @State private var finalWorthInput: String = ""
     @State private var neededOnFinalOutput: String = ""
     
+    private var weightValidation: (total: Double, isValid: Bool, message: String) {
+        var totalWeight = 0.0
+        var assignmentsWithWeights = 0
+        
+        for assignment in course.assignments {
+            if let weight = assignment.weightValue, weight > 0 {
+                totalWeight += weight
+                assignmentsWithWeights += 1
+            }
+        }
+        
+        let isValid = totalWeight <= 100.0
+        var message = ""
+        
+        if assignmentsWithWeights == 0 {
+            message = "No assignment weights set"
+        } else if totalWeight > 100.0 {
+            let excess = totalWeight - 100.0
+            message = String(format: "Exceeds 100%% by %.1f%%", excess)
+        } else {
+            message = ""
+        }
+        
+        return (total: totalWeight, isValid: isValid, message: message)
+    }
+    
     private func requestSave() {
         // Load all courses, update this course, and save back
         var allCourses = CourseStorage.load()
@@ -41,11 +67,21 @@ struct CourseDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
         .onAppear {
+            print("🔍 UI Debug - CourseDetailView appeared")
             autoFillCalculatorValues()
         }
         .onChange(of: course.assignments) { oldValue, newValue in
+            print("🔍 UI Debug - Course assignments changed")
             autoFillCalculatorValues()
             requestSave()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .courseDataDidChange)) { notification in
+            print("🔍 UI Debug - Received courseDataDidChange notification: \(notification)")
+            reloadCourseData()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            print("🔍 UI Debug - App became active, checking for course updates")
+            reloadCourseData()
         }
     }
     
@@ -103,6 +139,43 @@ struct CourseDetailView: View {
                 }
             }
             
+            if !course.assignments.isEmpty {
+                let validation = weightValidation
+                
+                if !validation.isValid && !validation.message.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.red)
+                            .font(.subheadline)
+                        
+                        Text(validation.message)
+                            .font(.subheadline)
+                            .foregroundColor(.red)
+                        
+                        Spacer()
+                        
+                        Text("Total: \(String(format: "%.1f", validation.total))%")
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(Color.red.opacity(0.7))
+                            .cornerRadius(4)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.red.opacity(0.1))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                    .animation(.easeInOut(duration: 0.3), value: validation.isValid)
+                }
+            }
+            
             if course.assignments.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.text")
@@ -128,12 +201,11 @@ struct CourseDetailView: View {
                             courseColor: course.color,
                             onEdit: {
                                 requestSave()
+                            },
+                            onDelete: {
+                                deleteAssignment(assignment)
                             }
                         )
-                    }
-                    .onDelete { indexSet in
-                        course.assignments.remove(atOffsets: indexSet)
-                        requestSave()
                     }
                 }
             }
@@ -333,16 +405,86 @@ struct CourseDetailView: View {
             return .red
         }
     }
+    
+    private func deleteAssignment(_ assignment: Assignment) {
+        withAnimation(.easeInOut(duration: 0.3)) {
+            if let index = course.assignments.firstIndex(where: { $0.id == assignment.id }) {
+                course.assignments.remove(at: index)
+                requestSave()
+            }
+        }
+    }
+    
+    private func reloadCourseData() {
+        print("🔍 UI Debug - ⭐ RELOADING COURSE DATA ⭐")
+        
+        // Use CourseStorage instead of direct UserDefaults to stay consistent
+        let allCourses = CourseStorage.load()
+        print("🔍 UI Debug - Loaded \(allCourses.count) total courses from storage")
+        
+        if let updatedCourse = allCourses.first(where: { $0.id == course.id }) {
+            print("🔍 UI Debug - ✅ Found updated course '\(updatedCourse.name)' with \(updatedCourse.assignments.count) assignments")
+            
+            for (index, assignment) in updatedCourse.assignments.enumerated() {
+                print("🔍 UI Debug - Assignment \(index): name='\(assignment.name)', grade='\(assignment.grade)', weight='\(assignment.weight)'")
+            }
+            
+            // Force UI update on main thread
+            DispatchQueue.main.async {
+                print("🔍 UI Debug - 🔄 UPDATING UI ON MAIN THREAD")
+                
+                // Check if assignments actually changed
+                let oldCount = course.assignments.count
+                let newCount = updatedCourse.assignments.count
+                print("🔍 UI Debug - Assignment count: \(oldCount) -> \(newCount)")
+                
+                // Force update the course assignments
+                course.assignments = updatedCourse.assignments
+                
+                // Trigger view refresh
+                autoFillCalculatorValues()
+                
+                print("🔍 UI Debug - ✅ UI UPDATE COMPLETE")
+            }
+        } else {
+            print("🔍 UI Debug - ❌ Failed to find course with ID: \(course.id)")
+            
+            // Debug: Print all course IDs to see what's available
+            for (index, debugCourse) in allCourses.enumerated() {
+                print("🔍 UI Debug - Available course \(index): '\(debugCourse.name)' ID: \(debugCourse.id)")
+            }
+        }
+    }
 }
 
 struct AssignmentRow: View {
     @ObservedObject var assignment: Assignment
     let courseColor: Color
     let onEdit: () -> Void
+    let onDelete: () -> Void
     
     @FocusState private var isNameFocused: Bool
     @FocusState private var isGradeFocused: Bool
     @FocusState private var isWeightFocused: Bool
+    @State private var showDeleteConfirmation = false
+    
+    private var displayGrade: String {
+        get {
+            if assignment.grade.isEmpty {
+                return ""
+            }
+            // If grade already has %, return as is, otherwise add %
+            if assignment.grade.hasSuffix("%") {
+                return assignment.grade
+            } else {
+                return "\(assignment.grade)%"
+            }
+        }
+        set {
+            // Remove % when setting the value for storage
+            assignment.grade = newValue.replacingOccurrences(of: "%", with: "")
+        }
+    }
     
     var body: some View {
         VStack(spacing: 8) {
@@ -356,14 +498,20 @@ struct AssignmentRow: View {
                 Spacer()
                 
                 HStack(spacing: 4) {
-                    TextField("Grade", text: $assignment.grade)
+                    TextField("Grade", text: Binding(
+                        get: { displayGrade },
+                        set: { newValue in
+                            // Store without % sign
+                            assignment.grade = newValue.replacingOccurrences(of: "%", with: "")
+                            onEdit()
+                        }
+                    ))
                         .font(.subheadline.weight(.medium))
                         .focused($isGradeFocused)
                         .keyboardType(.decimalPad)
                         .textFieldStyle(.plain)
                         .frame(width: 60)
                         .multilineTextAlignment(.trailing)
-                        .onChange(of: assignment.grade) { _, _ in onEdit() }
                     
                     Text("•")
                         .font(.caption)
@@ -389,6 +537,25 @@ struct AssignmentRow: View {
         .padding(.vertical, 8)
         .background(Color(.systemGray6).opacity(0.5))
         .cornerRadius(8)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button("Delete") {
+                showDeleteConfirmation = true
+            }
+            .tint(.red)
+        }
+        .contextMenu {
+            Button("Delete Assignment", role: .destructive) {
+                showDeleteConfirmation = true
+            }
+        }
+        .alert("Delete Assignment", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                onDelete()
+            }
+        } message: {
+            Text("Are you sure you want to delete '\(assignment.name.isEmpty ? "this assignment" : assignment.name)'?")
+        }
     }
 }
 

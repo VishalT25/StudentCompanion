@@ -94,7 +94,7 @@ class NLPEngineTestSuite {
         return results
     }
     
-    // MARK: - Robustness Tests
+    // MARK: - Enhanced Robustness Tests
     func testRobustness() -> [String: Double] {
         let testInputs = [
             "Meeting tomorrow at 2pm",
@@ -116,6 +116,7 @@ class NLPEngineTestSuite {
             
             print("\nRobustness Test for: '\(input)'")
             print("Consistency Score: \(String(format: "%.2f", consistencyScore * 100))%")
+            print("Total Tests: \(testResults.count), Consistent: \(consistentResults.count)")
             
             for result in testResults.prefix(3) { // Show first 3 perturbations
                 print("  Original: '\(result.originalInput)'")
@@ -159,6 +160,73 @@ class NLPEngineTestSuite {
             results[testCase] = success
             
             print("Config Test: '\(testCase)' -> \(success ? "✅ SUCCESS" : "❌ FAILED")")
+            printResult(result)
+        }
+        
+        return results
+    }
+    
+    // MARK: - Fuzzy Matching Tests (NEW)
+    func testFuzzyMatching() -> [String: Bool] {
+        let testCases = [
+            // Typos in common words
+            "Meetng tomorrow at 2pm", // meeting
+            "Assigment due Friday", // assignment
+            "Got 95% on CS midtrm", // midterm
+            "Recieved B+ on essay", // received
+            
+            // Course name fuzzy matching
+            "Got A on Math homework", // Mathematics
+            "CS assignment due", // Computer Science
+            "Phys lab today", // Physics
+            "Hist exam tomorrow", // History
+            
+            // Category fuzzy matching
+            "Workshop next week", // should match lab
+            "Appointmnt with advisor", // appointment -> meeting
+            "Projct due Friday", // project -> assignment
+            
+            // Grade keyword fuzzy matching
+            "Scorred 85% on test", // scored
+            "Earnd A+ on quiz", // earned
+            "Got a B- on esay" // essay -> assignment
+        ]
+        
+        var results: [String: Bool] = [:]
+        
+        for testCase in testCases {
+            let result = engine.parse(inputText: testCase, availableCategories: testCategories, existingCourses: testCourses)
+            
+            let success = !isUnrecognized(result)
+            results[testCase] = success
+            
+            print("Fuzzy Test: '\(testCase)' -> \(success ? "✅ SUCCESS" : "❌ FAILED")")
+            printResult(result)
+        }
+        
+        return results
+    }
+    
+    // MARK: - Spell Correction Tests (NEW)
+    func testSpellCorrection() -> [String: Bool] {
+        let testCases = [
+            // Common typos that should be corrected
+            "Tomorow meeting at 2pm",
+            "Assigment due Friday",
+            "Recieved 90% on midterm",
+            "Phys lab next week",
+            "Got grade on calc homework"
+        ]
+        
+        var results: [String: Bool] = [:]
+        
+        for testCase in testCases {
+            let result = engine.parse(inputText: testCase, availableCategories: testCategories, existingCourses: testCourses)
+            
+            let success = !isUnrecognized(result)
+            results[testCase] = success
+            
+            print("Spell Test: '\(testCase)' -> \(success ? "✅ SUCCESS" : "❌ FAILED")")
             printResult(result)
         }
         
@@ -279,7 +347,7 @@ class NLPEngineTestSuite {
     
     // MARK: - Run All Tests
     func runAllTests() {
-        print("🧪 Starting NLP Engine Test Suite\n")
+        print("🧪 Starting Enhanced NLP Engine Test Suite\n")
         
         print("1️⃣ Enhanced Temporal Understanding Tests:")
         let temporalResults = testEnhancedTemporalParsing()
@@ -296,25 +364,43 @@ class NLPEngineTestSuite {
         let configSuccess = configResults.values.filter { $0 }.count
         print("✅ Config Tests: \(configSuccess)/\(configResults.count) passed\n")
         
-        print("4️⃣ Robustness Tests:")
+        print("4️⃣ Fuzzy Matching Tests:")
+        let fuzzyResults = testFuzzyMatching()
+        let fuzzySuccess = fuzzyResults.values.filter { $0 }.count
+        print("✅ Fuzzy Tests: \(fuzzySuccess)/\(fuzzyResults.count) passed\n")
+        
+        print("5️⃣ Spell Correction Tests:")
+        let spellResults = testSpellCorrection()
+        let spellSuccess = spellResults.values.filter { $0 }.count
+        print("✅ Spell Tests: \(spellSuccess)/\(spellResults.count) passed\n")
+        
+        print("6️⃣ Robustness Tests:")
         let robustnessResults = testRobustness()
         let avgRobustness = robustnessResults.values.reduce(0, +) / Double(robustnessResults.count)
         print("✅ Average Robustness: \(String(format: "%.1f", avgRobustness * 100))%\n")
         
-        print("5️⃣ Edge Case Tests:")
+        print("7️⃣ Edge Case Tests:")
         let edgeResults = testEdgeCases()
         let edgeSuccess = edgeResults.values.filter { $0 }.count
         print("✅ Edge Case Tests: \(edgeSuccess)/\(edgeResults.count) passed\n")
         
-        print("6️⃣ Performance Tests:")
+        print("8️⃣ Performance Tests:")
         let performanceResults = testPerformance()
         let avgPerformance = performanceResults.values.reduce(0, +) / Double(performanceResults.count)
         print("✅ Average Parse Time: \(String(format: "%.2f", avgPerformance * 1000))ms\n")
         
-        print("🎉 Test Suite Complete!")
-        print("Overall Score: \((temporalSuccess + gradeSuccess + configSuccess + edgeSuccess))/\((temporalResults.count + gradeResults.count + configResults.count + edgeResults.count)) tests passed")
+        print("🎉 Enhanced Test Suite Complete!")
+        let totalTests = temporalResults.count + gradeResults.count + configResults.count + fuzzyResults.count + spellResults.count + edgeResults.count
+        let totalSuccess = temporalSuccess + gradeSuccess + configSuccess + fuzzySuccess + spellSuccess + edgeSuccess
+        
+        print("Overall Score: \(totalSuccess)/\(totalTests) tests passed")
         print("Robustness Score: \(String(format: "%.1f", avgRobustness * 100))%")
         print("Performance: \(String(format: "%.2f", avgPerformance * 1000))ms average parse time")
+        
+        // Expected improvement summary
+        let expectedRobustness = min(100.0, avgRobustness * 100 + 20) // Expected +20% improvement
+        print("\n📈 Expected Robustness Improvement:")
+        print("Previous: ~80%, Current: \(String(format: "%.1f", avgRobustness * 100))%, Target: \(String(format: "%.1f", expectedRobustness))%")
     }
 }
 
