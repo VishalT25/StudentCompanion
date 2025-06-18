@@ -1183,6 +1183,15 @@ class NLPEngine {
                 if fuzzyMatches(textWord, subject) && !keywords.contains(subject) {
                     keywords.append(subject)
                 }
+                
+                let subjectWords = subject.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+                    .filter { !$0.isEmpty && $0.count >= 3 }
+                
+                for subjectWord in subjectWords {
+                    if fuzzyMatches(textWord, subjectWord) {
+                        keywords.append(subject)
+                    }
+                }
             }
         }
         
@@ -1373,93 +1382,141 @@ class NLPEngine {
     }
     
     private func extractEventTitle(from text: String) -> String {
-        var title = text
+        let lowercased = text.lowercased()
         
-        let startPhrases = ["remind me to ", "remind me ", "i have an ", "i have a ", "i have ", "need to ", "have to ", "got an ", "got a ", "got "]
-        for phrase in startPhrases {
-            if title.lowercased().hasPrefix(phrase) {
-                title = String(title.dropFirst(phrase.count))
-                break
-            }
-        }
-        
-        let timePatterns = [
-            "\\s+(tomorrow|today).*$",
-            "\\s+on\\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\\s+\\d{1,2}.*$",
-            "\\s+on\\s+\\d{1,2}\\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec).*$",
-            "\\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\\s+\\d{1,2}.*$",
-            "\\s+\\d{1,2}\\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec).*$",
-            // Relative date patterns
-            "\\s+in\\s+\\d+(?:\\.\\d+)?(?:\\s+and\\s+a\\s+half)?\\s+(hour|hr|minute|min|day)s?.*$",
-            "\\s+after\\s+\\d+(?:\\.\\d+)?\\s+(hour|hr|minute|min)s?.*$",
-            "\\s+next\\s+\\w+.*$",
-            "\\s+this\\s+\\w+.*$",
-            // Day patterns
-            "\\s+on\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*$",
-            "\\s+this\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*$",
-            // Time patterns - 12 hour format
-            "\\s+at\\s+\\d{1,2}:\\d{2}\\s*(am|pm).*$",
-            "\\s+at\\s+\\d{1,2}\\s*(am|pm).*$",
-            "\\s+\\d{1,2}:\\d{2}\\s*(am|pm).*$",
-            "\\s+\\d{1,2}\\s*(am|pm).*$",
-            // Time patterns - 24 hour format
-            "\\s+at\\s+\\d{1,2}:\\d{2}.*$",
-            "\\s+\\d{1,2}:\\d{2}.*$",
-            // General time patterns
-            "\\s+at\\s+\\d+.*$"
+        let conversationalPhrases = [
+            "yo croski i have an ", "yo croski i have a ", "yo croski i have ",
+            "remind me to ", "remind me about ", "remind me ", "i need to remember to ",
+            "i have an ", "i have a ", "i have ", "need to ", "have to ", "gotta ",
+            "got an ", "got a ", "got ", "there's an ", "there's a ", "there's ",
+            "i need an ", "i need a ", "i need ", "i should ", "i must ",
+            "don't forget to ", "remember to ", "make sure to "
         ]
         
-        for pattern in timePatterns {
-            if let range = title.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
-                title = String(title[..<range.lowerBound])
+        var cleanedText = LeadInStripperModel.shared.stripLeadIn(from: text)
+        for phrase in conversationalPhrases {
+            if cleanedText.lowercased().hasPrefix(phrase) {
+                cleanedText = String(cleanedText.dropFirst(phrase.count)).trimmingCharacters(in: .whitespaces)
                 break
             }
         }
         
-        title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let timeAndDatePatterns = [
+            "\\s+at\\s+\\d{1,2}:\\d{2}\\s*(am|pm).*",
+            "\\s+at\\s+\\d{1,2}\\s*(am|pm).*",
+            "\\s+\\d{1,2}:\\d{2}\\s*(am|pm).*",
+            "\\s+\\d{1,2}\\s*(am|pm).*",
+            "\\s+at\\s+\\d{1,2}:\\d{2}.*",
+            "\\s+\\d{1,2}:\\d{2}.*",
+            // Date patterns
+            "\\s+on\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*",
+            "\\s+this\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*",
+            "\\s+next\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*",
+            "\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*",
+            "\\s+(today|tomorrow).*",
+            "\\s+on\\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\\s+\\d{1,2}.*",
+            "\\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\\s+\\d{1,2}.*",
+            // Relative time
+            "\\s+in\\s+\\d+.*",
+            "\\s+after\\s+\\d+.*"
+        ]
         
-        title = cleanAndNormalizeTitle(title)
-        
-        if title.isEmpty || title.count < 2 {
-            if text.lowercased().contains("test") || text.lowercased().contains("exam") {
-                title = "Test"
-            } else if text.lowercased().contains("meeting") {
-                title = "Meeting"
-            } else if text.lowercased().contains("homework") {
-                title = "Homework"
-            } else {
-                title = "Event"
+        for pattern in timeAndDatePatterns {
+            if let range = cleanedText.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                cleanedText = String(cleanedText[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+                break
             }
         }
         
-        return title
+        cleanedText = extractCoreSubject(from: cleanedText)
+        
+        cleanedText = properlyCapitalize(cleanedText)
+        
+        if cleanedText.isEmpty || cleanedText.count < 2 {
+            cleanedText = inferTitleFromKeywords(text)
+        }
+        
+        return cleanedText
     }
     
-    private func cleanAndNormalizeTitle(_ title: String) -> String {
-        var cleanTitle = title
+    private func extractScheduleTitle(from text: String) -> String {
+        let lowercased = text.lowercased()
         
-        let articlesAndFillers = ["an ", "a ", "the ", "my ", "our ", "their ", "some "]
-        for filler in articlesAndFillers {
-            if cleanTitle.lowercased().hasPrefix(filler) {
-                cleanTitle = String(cleanTitle.dropFirst(filler.count))
+        var cleanedText = LeadInStripperModel.shared.stripLeadIn(from: text)
+        
+        let conversationalPhrases = [
+            "yo croski i have ", "i have an ", "i have a ", "i have ",
+            "i've got an ", "i've got a ", "i've got ", "i got an ", "i got a ", "i got ",
+            "there's an ", "there's a ", "there's ", "my ", "our ", "the ",
+            "every ", "weekly ", "recurring "
+        ]
+        
+        for phrase in conversationalPhrases {
+            if cleanedText.lowercased().hasPrefix(phrase) {
+                cleanedText = String(cleanedText.dropFirst(phrase.count)).trimmingCharacters(in: .whitespaces)
+                break
+            }
+        }
+        
+        let redundantDescriptors = ["class", "course", "lecture", "tutorial", "lab session", "seminar"]
+        for descriptor in redundantDescriptors {
+            if cleanedText.lowercased().hasSuffix(" " + descriptor) {
+                let range = cleanedText.lowercased().range(of: " " + descriptor + "$", options: .regularExpression)!
+                cleanedText = String(cleanedText[..<range.lowerBound])
+                break
+            }
+        }
+        
+        let timeAndDayPatterns = [
+            "\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekday|weekdays|weekend|weekends|mwf|tth|tr).*",
+            "\\s+from\\s+\\d+.*",
+            "\\s+at\\s+\\d+.*",
+            "\\s+\\d{1,2}:\\d{2}.*",
+            "\\s+\\d{1,2}\\s*(am|pm).*",
+            "\\s+every\\s+.*"
+        ]
+        
+        for pattern in timeAndDayPatterns {
+            if let range = cleanedText.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                cleanedText = String(cleanedText[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+                break
+            }
+        }
+        
+        cleanedText = extractCoreSubject(from: cleanedText)
+        
+        cleanedText = properlyCapitalize(cleanedText)
+        
+        if cleanedText.isEmpty || cleanedText.count < 2 {
+            cleanedText = "Class"
+        }
+        
+        return cleanedText
+    }
+    
+    private func extractCoreSubject(from text: String) -> String {
+        var cleanedText = text.trimmingCharacters(in: .whitespaces)
+        
+        let unnecessaryWords = ["an ", "a ", "the ", "my ", "our ", "their ", "some ", "this ", "that "]
+        for word in unnecessaryWords {
+            if cleanedText.lowercased().hasPrefix(word) {
+                cleanedText = String(cleanedText.dropFirst(word.count))
                 break
             }
         }
         
         let subjectExpansions: [String: String] = [
+            "autistic geo": "Autistic Geography",
             "ochem": "Organic Chemistry",
-            "orgo": "Organic Chemistry",
+            "orgo": "Organic Chemistry", 
             "gen chem": "General Chemistry",
-            "genchem": "General Chemistry",
             "bio": "Biology",
             "phys": "Physics",
             "calc": "Calculus",
             "precalc": "Pre-Calculus",
             "stats": "Statistics",
             "psych": "Psychology",
-            "econ": "Economics",
             "comp sci": "Computer Science",
-            "compsci": "Computer Science",
             "lit": "Literature",
             "hist": "History",
             "geo": "Geography",
@@ -1467,28 +1524,23 @@ class NLPEngine {
             "alg": "Algebra"
         ]
         
-        let lowercased = cleanTitle.lowercased()
-        
-        for (abbrev, fullName) in subjectExpansions {
-            if lowercased == abbrev || lowercased == "\(abbrev) exam" || lowercased == "\(abbrev) test" || lowercased == "\(abbrev) quiz" {
-                let suffix = lowercased.hasSuffix(" exam") ? " Exam" :
-                           lowercased.hasSuffix(" test") ? " Test" :
-                           lowercased.hasSuffix(" quiz") ? " Quiz" : " Exam"
-                return "\(fullName)\(suffix)"
-            }
-        }
-        
+        let lowercased = cleanedText.lowercased()
         for (abbrev, fullName) in subjectExpansions {
             if lowercased.contains(abbrev) {
-                cleanTitle = cleanTitle.replacingOccurrences(of: abbrev, with: fullName, options: .caseInsensitive)
+                cleanedText = cleanedText.replacingOccurrences(of: abbrev, with: fullName, options: .caseInsensitive)
                 break
             }
         }
         
-        let words = cleanTitle.components(separatedBy: " ").filter { !$0.isEmpty }
+        return cleanedText.trimmingCharacters(in: .whitespaces)
+    }
+    
+    private func properlyCapitalize(_ text: String) -> String {
+        let words = text.components(separatedBy: " ").filter { !$0.isEmpty }
+        
         let capitalizedWords = words.map { word in
             let lowercaseWord = word.lowercased()
-            let dontCapitalize = ["of", "in", "on", "at", "to", "for", "with", "by", "from", "up", "about", "into", "through", "during", "before", "after", "above", "below", "between", "among", "and", "or", "but", "a", "an", "the"]
+            let dontCapitalize = ["of", "in", "on", "at", "to", "for", "with", "by", "from", "and", "or", "but", "the", "a", "an"]
             
             if words.first == word || !dontCapitalize.contains(lowercaseWord) {
                 return word.prefix(1).uppercased() + word.dropFirst()
@@ -1500,46 +1552,29 @@ class NLPEngine {
         return capitalizedWords.joined(separator: " ")
     }
     
-    private func extractScheduleTitle(from text: String) -> String {
-        var title = text
+    private func inferTitleFromKeywords(_ text: String) -> String {
+        let lowercased = text.lowercased()
         
-        let startPhrases = ["i have ", "i have a ", "i have an ", "i've got ", "i got ", "my ", "there's ", "there is "]
-        for phrase in startPhrases {
-            if title.lowercased().hasPrefix(phrase) {
-                title = String(title.dropFirst(phrase.count))
-                break
-            }
+        if containsFuzzyKeyword(lowercased, keywords: ["test", "exam", "quiz"]) {
+            return "Test"
+        } else if containsFuzzyKeyword(lowercased, keywords: ["meeting", "appointment"]) {
+            return "Meeting"
+        } else if containsFuzzyKeyword(lowercased, keywords: ["homework", "assignment", "project"]) {
+            return "Assignment" 
+        } else if containsFuzzyKeyword(lowercased, keywords: ["presentation", "present"]) {
+            return "Presentation"
+        } else if containsFuzzyKeyword(lowercased, keywords: ["interview"]) {
+            return "Interview"
+        } else if containsFuzzyKeyword(lowercased, keywords: ["doctor", "dentist", "appointment"]) {
+            return "Appointment"
+        } else {
+            return "Event"
         }
-        
-        let removePatterns = ["every ", "weekly ", "recurring ", "schedule ", "class ", "course ", "lecture ", "tutorial ", "lab ", "seminar "]
-        for pattern in removePatterns {
-            title = title.replacingOccurrences(of: pattern, with: "", options: .caseInsensitive)
-        }
-        
-        let timeAndDayPatterns = [
-            "\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekday|weekdays|weekend|weekends|mwf|tth|tr).*$",
-            "\\s+from\\s+\\d+.*$",
-            "\\s+at\\s+\\d+.*$",
-            "\\s+\\d{1,2}:\\d{2}.*$",
-            "\\s+\\d{1,2}\\s*(am|pm).*$"
-        ]
-        
-        for pattern in timeAndDayPatterns {
-            if let range = title.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
-                title = String(title[..<range.lowerBound])
-                break
-            }
-        }
-        
-        title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        title = cleanAndNormalizeTitle(title)
-        
-        if title.isEmpty || title.count < 2 {
-            title = "Class"
-        }
-        
-        return title
+    }
+    
+    // MARK: - Levenshtein Distance and Fuzzy Matching
+    private func cleanAndNormalizeTitle(_ title: String) -> String {
+        return properlyCapitalize(extractCoreSubject(from: title))
     }
     
     private func extractDaysOfWeek(from text: String) -> Set<DayOfWeek> {
@@ -1860,7 +1895,7 @@ class NLPEngine {
         let gradePatterns = [
             "got.*\\d+/\\d+.*on",
             "got.*\\d+%.*on",
-            "got.*[a-f][+-]?.*on",
+            "got.*[a-f][+-)?.*on",
             "received.*\\d+/\\d+.*on",
             "received.*\\d+%.*on",
             "received.*[a-f][+-]?.*on",
