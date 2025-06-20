@@ -142,8 +142,8 @@ struct NaturalLanguageInputView: View {
                                                 .overlay(
                                                     RoundedRectangle(cornerRadius: 16)
                                                         .stroke(
-                                                            isTextFieldFocused ? 
-                                                            themeManager.currentTheme.primaryColor : 
+                                                            isTextFieldFocused ?
+                                                            themeManager.currentTheme.primaryColor :
                                                             Color.gray.opacity(0.3),
                                                             lineWidth: isTextFieldFocused ? 2 : 1
                                                         )
@@ -379,7 +379,7 @@ struct NaturalLanguageInputView: View {
         let result: NLPResult
         
         if isInFollowUpMode, let context = followUpContext {
-            result = nlpEngine.parseFollowUp(inputText: inputText, context: context, conversationId: nil, existingCourses: existingCourses)
+            result = nlpEngine.parseFollowUp(inputText: inputText, context: context, conversationId: nil, availableCategories: eventViewModel.categories, existingCourses: existingCourses)
         } else {
             result = nlpEngine.parse(inputText: inputText,
                                      availableCategories: eventViewModel.categories,
@@ -425,7 +425,7 @@ struct NaturalLanguageInputView: View {
             return
         }
 
-        let eventDate = date ?? Date() 
+        let eventDate = date ?? Date()
 
         var finalCategoryId: UUID? = nil
         
@@ -446,7 +446,7 @@ struct NaturalLanguageInputView: View {
 
         let newEvent = Event(date: eventDate, title: title, categoryId: categoryId, reminderTime: reminderTime ?? .none)
         eventViewModel.addEvent(newEvent)
-        dismiss() 
+        dismiss()
     }
 
     private func handleAddScheduleItem(title: String, days: Set<DayOfWeek>, startTimeComponents: DateComponents?, endTimeComponents: DateComponents?, duration: TimeInterval?, reminderTime: ReminderTime?, colorHex: String?) {
@@ -610,6 +610,65 @@ struct NaturalLanguageInputView: View {
         
         print("🔍 NORMALIZE Weight - Final result: '\(normalized)'")
         return normalized
+    }
+
+    func processUserInput(_ text: String) {
+        let result = nlpEngine.parse(inputText: text,
+                                    availableCategories: eventViewModel.categories,
+                                    existingCourses: existingCourses)
+        
+        switch result {
+        case .parsedGrade(let courseName, let assignmentName, let grade, let weight):
+            handleAddGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: weight)
+        case .parsedEvent(let title, let date, let categoryName, let reminderTime):
+            handleAddEvent(title: title, date: date, categoryName: categoryName, reminderTime: reminderTime)
+        case .parsedScheduleItem(let title, let days, let startTimeComponents, let endTimeComponents, let duration, let reminderTime, let colorHex):
+            handleAddScheduleItem(title: title, days: days, startTimeComponents: startTimeComponents, endTimeComponents: endTimeComponents, duration: duration, reminderTime: reminderTime, colorHex: colorHex)
+        case .needsMoreInfo(let prompt, _, let context, let conversationId):
+            handleFollowUpQuestion(prompt: prompt, context: context, conversationId: conversationId)
+        case .unrecognized(_):
+            showSimpleAlert(title: "Input Not Understood", message: "Sorry, I couldn't understand that. Please try rephrasing. Examples:\n'Meeting tomorrow at 2pm about project'\n'Math class every Monday 9am'\n'Got 95% on CS101 midterm'")
+        case .notAttempted:
+            handleGenericResult(result)
+        }
+    }
+
+    private func handleGradeUpdate(_ courseName: String, _ assignmentName: String, _ grade: String, _ weight: String?) {
+        handleAddGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: weight)
+    }
+    
+    private func showAlert(title: String, message: String) {
+        showSimpleAlert(title: title, message: message)
+    }
+    
+    private func fallbackToLegacyProcessing(_ text: String) {
+        let result = nlpEngine.parse(inputText: text,
+                                    availableCategories: eventViewModel.categories,
+                                    existingCourses: existingCourses)
+        
+        switch result {
+        case .parsedEvent(let title, let date, let categoryName, let reminderTime):
+            handleAddEvent(title: title, date: date, categoryName: categoryName, reminderTime: reminderTime)
+        case .parsedScheduleItem(let title, let days, let startTimeComponents, let endTimeComponents, let duration, let reminderTime, let colorHex):
+            handleAddScheduleItem(title: title, days: days, startTimeComponents: startTimeComponents, endTimeComponents: endTimeComponents, duration: duration, reminderTime: reminderTime, colorHex: colorHex)
+        case .needsMoreInfo(let prompt, _, let context, let conversationId):
+            handleFollowUpQuestion(prompt: prompt, context: context, conversationId: conversationId)
+        case .unrecognized(_):
+            showSimpleAlert(title: "Input Not Understood", message: "Sorry, I couldn't understand that. Please try rephrasing. Examples:\n'Meeting tomorrow at 2pm about project'\n'Math class every Monday 9am'\n'Got 95% on CS101 midterm'")
+        case .notAttempted:
+            handleGenericResult(result)
+        case .parsedGrade(let courseName, let assignmentName, let grade, let weight):
+            handleAddGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: weight)
+        }
+    }
+
+    private func handleGenericResult(_ result: NLPResult) {
+        switch result {
+        case .notAttempted:
+            dismiss()
+        default:
+            showSimpleAlert(title: "Unexpected Result", message: "An unexpected result was received.")
+        }
     }
 
     struct QuickActionButton: View {

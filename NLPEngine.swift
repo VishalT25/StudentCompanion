@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Simple Parse Results & Context
+// MARK: - Parse Results & Context
 enum NLPResult {
     case parsedEvent(title: String, date: Date?, categoryName: String?, reminderTime: ReminderTime?)
     case parsedScheduleItem(title: String, days: Set<DayOfWeek>, startTimeComponents: DateComponents?, endTimeComponents: DateComponents?, duration: TimeInterval?, reminderTime: ReminderTime?, colorHex: String?)
@@ -14,789 +14,763 @@ enum ParseContext {
     case gradeNeedsWeight(courseName: String, assignmentName: String, grade: String)
     case gradeNeedsAssignmentName(courseName: String, grade: String)
     case gradeNeedsCourse(assignmentName: String?, grade: String)
-    case eventNeedsReminder(title: String, date: Date?, categoryName: String?)
-    case eventNeedsDate(title: String, categoryName: String?)
-    case eventNeedsCategory(title: String, date: Date?)
-    case eventNeedsTime(title: String, baseDate: Date, categoryName: String?)
-    case eventNeedsTimeNoReminder(title: String, baseDate: Date, categoryName: String?)
-    case eventNeedsCategoryNoReminder(title: String, date: Date)
+    case eventNeedsDate(title: String, categoryName: String?, reminderTime: ReminderTime?)
+    case eventNeedsTime(title: String, date: Date, categoryName: String?, reminderTime: ReminderTime?)
+    case eventNeedsCategory(title: String, date: Date, reminderTime: ReminderTime?)
+    case eventNeedsReminder(title: String, date: Date, categoryName: String?)
+    case scheduleNeedsDays(title: String, startTime: DateComponents?, endTime: DateComponents?, duration: TimeInterval?)
+    case scheduleNeedsTime(title: String, days: Set<DayOfWeek>)
+    case scheduleNeedsEndTime(title: String, days: Set<DayOfWeek>, startTime: DateComponents)
     case scheduleNeedsReminder(title: String, days: Set<DayOfWeek>, startTime: DateComponents?, endTime: DateComponents?, duration: TimeInterval?)
-    case scheduleNeedsMoreTime(title: String, days: Set<DayOfWeek>, startTime: DateComponents?)
-    case scheduleNeedsColor(title: String, days: Set<DayOfWeek>, startTime: DateComponents?, endTime: DateComponents?, duration: TimeInterval?, reminderTime: ReminderTime?)
-    case scheduleNeedsReminderAndColor(title: String, days: Set<DayOfWeek>, startTime: DateComponents?, endTime: DateComponents?, duration: TimeInterval?)
+    case scheduleNeedsColor(title: String, days: Set<DayOfWeek>, startTimeComponents: DateComponents?, endTimeComponents: DateComponents?, duration: TimeInterval?, reminderTime: ReminderTime?)
 }
 
-// MARK: - Simplified NLP Engine
+// MARK: - NLP Engine
 class NLPEngine {
-    private let conversationTimeoutInterval: TimeInterval = 300
     private var activeConversations: [UUID: Date] = [:]
-    
-    // Fuzzy matching cache for performance
-    private var fuzzyMatchCache: [String: Bool] = [:]
+    private let conversationTimeout: TimeInterval = 300 // 5 minutes
     
     func parse(inputText: String, availableCategories: [Category] = [], existingCourses: [Course] = []) -> NLPResult {
-        let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .notAttempted }
+        let cleanInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanInput.isEmpty else { return .notAttempted }
         
-        let lowercased = trimmed.lowercased()
+        cleanupExpiredConversations()
+        let lowerInput = cleanInput.lowercased()
+
+        // --- Prioritized Rules ---
         
-        // Try parsing as grade first
-        if let gradeResult = tryParseAsGrade(text: trimmed, lowercased: lowercased, courses: existingCourses) {
-            return gradeResult
+        // Rule 1: Recurring Schedule (if "every" is present)
+        // "every" is a strong indicator for a schedule.
+        if lowerInput.contains("every") {
+            if let scheduleResult = tryParseSchedule(cleanInput, categories: availableCategories) {
+                // tryParseSchedule will return .needsMoreInfo if it identifies a schedule but needs details.
+                if resultIsNotUnrecognizedOrNotAttempted(scheduleResult) {
+                    return scheduleResult
+                }
+            }
+            // If "every" is present but tryParseSchedule failed to give a conclusive result,
+            // (e.g., returned nil or .unrecognized, though current tryParseSchedule is unlikely to do this if "every" passes its initial guard)
+            // we let it fall through. Other more specific rules (like grade) might still apply,
+            // or it will eventually be caught by the final .unrecognized.
         }
         
-        // Try parsing as schedule BEFORE event (schedule has priority)
-        if let scheduleResult = tryParseAsScheduleItem(text: trimmed, lowercased: lowercased) {
-            return scheduleResult
+        // Calculate dateRefWasFound after the "every" check, for use in subsequent rules.
+        let dateRefWasFound = hasDateReference(lowerInput)
+
+        // Rule 2: Explicit Grade Markers (e.g., %, or very specific grade patterns)
+        // This runs if "every" wasn't parsed as a schedule above, or if "every" wasn't present.
+        if lowerInput.contains("%") || containsActualGradePattern(lowerInput) {
+            if let gradeResult = tryParseGrade(cleanInput, courses: existingCourses, isConfidentParse: true) {
+                if resultIsNotUnrecognizedOrNotAttempted(gradeResult) { return gradeResult }
+            }
         }
         
-        // Try parsing as event
-        if let eventResult = tryParseAsEvent(text: trimmed, lowercased: lowercased, categories: availableCategories) {
-            return eventResult
+        // Rule 3: Likely Event (if date/time is present and "every" was NOT in the input)
+        // This ensures that if "every" was present (even if schedule parsing failed above),
+        // we don't immediately try to parse it as a simple event here.
+        if dateRefWasFound && !lowerInput.contains("every") {
+            if let eventResult = tryParseEvent(cleanInput, categories: availableCategories) {
+                 if resultIsNotUnrecognizedOrNotAttempted(eventResult) { return eventResult }
+            }
+        }
+
+        // --- Fallback / Broader Checks for inputs NOT containing "every" (or if "every" parsing failed) ---
+        // This block primarily targets inputs that did NOT contain "every".
+        // If "every" was present but failed both schedule and grade parsing above, it might also reach here,
+        // but it's less likely to be a standard event/schedule if `tryParseSchedule` already failed with "every".
+        if !lowerInput.contains("every") {
+            // Fallback for inputs with a date reference that weren't conclusively parsed as an event or grade yet.
+            if dateRefWasFound {
+                // Rule 3 already attempted event parsing. If it was inconclusive, try event again (broader attempt)
+                // then schedule (for non-recurring scheduled items).
+                if let eventResult = tryParseEvent(cleanInput, categories: availableCategories) {
+                    if resultIsNotUnrecognizedOrNotAttempted(eventResult) { return eventResult }
+                }
+                if let scheduleResult = tryParseSchedule(cleanInput, categories: availableCategories) {
+                     if resultIsNotUnrecognizedOrNotAttempted(scheduleResult) { return scheduleResult }
+                }
+            }
+
+            // Fallback: Try Grade (more conservative parse)
+            if let gradeResult = tryParseGrade(cleanInput, courses: existingCourses, isConfidentParse: false) {
+                if resultIsNotUnrecognizedOrNotAttempted(gradeResult) { return gradeResult }
+            }
+
+            // Fallback: For inputs without a date reference (or if date-based parsing above failed)
+            if !dateRefWasFound {
+                if let eventResult = tryParseEvent(cleanInput, categories: availableCategories) {
+                     if resultIsNotUnrecognizedOrNotAttempted(eventResult) { return eventResult }
+                }
+                if let scheduleResult = tryParseSchedule(cleanInput, categories: availableCategories) {
+                    if resultIsNotUnrecognizedOrNotAttempted(scheduleResult) { return scheduleResult }
+                }
+            }
         }
         
         return .unrecognized(originalInput: inputText)
     }
     
     func parseFollowUp(inputText: String, context: ParseContext, conversationId: UUID?, availableCategories: [Category] = [], existingCourses: [Course] = []) -> NLPResult {
-        let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        if trimmed.lowercased().contains("cancel") {
-            return .unrecognized(originalInput: "Cancelled.")
+        // Handle cancellation
+        if cleanInput.lowercased().contains("cancel") || cleanInput.lowercased().contains("nevermind") {
+            return .unrecognized(originalInput: "Cancelled")
         }
         
         switch context {
+        // MARK: - Grade Follow-ups
         case .gradeNeedsWeight(let courseName, let assignmentName, let grade):
-            if let weight = extractWeight(from: trimmed) {
+            if let weight = extractWeight(from: cleanInput, isFollowUpQuery: true) {
                 return .parsedGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: weight)
-            } else if trimmed.lowercased().contains("skip") || trimmed.lowercased().contains("no") {
+            } else if cleanInput.lowercased().contains("skip") || cleanInput.lowercased().contains("no weight") {
                 return .parsedGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: nil)
             } else {
-                return .needsMoreInfo(prompt: "Please enter the weight as a percentage (e.g., '20%') or say 'skip'.", originalInput: trimmed, context: context, conversationId: conversationId)
+                return .needsMoreInfo(prompt: "Please enter the weight as a percentage (e.g., '20%') or say 'skip':", originalInput: cleanInput, context: context, conversationId: conversationId)
             }
             
         case .gradeNeedsAssignmentName(let courseName, let grade):
-            let assignmentName = trimmed.isEmpty ? "Assignment" : trimmed
-            return .needsMoreInfo(prompt: "What's the weight of this assignment? (e.g., '20%')", originalInput: "", context: .gradeNeedsWeight(courseName: courseName, assignmentName: assignmentName, grade: grade), conversationId: conversationId)
+            let assignmentName = cleanInput.isEmpty ? "Assignment" : cleanInput
+            let conversationId = startNewConversation()
+            return .needsMoreInfo(prompt: "What's the weight of this assignment? (e.g., '20%' or 'skip'):", originalInput: cleanInput, context: .gradeNeedsWeight(courseName: courseName, assignmentName: assignmentName, grade: grade), conversationId: conversationId)
             
         case .gradeNeedsCourse(let assignmentName, let grade):
-            if let course = existingCourses.first(where: { $0.name.lowercased().contains(trimmed.lowercased()) }) {
-                let finalAssignmentName = assignmentName ?? "Assignment"
-                return .needsMoreInfo(prompt: "What's the weight of this assignment? (e.g., '20%')", originalInput: "", context: .gradeNeedsWeight(courseName: course.name, assignmentName: finalAssignmentName, grade: grade), conversationId: conversationId)
+            if let course = findBestCourseMatch(cleanInput, courses: existingCourses) {
+                let finalAssignment = assignmentName ?? "Assignment"
+                let conversationId = startNewConversation()
+                return .needsMoreInfo(prompt: "What's the weight of this assignment? (e.g., '20%' or 'skip'):", originalInput: cleanInput, context: .gradeNeedsWeight(courseName: course.name, assignmentName: finalAssignment, grade: grade), conversationId: conversationId)
             } else {
-                return .needsMoreInfo(prompt: "Course not found. Please enter an existing course name.", originalInput: trimmed, context: context, conversationId: conversationId)
+                let availableCourses = existingCourses.prefix(5).map { $0.name }.joined(separator: ", ")
+                return .needsMoreInfo(prompt: "Course not found. Please choose from: \(availableCourses)", originalInput: cleanInput, context: context, conversationId: conversationId)
+            }
+            
+        // MARK: - Event Follow-ups
+        case .eventNeedsDate(let title, let categoryName, let reminderTime):
+            if let date = parseDate(from: cleanInput) {
+                if let category = categoryName, let reminder = reminderTime {
+                    return .parsedEvent(title: title, date: date, categoryName: category, reminderTime: reminder)
+                } else if let category = categoryName {
+                    let conversationId = startNewConversation()
+                    return .needsMoreInfo(prompt: "When would you like to be reminded about '\(title)'? (e.g., '15 minutes before', 'no reminder'):", originalInput: cleanInput, context: .eventNeedsReminder(title: title, date: date, categoryName: category), conversationId: conversationId)
+                } else {
+                    let conversationId = startNewConversation()
+                    return .needsMoreInfo(prompt: "What category should '\(title)' be in? \(buildCategoryPrompt(availableCategories)):", originalInput: cleanInput, context: .eventNeedsCategory(title: title, date: date, reminderTime: reminderTime), conversationId: conversationId)
+                }
+            } else {
+                return .needsMoreInfo(prompt: "I couldn't understand that date. Try formats like 'tomorrow', 'next Monday', or 'December 15':", originalInput: cleanInput, context: context, conversationId: conversationId)
+            }
+            
+        case .eventNeedsTime(let title, let date, let categoryName, let reminderTime):
+            if let timeComponents = parseTime(from: cleanInput) {
+                let calendar = Calendar.current
+                let finalDate = calendar.date(bySettingHour: timeComponents.hour ?? 12, minute: timeComponents.minute ?? 0, second: 0, of: date) ?? date
+                
+                if let category = categoryName, let reminder = reminderTime {
+                    return .parsedEvent(title: title, date: finalDate, categoryName: category, reminderTime: reminder)
+                } else if let category = categoryName {
+                    let conversationId = startNewConversation()
+                    return .needsMoreInfo(prompt: "When would you like to be reminded about '\(title)'? (e.g., '15 minutes before', 'no reminder'):", originalInput: cleanInput, context: .eventNeedsReminder(title: title, date: finalDate, categoryName: category), conversationId: conversationId)
+                } else {
+                    let conversationId = startNewConversation()
+                    return .needsMoreInfo(prompt: "What category should '\(title)' be in? \(buildCategoryPrompt(availableCategories)):", originalInput: cleanInput, context: .eventNeedsCategory(title: title, date: finalDate, reminderTime: reminderTime), conversationId: conversationId)
+                }
+            } else {
+                return .needsMoreInfo(prompt: "Please enter a time (e.g., '3:30 PM', '9am', '14:00'):", originalInput: cleanInput, context: context, conversationId: conversationId)
+            }
+            
+        case .eventNeedsCategory(let title, let date, let reminderTime):
+            if let categoryName = findCategoryMatch(cleanInput, categories: availableCategories) {
+                if let reminder = reminderTime {
+                    return .parsedEvent(title: title, date: date, categoryName: categoryName, reminderTime: reminder)
+                } else {
+                    let conversationId = startNewConversation()
+                    return .needsMoreInfo(prompt: "When would you like to be reminded about '\(title)'? (e.g., '15 minutes before', 'no reminder'):", originalInput: cleanInput, context: .eventNeedsReminder(title: title, date: date, categoryName: categoryName), conversationId: conversationId)
+                }
+            } else {
+                return .needsMoreInfo(prompt: "Category not found. \(buildCategoryPrompt(availableCategories)):", originalInput: cleanInput, context: context, conversationId: conversationId)
             }
             
         case .eventNeedsReminder(let title, let date, let categoryName):
-            let reminderTime = parseReminderTime(from: trimmed)
+            let reminderTime = parseReminderTime(from: cleanInput)
             return .parsedEvent(title: title, date: date, categoryName: categoryName, reminderTime: reminderTime)
             
-        case .eventNeedsDate(let title, let categoryName):
-            if let date = parseDate(from: trimmed) {
-                if categoryName != nil {
-                    let reminderPrompt = "When would you like to be reminded about '\(title)'? (e.g., '15 minutes before', 'at the start', or 'no reminder')"
-                    return .needsMoreInfo(
-                        prompt: reminderPrompt,
-                        originalInput: trimmed,
-                        context: .eventNeedsReminder(title: title, date: date, categoryName: categoryName),
-                        conversationId: conversationId
-                    )
+        // MARK: - Schedule Follow-ups
+        case .scheduleNeedsDays(let title, let startTime, let endTime, let duration):
+            let days = extractDaysOfWeek(from: cleanInput)
+            if !days.isEmpty {
+                if let start = startTime {
+                    if endTime != nil || duration != nil {
+                        let conversationId = startNewConversation()
+                        return .needsMoreInfo(prompt: "Would you like a reminder for '\(title)'? (e.g., '15 minutes before', 'no'):", originalInput: cleanInput, context: .scheduleNeedsReminder(title: title, days: days, startTime: start, endTime: endTime, duration: duration), conversationId: conversationId)
+                    } else {
+                        let conversationId = startNewConversation()
+                        return .needsMoreInfo(prompt: "When does '\(title)' end? (e.g., 'to 11am', 'for 1 hour'):", originalInput: cleanInput, context: .scheduleNeedsEndTime(title: title, days: days, startTime: start), conversationId: conversationId)
+                    }
                 } else {
-                    let categoryPrompt = buildCategoryPrompt(for: title, availableCategories: availableCategories)
-                    return .needsMoreInfo(
-                        prompt: categoryPrompt,
-                        originalInput: trimmed,
-                        context: .eventNeedsCategory(title: title, date: date),
-                        conversationId: conversationId
-                    )
+                    let conversationId = startNewConversation()
+                    return .needsMoreInfo(prompt: "What time does '\(title)' start? (e.g., '9am', 'at 10:30'):", originalInput: cleanInput, context: .scheduleNeedsTime(title: title, days: days), conversationId: conversationId)
                 }
             } else {
-                return .needsMoreInfo(
-                    prompt: "I couldn't understand that date. Please try again with formats like 'tomorrow at 3pm', 'next Monday', or 'December 15'.",
-                    originalInput: trimmed,
-                    context: context,
-                    conversationId: conversationId
-                )
+                return .needsMoreInfo(prompt: "Please specify days (e.g., 'Monday and Wednesday', 'MWF', 'weekdays'):", originalInput: cleanInput, context: context, conversationId: conversationId)
             }
             
-        case .eventNeedsCategory(let title, let date):
-            let selectedCategory = findCategoryFromUserInput(trimmed, availableCategories: availableCategories)
-            
-            if let categoryName = selectedCategory {
-                return .needsMoreInfo(
-                    prompt: "When would you like to be reminded about '\(title)'? (e.g., '15 minutes before', 'at the start', or 'no reminder')",
-                    originalInput: trimmed,
-                    context: .eventNeedsReminder(title: title, date: date, categoryName: categoryName),
-                    conversationId: conversationId
-                )
+        case .scheduleNeedsTime(let title, let days):
+            if let startTime = parseTime(from: cleanInput) {
+                let conversationId = startNewConversation()
+                return .needsMoreInfo(prompt: "When does '\(title)' end? (e.g., 'to 11am', 'for 1 hour'):", originalInput: cleanInput, context: .scheduleNeedsEndTime(title: title, days: days, startTime: startTime), conversationId: conversationId)
             } else {
-                let categoryPrompt = buildCategoryPrompt(for: title, availableCategories: availableCategories, isRetry: true)
-                return .needsMoreInfo(
-                    prompt: categoryPrompt,
-                    originalInput: trimmed,
-                    context: context,
-                    conversationId: conversationId
-                )
+                return .needsMoreInfo(prompt: "Please enter a start time (e.g., '9am', '10:30', '14:00'):", originalInput: cleanInput, context: context, conversationId: conversationId)
             }
             
-        case .eventNeedsTimeNoReminder(let title, let baseDate, let categoryName):
-            if let specificTime = parseSpecificTime(from: trimmed) {
-                let calendar = Calendar.current
-                let finalDate = calendar.date(bySettingHour: specificTime.hour ?? 12, minute: specificTime.minute ?? 0, second: 0, of: baseDate) ?? baseDate
-                
-                if categoryName != nil {
-                    return .parsedEvent(title: title, date: finalDate, categoryName: categoryName, reminderTime: .none)
-                } else {
-                    let categoryPrompt = buildCategoryPrompt(for: title, availableCategories: availableCategories)
-                    return .needsMoreInfo(
-                        prompt: categoryPrompt,
-                        originalInput: trimmed,
-                        context: .eventNeedsCategoryNoReminder(title: title, date: finalDate),
-                        conversationId: conversationId
-                    )
-                }
-            } else {
-                return .needsMoreInfo(
-                    prompt: "What time is '\(title)'? (e.g., '3:30 PM', '9am', '14:00')",
-                    originalInput: trimmed,
-                    context: context,
-                    conversationId: conversationId
-                )
-            }
+        case .scheduleNeedsEndTime(let title, let days, let startTime):
+            let endTime = parseTime(from: cleanInput)
+            let duration = extractDuration(from: cleanInput)
             
-        case .eventNeedsCategoryNoReminder(let title, let date):
-            let selectedCategory = findCategoryFromUserInput(trimmed, availableCategories: availableCategories)
-            
-            if let categoryName = selectedCategory {
-                return .parsedEvent(title: title, date: date, categoryName: categoryName, reminderTime: .none)
+            if endTime != nil || duration != nil {
+                let conversationId = startNewConversation()
+                return .needsMoreInfo(prompt: "Would you like a reminder for '\(title)'? (e.g., '15 minutes before', 'no'):", originalInput: cleanInput, context: .scheduleNeedsReminder(title: title, days: days, startTime: startTime, endTime: endTime, duration: duration), conversationId: conversationId)
             } else {
-                let categoryPrompt = buildCategoryPrompt(for: title, availableCategories: availableCategories, isRetry: true)
-                return .needsMoreInfo(
-                    prompt: categoryPrompt,
-                    originalInput: trimmed,
-                    context: context,
-                    conversationId: conversationId
-                )
-            }
-            
-        case .eventNeedsTime(let title, let baseDate, let categoryName):
-            if let specificTime = parseSpecificTime(from: trimmed) {
-                let calendar = Calendar.current
-                let finalDate = calendar.date(bySettingHour: specificTime.hour ?? 12, minute: specificTime.minute ?? 0, second: 0, of: baseDate) ?? baseDate
-                
-                if categoryName != nil {
-                    let reminderPrompt = "When would you like to be reminded about '\(title)'? (e.g., '15 minutes before', 'at the start', or 'no reminder')"
-                    return .needsMoreInfo(
-                        prompt: reminderPrompt,
-                        originalInput: trimmed,
-                        context: .eventNeedsReminder(title: title, date: finalDate, categoryName: categoryName),
-                        conversationId: conversationId
-                    )
-                } else {
-                    let categoryPrompt = buildCategoryPrompt(for: title, availableCategories: availableCategories)
-                    return .needsMoreInfo(
-                        prompt: categoryPrompt,
-                        originalInput: trimmed,
-                        context: .eventNeedsCategory(title: title, date: finalDate),
-                        conversationId: conversationId
-                    )
-                }
-            } else {
-                return .needsMoreInfo(
-                    prompt: "What time is '\(title)'? (e.g., '3:30 PM', '9am', '14:00')",
-                    originalInput: trimmed,
-                    context: context,
-                    conversationId: conversationId
-                )
+                return .needsMoreInfo(prompt: "When does '\(title)' end? (e.g., 'to 11am', 'for 1 hour', 'ends at 3pm'):", originalInput: cleanInput, context: context, conversationId: conversationId)
             }
             
         case .scheduleNeedsReminder(let title, let days, let startTime, let endTime, let duration):
-            let reminderTime = parseReminderTime(from: trimmed)
-            return .parsedScheduleItem(title: title, days: days, startTimeComponents: startTime, endTimeComponents: endTime, duration: duration, reminderTime: reminderTime, colorHex: nil)
-        
-        case .scheduleNeedsColor(let title, let days, let startTime, let endTime, let duration, let reminderTime):
-            let extractedColor = extractColorFromText(from: trimmed.lowercased())
-            let finalColor = extractedColor ?? "007AFF" // Default blue
-            return .parsedScheduleItem(title: title, days: days, startTimeComponents: startTime, endTimeComponents: endTime, duration: duration, reminderTime: reminderTime, colorHex: finalColor)
-            
-        case .scheduleNeedsReminderAndColor(let title, let days, let startTime, let endTime, let duration):
-            let reminderTime = parseReminderTime(from: trimmed)
+            let reminderTime = parseReminderTime(from: cleanInput)
+            let conversationId = startNewConversation() // Or ensure conversationId is passed if continuing
             return .needsMoreInfo(
-                prompt: "What color would you like for '\(title)'? (e.g., 'blue', 'red', 'green', or 'default')",
-                originalInput: trimmed,
-                context: .scheduleNeedsColor(title: title, days: days, startTime: startTime, endTime: endTime, duration: duration, reminderTime: reminderTime),
+                prompt: "What color would you like for '\(title)'? (e.g., 'blue', '#FF0000', or 'skip'):",
+                originalInput: cleanInput, // User's input for reminder, context carries forward schedule details
+                context: .scheduleNeedsColor(
+                    title: title,
+                    days: days,
+                    startTimeComponents: startTime,
+                    endTimeComponents: endTime,
+                    duration: duration,
+                    reminderTime: reminderTime
+                ),
                 conversationId: conversationId
             )
-            
-        case .scheduleNeedsMoreTime(let title, let days, let startTime):
-            let updatedDays = days.isEmpty ? extractDaysOfWeek(from: trimmed) : days
-            let extractedTimes = extractScheduleTimes(from: trimmed)
-            let updatedStartTime = startTime ?? extractedTimes.start
-            
-            var updatedEndTime = extractedTimes.end
-            if startTime != nil && updatedEndTime == nil && extractedTimes.start != nil {
-                updatedEndTime = extractedTimes.start
+
+        case .scheduleNeedsColor(let title, let days, let startTimeComponents, let endTimeComponents, let duration, let reminderTime):
+            if cleanInput.lowercased().contains("skip") || cleanInput.lowercased().contains("no color") || cleanInput.lowercased().contains("none") {
+                return .parsedScheduleItem(title: title, days: days, startTimeComponents: startTimeComponents, endTimeComponents: endTimeComponents, duration: duration, reminderTime: reminderTime, colorHex: nil)
             }
             
-            if let startTime = updatedStartTime, let endTime = updatedEndTime {
-                if startTime.hour == endTime.hour && startTime.minute == endTime.minute {
-                    let conversationId = startNewConversation()
-                    return .needsMoreInfo(
-                        prompt: "The start and end times are the same (\(formatTime(startTime))). Please provide different start and end times (e.g., 'from 9am to 10am', '2-3pm').",
-                        originalInput: trimmed,
-                        context: .scheduleNeedsMoreTime(title: title, days: updatedDays, startTime: nil),
-                        conversationId: conversationId
-                    )
-                }
-            }
-            
-            if updatedDays.isEmpty {
-                return .needsMoreInfo(prompt: "Please specify the days for '\(title)' (e.g., 'every Monday', 'MWF').", originalInput: trimmed, context: .scheduleNeedsMoreTime(title: title, days: Set<DayOfWeek>(), startTime: updatedStartTime), conversationId: conversationId)
-            }
-            
-            if updatedStartTime == nil {
-                return .needsMoreInfo(prompt: "What time does '\(title)' start? (e.g., 'at 9am', 'from 10:30')", originalInput: trimmed, context: .scheduleNeedsMoreTime(title: title, days: updatedDays, startTime: nil), conversationId: conversationId)
-            }
-            
-            if updatedEndTime == nil && extractedTimes.duration == nil {
-                return .needsMoreInfo(prompt: "When does '\(title)' end? (e.g., 'to 11am', 'for 1 hour')", originalInput: trimmed, context: .scheduleNeedsMoreTime(title: title, days: updatedDays, startTime: updatedStartTime), conversationId: conversationId)
-            }
-            
-            return .needsMoreInfo(
-                prompt: "Would you like to set a reminder for '\(title)'? (e.g., '15 minutes before', 'at start time', or 'no')",
-                originalInput: trimmed,
-                context: .scheduleNeedsReminderAndColor(title: title, days: updatedDays, startTime: updatedStartTime, endTime: updatedEndTime, duration: extractedTimes.duration),
-                conversationId: conversationId
-            )
-        }
-    }
-    
-    // MARK: - Levenshtein Distance and Fuzzy Matching
-    private func levenshteinDistance(_ a: String, _ b: String) -> Int {
-        let a = Array(a)
-        let b = Array(b)
-        
-        if a.isEmpty { return b.count }
-        if b.isEmpty { return a.count }
-        
-        var matrix = Array(repeating: Array(repeating: 0, count: b.count + 1), count: a.count + 1)
-        
-        for i in 0...a.count { matrix[i][0] = i }
-        for j in 0...b.count { matrix[0][j] = j }
-        
-        for i in 1...a.count {
-            for j in 1...b.count {
-                let cost = a[i-1] == b[j-1] ? 0 : 1
-                matrix[i][j] = min(
-                    matrix[i-1][j] + 1,
-                    matrix[i][j-1] + 1,
-                    matrix[i-1][j-1] + cost
+            if let colorHex = extractColor(from: cleanInput) {
+                return .parsedScheduleItem(title: title, days: days, startTimeComponents: startTimeComponents, endTimeComponents: endTimeComponents, duration: duration, reminderTime: reminderTime, colorHex: colorHex)
+            } else {
+                // Re-prompt if color is not recognized and not skipped
+                return .needsMoreInfo(
+                    prompt: "Sorry, I didn't recognize that color. Try a common color name (e.g., 'red', 'blue'), a hex code (e.g., '#FFCC00'), or say 'skip':",
+                    originalInput: cleanInput,
+                    context: context, // Keep the same context to retry
+                    conversationId: conversationId
                 )
             }
         }
-        
-        return matrix[a.count][b.count]
     }
     
-    private func fuzzyMatches(_ text: String, _ target: String, maxDistance: Int = 1) -> Bool {
-        let cacheKey = "\(text.lowercased()):\(target.lowercased())"
+    // MARK: - Grade Parsing (Modified for Strictness)
+    private func tryParseGrade(_ input: String, courses: [Course], isConfidentParse: Bool) -> NLPResult? {
+        let lowerInput = input.lowercased()
+        let hasActualGradePattern = containsActualGradePattern(lowerInput) // Checks for %, A+, X/Y
+
+        // If it has a date reference, it should NOT be parsed as a grade
+        // UNLESS it ALSO has an actual, undeniable grade pattern (e.g., "got 95% on test tmrw" - unlikely phrasing, but pattern is key)
+        // OR if this is a confident parse call (e.g. from Rule 1 due to '%').
+        if hasDateReference(lowerInput) && !hasActualGradePattern && !isConfidentParse {
+            return nil // e.g., "math test on monday" is an event.
+        }
+
+        // Strong, direct grade keywords
+        let strongKeywords = ["grade for", "score for", "grade in", "score in", "gpa", "received"]
+        let hasStrongKeyword = strongKeywords.contains { lowerInput.contains($0) }
         
-        if let cached = fuzzyMatchCache[cacheKey] {
-            return cached
+        // Weaker keywords that are only considered if a grade pattern is also present, or if it's a confident parse.
+        let weakerKeywords = ["test", "quiz", "exam", "assignment", "homework", "essay", "paper"]
+        let hasWeakerKeyword = weakerKeywords.contains { lowerInput.contains($0) }
+
+        // Determine likelihood of being a grade
+        var isLikelyGrade = hasActualGradePattern || hasStrongKeyword
+        if !isLikelyGrade && hasWeakerKeyword && (isConfidentParse || hasActualGradePattern) {
+            isLikelyGrade = true
         }
         
-        let distance = levenshteinDistance(text.lowercased(), target.lowercased())
-        let result = distance <= maxDistance
-        
-        fuzzyMatchCache[cacheKey] = result
-        return result
-    }
-    
-    private func containsFuzzyKeyword(_ text: String, keywords: [String]) -> Bool {
-        let lowercased = text.lowercased()
-        
-        // First try exact matches
-        for keyword in keywords {
-            if lowercased.contains(keyword.lowercased()) {
-                return true
+        if !isLikelyGrade && lowerInput.contains("got") && hasWeakerKeyword {
+            if extractGrade(from: input) != nil {
+                isLikelyGrade = true
+            } else if !hasDateReference(lowerInput) {
+                 // let it try to extract, if extractGrade fails, it will return nil.
+            } else {
+                return nil
             }
         }
+
+
+        guard isLikelyGrade else { return nil }
         
-        // Then try fuzzy matches for individual words
-        let textWords = lowercased.components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty && $0.count >= 3 }
-        
-        for textWord in textWords {
-            for keyword in keywords {
-                if fuzzyMatches(textWord, keyword) {
-                    return true
-                }
-                
-                let keywordWords = keyword.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
-                    .filter { !$0.isEmpty && $0.count >= 3 }
-                
-                for keywordWord in keywordWords {
-                    if fuzzyMatches(textWord, keywordWord) {
-                        return true
-                    }
-                }
+        // AND we have an actual grade pattern or a strong keyword, we should ask for the grade value.
+        guard let grade = extractGrade(from: input) else {
+            if hasActualGradePattern || hasStrongKeyword { // if "B+" was found, or "received"
+                 let conversationId = startNewConversation()
+                 // Construct a context that we're missing the grade value, but know it's a grade entry.
+                 // For now, prompt directly. A more specific context could be added.
+                 let tempCourseName = findBestCourseMatch(input, courses: courses)?.name
+                 let tempAssignmentName = extractAssignmentName(from: input, forGradeContext: true)
+
+                 if let cName = tempCourseName, let aName = tempAssignmentName {
+                    return .needsMoreInfo(prompt: "What was the grade for '\(aName)' in '\(cName)'? (e.g., '95%', 'B+'):", originalInput: input, context: .gradeNeedsWeight(courseName: cName, assignmentName: aName, grade: ""), conversationId: conversationId) // Grade is empty, will be filled.
+                 } else if let cName = tempCourseName {
+                     return .needsMoreInfo(prompt: "What was the grade for the assignment in '\(cName)'? (e.g., '95%', 'B+'):", originalInput: input, context: .gradeNeedsAssignmentName(courseName: cName, grade: ""), conversationId: conversationId)
+                 }
+                // Fallback prompt if not enough info for context
+                return .needsMoreInfo(prompt: "What was the grade you received? (e.g., '95%', 'A+', '87/100'):", originalInput: input, context: nil, conversationId: conversationId)
             }
+            return nil // Not enough evidence to ask for a grade value if no actual pattern/strong keyword
         }
         
-        return false
-    }
-    
-    // MARK: - Grade Parsing
-    private func tryParseAsGrade(text: String, lowercased: String, courses: [Course]) -> NLPResult? {
-        let specificGradeKeywords = ["grade", "score", "received", "earned", "scored", "percent", "%"]
-        let contextualGradeWords = ["got"]
-        
-        let hasSpecificGradeKeyword = containsFuzzyKeyword(lowercased, keywords: specificGradeKeywords)
-        let hasContextualGradeWord = containsFuzzyKeyword(lowercased, keywords: contextualGradeWords)
-        
-        let isLikelyGrade = hasSpecificGradeKeyword ||
-                           (hasContextualGradeWord && containsGradePattern(lowercased))
-        
-        guard isLikelyGrade || containsGradePattern(lowercased) else { return nil }
-        
-        if isEventNotGrade(text: lowercased) {
-            return nil
-        }
-        
-        guard let gradeString = extractGrade(from: text), !gradeString.isEmpty else {
-            if hasSpecificGradeKeyword {
-                let conversationId = startNewConversation()
-                return .needsMoreInfo(prompt: "Please include the grade (e.g., '95%', 'A+', '87', '45/67').", originalInput: text, context: nil, conversationId: conversationId)
-            }
-            return nil
-        }
-        
-        let identifiedCourseName = findBestCourseMatch(from: lowercased, courses: courses)
-        let assignmentName = extractAssignmentName(from: lowercased)
-        let weight = extractWeight(from: text)
+        let courseName = findBestCourseMatch(input, courses: courses)
+        let assignmentName = extractAssignmentName(from: input, forGradeContext: true) // Pass context
+        let weight = extractWeight(from: input, isFollowUpQuery: false)
         
         let conversationId = startNewConversation()
         
-        if let courseName = identifiedCourseName, let assignment = assignmentName {
-            if weight == nil {
-                return .needsMoreInfo(prompt: "What's the weight of this assignment? (e.g., '20%')", originalInput: text, context: .gradeNeedsWeight(courseName: courseName, assignmentName: assignment, grade: gradeString), conversationId: conversationId)
+        if let course = courseName, let assignment = assignmentName {
+            if weight != nil {
+                return .parsedGrade(courseName: course.name, assignmentName: assignment, grade: grade, weight: weight)
             } else {
-                return .parsedGrade(courseName: courseName, assignmentName: assignment, grade: gradeString, weight: weight)
+                return .needsMoreInfo(prompt: "What's the weight of this assignment? (e.g., '20%' or 'skip'):", originalInput: input, context: .gradeNeedsWeight(courseName: course.name, assignmentName: assignment, grade: grade), conversationId: conversationId)
             }
-        } else if let courseName = identifiedCourseName {
-            return .needsMoreInfo(prompt: "What's the name of this assignment in \(courseName)?", originalInput: text, context: .gradeNeedsAssignmentName(courseName: courseName, grade: gradeString), conversationId: conversationId)
+        } else if let course = courseName {
+            return .needsMoreInfo(prompt: "What's the name of this assignment in \(course.name)?", originalInput: input, context: .gradeNeedsAssignmentName(courseName: course.name, grade: grade), conversationId: conversationId)
+        } else if courses.isEmpty {
+             return .needsMoreInfo(prompt: "No courses found. Please add some courses first.", originalInput: input, context: nil, conversationId: conversationId)
         } else {
-            if courses.isEmpty {
-                return .needsMoreInfo(prompt: "No courses found. Please add some courses first.", originalInput: text, context: nil, conversationId: conversationId)
-            } else {
-                let courseNames = courses.prefix(5).map { $0.name }.joined(separator: ", ")
-                return .needsMoreInfo(prompt: "Which course is this grade for? Available: \(courseNames)", originalInput: text, context: .gradeNeedsCourse(assignmentName: assignmentName, grade: gradeString), conversationId: conversationId)
-            }
+            let courseList = courses.prefix(5).map { $0.name }.joined(separator: ", ")
+            return .needsMoreInfo(prompt: "Which course is this grade for? Available: \(courseList)", originalInput: input, context: .gradeNeedsCourse(assignmentName: assignmentName, grade: grade), conversationId: conversationId)
         }
     }
-    
-    // MARK: - Assignment Name Extraction
-    private func extractAssignmentName(from text: String) -> String? {
-        let lowercased = text.lowercased()
-        
-        // Common assignment keywords with variations
-        let assignmentTypes = [
-            ("homework", ["homework", "hw", "assignment"]),
-            ("quiz", ["quiz", "test", "exam"]),
-            ("project", ["project", "paper"]),
-            ("lab", ["lab", "laboratory"]),
-            ("midterm", ["midterm", "midterm exam"]),
-            ("final", ["final", "final exam"])
-        ]
-        
-        // Look for assignment type mentions
-        for (baseType, variations) in assignmentTypes {
-            for variation in variations {
-                if lowercased.contains(variation) {
-                    // Look for numbers after the assignment type
-                    let pattern = "\(variation)\\s*(\\d+|#\\d+)"
-                    if let range = lowercased.range(of: pattern, options: .regularExpression) {
-                        let match = String(lowercased[range])
-                        if let numberRange = match.range(of: "\\d+", options: .regularExpression) {
-                            let number = String(match[numberRange])
-                            return "\(baseType.capitalized) \(number)"
-                        }
-                    }
-                    
-                    // If no number found, just return the type
-                    return baseType.capitalized
-                }
-            }
-        }
-        
-        // Look for "on [subject]" patterns
-        let onPatterns = ["on the ", "on "]
-        for pattern in onPatterns {
-            if let range = lowercased.range(of: pattern) {
-                let afterOn = String(lowercased[range.upperBound...])
-                let words = afterOn.components(separatedBy: CharacterSet.alphanumerics.inverted)
-                    .filter { !$0.isEmpty }
-                
-                if let firstWord = words.first, firstWord.count >= 3 {
-                    return firstWord.capitalized
-                }
-            }
-        }
-        
-        // Look for quoted assignment names
-        let quotedPattern = "\"([^\"]+)\""
-        if let range = text.range(of: quotedPattern, options: .regularExpression) {
-            let match = String(text[range])
-            let cleanMatch = match.replacingOccurrences(of: "\"", with: "")
-            if !cleanMatch.isEmpty {
-                return cleanMatch
-            }
-        }
-        
-        // Look for "for [assignment]" patterns
-        if let range = lowercased.range(of: "for ") {
-            let afterFor = String(lowercased[range.upperBound...])
-            let words = afterFor.components(separatedBy: CharacterSet.alphanumerics.inverted)
-                .filter { !$0.isEmpty && $0.count >= 3 }
-            
-            if let firstWord = words.first {
-                // Skip common course-related words
-                let skipWords = ["the", "our", "my", "this", "that", "math", "science", "english", "history"]
-                if !skipWords.contains(firstWord) {
-                    return firstWord.capitalized
-                }
-            }
-        }
-        
-        return nil
-    }
-    
-    // MARK: - Schedule Parsing
-    private func tryParseAsScheduleItem(text: String, lowercased: String) -> NLPResult? {
-        let strongScheduleKeywords = ["every", "weekly", "recurring", "weekday", "weekdays", "daily"]
-        let scheduleKeywords = ["schedule", "class", "course", "lecture", "tutorial", "lab", "seminar"]
-        
-        let hasStrongScheduleKeyword = containsFuzzyKeyword(lowercased, keywords: strongScheduleKeywords)
-        let hasScheduleKeyword = containsFuzzyKeyword(lowercased, keywords: scheduleKeywords)
-        
-        let dayPatterns = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "mwf", "tth", "tr"]
-        let hasDayPattern = containsFuzzyKeyword(lowercased, keywords: dayPatterns)
-        
-        let hasTimeRange = lowercased.contains("from") && (lowercased.contains("to") || lowercased.contains("-"))
-        let hasCourseCode = lowercased.range(of: "[a-z]{2,4}\\d{3,4}", options: .regularExpression) != nil
-        
-        let isLikelySchedule = hasStrongScheduleKeyword ||
-                             (hasCourseCode && hasTimeRange) ||
-                             (hasScheduleKeyword && hasDayPattern) ||
-                             (hasScheduleKeyword && hasTimeRange)
-        
-        guard isLikelySchedule else { return nil }
-        
-        let extractedDays = extractDaysOfWeek(from: text)
-        let extractedTimes = extractScheduleTimes(from: text)
-        let extractedTitle = extractScheduleTitle(from: text)
-        
-        if let startTime = extractedTimes.start, let endTime = extractedTimes.end {
-            if startTime.hour == endTime.hour && startTime.minute == endTime.minute {
-                let conversationId = startNewConversation()
-                return .needsMoreInfo(
-                    prompt: "The start and end times are the same (\(formatTime(startTime))). Please provide different start and end times (e.g., 'from 9am to 10am', '2-3pm').",
-                    originalInput: text,
-                    context: .scheduleNeedsMoreTime(title: extractedTitle, days: extractedDays, startTime: nil),
-                    conversationId: conversationId
-                )
-            }
-        }
-        
-        let extractedReminderTime = extractReminderFromScheduleText(from: lowercased)
-        let extractedColor = extractColorFromText(from: lowercased)
-        
-        let explicitlyDeclinedReminder = containsFuzzyKeyword(lowercased, keywords: [
-            "don't need to be reminded", "no reminder needed", "don't remind me",
-            "no reminder", "don't need reminder", "no need to remind"
-        ])
-        
-        let conversationId = startNewConversation()
-        
-        if extractedDays.isEmpty {
-            return .needsMoreInfo(prompt: "Please specify the days for '\(extractedTitle)' (e.g., 'every Monday', 'MWF').", originalInput: text, context: .scheduleNeedsMoreTime(title: extractedTitle, days: Set<DayOfWeek>(), startTime: extractedTimes.start), conversationId: conversationId)
-        }
-        
-        if extractedTimes.start == nil {
-            return .needsMoreInfo(prompt: "What time does '\(extractedTitle)' start? (e.g., 'at 9am', 'from 10:30')", originalInput: text, context: .scheduleNeedsMoreTime(title: extractedTitle, days: extractedDays, startTime: nil), conversationId: conversationId)
-        }
-        
-        if extractedTimes.end == nil && extractedTimes.duration == nil {
-            return .needsMoreInfo(prompt: "When does '\(extractedTitle)' end? (e.g., 'to 11am', 'for 1 hour')", originalInput: text, context: .scheduleNeedsMoreTime(title: extractedTitle, days: extractedDays, startTime: extractedTimes.start), conversationId: conversationId)
-        }
-        
-        let needsReminder = extractedReminderTime == nil && !explicitlyDeclinedReminder
-        let needsColor = extractedColor == nil
-        
-        if needsReminder && needsColor {
-            return .needsMoreInfo(
-                prompt: "Would you like to set a reminder for '\(extractedTitle)'? (e.g., '15 minutes before', 'at start time', or 'no')",
-                originalInput: text,
-                context: .scheduleNeedsReminderAndColor(title: extractedTitle, days: extractedDays, startTime: extractedTimes.start, endTime: extractedTimes.end, duration: extractedTimes.duration),
-                conversationId: conversationId
-            )
-        } else if needsReminder {
-            return .needsMoreInfo(
-                prompt: "Would you like to set a reminder for '\(extractedTitle)'? (e.g., '15 minutes before', 'at start time', or 'no')",
-                originalInput: text,
-                context: .scheduleNeedsReminder(title: extractedTitle, days: extractedDays, startTime: extractedTimes.start, endTime: extractedTimes.end, duration: extractedTimes.duration),
-                conversationId: conversationId
-            )
-        } else if needsColor {
-            return .needsMoreInfo(
-                prompt: "What color would you like for '\(extractedTitle)'? (e.g., 'blue', 'red', 'green', or 'default')",
-                originalInput: text,
-                context: .scheduleNeedsColor(title: extractedTitle, days: extractedDays, startTime: extractedTimes.start, endTime: extractedTimes.end, duration: extractedTimes.duration, reminderTime: extractedReminderTime ?? .none),
-                conversationId: conversationId
-            )
-        }
-        
-        return .parsedScheduleItem(
-            title: extractedTitle,
-            days: extractedDays,
-            startTimeComponents: extractedTimes.start,
-            endTimeComponents: extractedTimes.end,
-            duration: extractedTimes.duration,
-            reminderTime: extractedReminderTime ?? .none,
-            colorHex: extractedColor
-        )
-    }
-    
-    // MARK: - Event Parsing
-    private func tryParseAsEvent(text: String, lowercased: String, categories: [Category]) -> NLPResult? {
-        let strongEventKeywords = ["remind me", "reminder", "set reminder", "alert me", "notify me"]
-        let eventKeywords = ["meeting", "appointment", "deadline", "exam", "test", "quiz", "homework", "due", "assignment", "project", "presentation", "interview", "dentist", "doctor", "class", "lecture", "seminar", "workshop", "conference", "party", "event", "birthday", "anniversary", "vacation", "trip", "flight", "complete", "finish", "submit", "turn in", "hand in", "work on"]
-        
-        let hasStrongIndicator = containsFuzzyKeyword(lowercased, keywords: strongEventKeywords)
-        let hasEventKeyword = containsFuzzyKeyword(lowercased, keywords: eventKeywords)
-        let isLikelyEvent = hasStrongIndicator || hasEventKeyword || lowercased.contains("on ") || lowercased.contains("at ") || lowercased.contains("have") || lowercased.contains("need to")
-        
-        guard isLikelyEvent else { return nil }
-        
-        let extractedTitle = extractEventTitle(from: text)
-        let detectedDate = parseDate(from: text)
-        let categoryName = findBestCategoryMatch(from: text, categories: categories)
-        let specificTime = parseSpecificTime(from: text)
-        
-        let explicitlyDeclinedReminder = containsFuzzyKeyword(lowercased, keywords: [
-            "don't need to be reminded", "no reminder needed", "don't remind me",
-            "no reminder", "don't need reminder", "no need to remind"
-        ])
-        
-        let conversationId = startNewConversation()
-        
-        if hasStrongIndicator {
-            if let date = detectedDate {
-                if specificTime != nil {
-                    let calendar = Calendar.current
-                    let finalDate = calendar.date(bySettingHour: specificTime?.hour ?? 12, minute: specificTime?.minute ?? 0, second: 0, of: date) ?? date
-                    
-                    if categoryName != nil {
-                        if explicitlyDeclinedReminder {
-                            return .parsedEvent(title: extractedTitle, date: finalDate, categoryName: categoryName, reminderTime: .none)
-                        } else {
-                            return .needsMoreInfo(
-                                prompt: "When would you like to be reminded about '\(extractedTitle)'? (e.g., '15 minutes before', 'at the start', or 'no reminder')",
-                                originalInput: text,
-                                context: .eventNeedsReminder(title: extractedTitle, date: finalDate, categoryName: categoryName),
-                                conversationId: conversationId
-                            )
-                        }
-                    } else {
-                        let categoryPrompt = buildCategoryPrompt(for: extractedTitle, availableCategories: categories)
-                        let categoryContext: ParseContext = explicitlyDeclinedReminder ?
-                            .eventNeedsCategoryNoReminder(title: extractedTitle, date: finalDate) :
-                            .eventNeedsCategory(title: extractedTitle, date: finalDate)
-                        
-                        return .needsMoreInfo(
-                            prompt: categoryPrompt,
-                            originalInput: text,
-                            context: categoryContext,
-                            conversationId: conversationId
-                        )
-                    }
-                } else {
-                    let timeContext: ParseContext = explicitlyDeclinedReminder ?
-                        .eventNeedsTimeNoReminder(title: extractedTitle, baseDate: date, categoryName: categoryName) :
-                        .eventNeedsTime(title: extractedTitle, baseDate: date, categoryName: categoryName)
-                    
-                    return .needsMoreInfo(
-                        prompt: "What time is '\(extractedTitle)'? (e.g., '3:30 PM', '9am', '14:00')",
-                        originalInput: text,
-                        context: timeContext,
-                        conversationId: conversationId
-                    )
-                }
-            } else {
-                return .needsMoreInfo(
-                    prompt: "When is '\(extractedTitle)'? (e.g., 'tomorrow at 3pm', 'next Monday', 'December 15 at 2:30')",
-                    originalInput: text,
-                    context: .eventNeedsDate(title: extractedTitle, categoryName: categoryName),
-                    conversationId: conversationId
-                )
-            }
-        } else {
-            if let date = detectedDate {
-                if specificTime != nil {
-                    let calendar = Calendar.current
-                    let finalDate = calendar.date(bySettingHour: specificTime?.hour ?? 12, minute: specificTime?.minute ?? 0, second: 0, of: date) ?? date
-                    
-                    if categoryName != nil {
-                        if explicitlyDeclinedReminder {
-                            return .parsedEvent(title: extractedTitle, date: finalDate, categoryName: categoryName, reminderTime: .none)
-                        } else {
-                            return .needsMoreInfo(
-                                prompt: "Would you like to set a reminder for '\(extractedTitle)'? (e.g., '15 minutes before' or 'no')",
-                                originalInput: text,
-                                context: .eventNeedsReminder(title: extractedTitle, date: finalDate, categoryName: categoryName),
-                                conversationId: conversationId
-                            )
-                        }
-                    } else {
-                        let categoryPrompt = buildCategoryPrompt(for: extractedTitle, availableCategories: categories)
-                        let categoryContext: ParseContext = explicitlyDeclinedReminder ?
-                            .eventNeedsCategoryNoReminder(title: extractedTitle, date: finalDate) :
-                            .eventNeedsCategory(title: extractedTitle, date: finalDate)
-                        
-                        return .needsMoreInfo(
-                            prompt: categoryPrompt,
-                            originalInput: text,
-                            context: categoryContext,
-                            conversationId: conversationId
-                        )
-                    }
-                } else {
-                    let timeContext: ParseContext = explicitlyDeclinedReminder ?
-                        .eventNeedsTimeNoReminder(title: extractedTitle, baseDate: date, categoryName: categoryName) :
-                        .eventNeedsTime(title: extractedTitle, baseDate: date, categoryName: categoryName)
-                    
-                    return .needsMoreInfo(
-                        prompt: "What time is '\(extractedTitle)'? (e.g., '3:30 PM', '9am', '14:00')",
-                        originalInput: text,
-                        context: timeContext,
-                        conversationId: conversationId
-                    )
-                }
-            } else {
-                return .needsMoreInfo(
-                    prompt: "When is '\(extractedTitle)'? (e.g., 'tomorrow at 3pm', 'next Monday', 'December 15 at 2:30')",
-                    originalInput: text,
-                    context: .eventNeedsDate(title: extractedTitle, categoryName: categoryName),
-                    conversationId: conversationId
-                )
-            }
-        }
-    }
-    
-    // MARK: - Helper Functions
-    private func startNewConversation() -> UUID {
-        let conversationId = UUID()
-        activeConversations[conversationId] = Date()
-        return conversationId
-    }
-    
-    private func containsGradePattern(_ text: String) -> Bool {
-        return text.contains("%") ||
-               text.range(of: "\\b[A-F][+-]?\\b", options: .regularExpression) != nil ||
-               text.range(of: "\\b\\d+/\\d+\\b", options: .regularExpression) != nil
-    }
-    
-    private func extractGrade(from text: String) -> String? {
-        if let range = text.range(of: "\\b(\\d+(?:\\.\\d+)?)\\s*%", options: .regularExpression) {
-            return String(text[range])
-        }
-        
-        if let range = text.range(of: "\\b[A-F][+-]?\\b", options: .regularExpression) {
-            return String(text[range]).uppercased()
-        }
-        
-        if let range = text.range(of: "\\b(\\d+(?:\\.\\d+)?/\\d+(?:\\.\\d+)?)\\b", options: .regularExpression) {
-            return String(text[range])
-        }
-        
-        if let range = text.range(of: "\\b(\\d+(?:\\.\\d+)?)\\b", options: .regularExpression) {
-            let numberString = String(text[range])
-            if let number = Double(numberString), number <= 100 {
-                return numberString
-            }
-        }
-        
-        return nil
-    }
-    
-    private func extractWeight(from text: String) -> String? {
-        let lowercased = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        if let range = lowercased.range(of: "worth\\s+(\\d{1,2})\\s*%?", options: .regularExpression) {
-            let match = String(lowercased[range])
-            if let numberRange = match.range(of: "\\d{1,2}", options: .regularExpression) {
-                let number = String(match[numberRange])
-                return number
-            }
-        }
-        
-        if let range = lowercased.range(of: "weighted\\s+(\\d{1,2})\\s*%?", options: .regularExpression) {
-            let match = String(lowercased[range])
-            if let numberRange = match.range(of: "\\d{1,2}", options: .regularExpression) {
-                let number = String(match[numberRange])
-                return number
-            }
-        }
-        
-        if let range = lowercased.range(of: "counts\\s+for\\s+(\\d{1,2})\\s*%?", options: .regularExpression) {
-            let match = String(lowercased[range])
-            if let numberRange = match.range(of: "\\d{1,2}", options: .regularExpression) {
-                let number = String(match[numberRange])
-                return number
-            }
-        }
-        
-        let isLikelyFollowUpResponse = lowercased.count < 20 &&
-                                     !lowercased.contains("got") &&
-                                     !lowercased.contains("received") &&
-                                     !lowercased.contains("scored") &&
-                                     !lowercased.contains("earned") &&
-                                     !lowercased.contains("exam") &&
-                                     !lowercased.contains("test") &&
-                                     !lowercased.contains("quiz") &&
-                                     !lowercased.contains("assignment")
-        
-        if isLikelyFollowUpResponse {
-            if let range = lowercased.range(of: "^\\s*(\\d{1,2})\\s*%?\\s*$", options: .regularExpression) {
-                let match = String(lowercased[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if let numberRange = match.range(of: "\\d{1,2}", options: .regularExpression) {
-                    let number = String(match[numberRange])
-                    return number
-                }
-            }
-            
-            if let range = lowercased.range(of: "(\\d{1,2})\\s*percent", options: .regularExpression) {
-                let match = String(lowercased[range])
-                if let numberRange = match.range(of: "\\d{1,2}", options: .regularExpression) {
-                    let number = String(match[numberRange])
-                    return number
-                }
-            }
-            
-            if lowercased.contains("percent") {
-                if let range = lowercased.range(of: "^\\s*(\\d{1,2})\\s*percent\\s*$", options: .regularExpression) {
-                    let match = String(lowercased[range])
-                    if let numberRange = match.range(of: "\\d{1,2}", options: .regularExpression) {
+
+    private func extractAssignmentName(from input: String, forGradeContext: Bool) -> String? { // Added forGradeContext
+        let lowerInput = input.lowercased()
+        // If not for a grade context, be more general. For grades, be more specific to academic items.
+        let types = forGradeContext ?
+            ["test", "quiz", "exam", "homework", "assignment", "project", "paper", "lab", "midterm", "final", "essay"] :
+            ["meeting", "appointment", "presentation", "call", "event"] // More general types for events
+
+        for type in types {
+            if lowerInput.contains(type) {
+                let pattern = "\\b\(type)\\s*(\\d+|#\\d+)?\\b" // Ensure "type" is a whole word
+                if let range = lowerInput.range(of: pattern, options: .regularExpression) {
+                    let match = String(lowerInput[range])
+                    if let numberRange = match.range(of: "\\d+", options: .regularExpression) {
                         let number = String(match[numberRange])
-                        return number
+                        return "\(type.capitalized) \(number)"
                     }
+                    // If "type" itself is an item like "exam"
+                    if type.count > 2 { // Avoid single letters like "a"
+                         let potentialTitle = type.capitalized
+                         // Check if this type is followed by more descriptive words not part of typical details
+                         let substringAfterType = String(lowerInput[lowerInput.range(of: type)!.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                         if !substringAfterType.isEmpty && !hasDateReference(" "+substringAfterType) && !substringAfterType.starts(with: "with ") {
+                             // Consider if the "type" is part of a larger name, e.g. "final exam project"
+                             // This needs more sophisticated title extraction logic, for now, just return type
+                         }
+                         return potentialTitle
+                    }
+                } else if lowerInput.contains(type) && type.count > 2 { // Simpler contains check if regex fails
+                     return type.capitalized
+                }
+            }
+        }
+        // Fallback: If it's a grade context and no specific assignment type, but course was found.
+        if forGradeContext && findBestCourseMatch(input, courses: []) != nil { // Pass empty courses if only checking name match
+            return "Assignment" // Default
+        }
+        return nil
+    }
+    
+    // MARK: - Schedule Parsing (Simplified)
+    private func tryParseSchedule(_ input: String, categories: [Category]) -> NLPResult? {
+        let lowerInput = input.lowercased()
+        
+        // Primary rule: Must contain "every" for recurring events
+        // Secondary indicators
+        let scheduleKeywords = ["class", "course", "lecture", "weekly", "recurring", "schedule"]
+        let dayKeywords = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "mwf", "tth", "weekdays"]
+        
+        let hasScheduleKeyword = scheduleKeywords.contains { lowerInput.contains($0) }
+        let hasDayKeyword = dayKeywords.contains { lowerInput.contains($0) }
+        let hasTimeRange = lowerInput.contains("from") && (lowerInput.contains("to") || lowerInput.contains("-"))
+        
+        // Must have "every" OR strong schedule indicators
+        guard lowerInput.contains("every") || hasScheduleKeyword || (hasDayKeyword && hasTimeRange) else { return nil }
+        
+        let title = extractTitle(from: input, type: .schedule)
+        let days = extractDaysOfWeek(from: input)
+        let times = extractScheduleTimes(from: input)
+        
+        let conversationId = startNewConversation()
+        
+        // Check what's missing
+        if days.isEmpty {
+            return .needsMoreInfo(prompt: "What days is '\(title)' on? (e.g., 'Monday and Wednesday', 'MWF', 'weekdays'):", originalInput: input, context: .scheduleNeedsDays(title: title, startTime: times.start, endTime: times.end, duration: times.duration), conversationId: conversationId)
+        }
+        
+        if times.start == nil {
+            return .needsMoreInfo(prompt: "What time does '\(title)' start? (e.g., '9am', 'at 10:30'):", originalInput: input, context: .scheduleNeedsTime(title: title, days: days), conversationId: conversationId)
+        }
+        
+        if times.end == nil && times.duration == nil {
+            return .needsMoreInfo(prompt: "When does '\(title)' end? (e.g., 'to 11am', 'for 1 hour'):", originalInput: input, context: .scheduleNeedsEndTime(title: title, days: days, startTime: times.start!), conversationId: conversationId)
+        }
+        
+        // Ask for reminder
+        return .needsMoreInfo(prompt: "Would you like a reminder for '\(title)'? (e.g., '15 minutes before', 'no'):", originalInput: input, context: .scheduleNeedsReminder(title: title, days: days, startTime: times.start, endTime: times.end, duration: times.duration), conversationId: conversationId)
+    }
+    
+    
+    // MARK: - Event Parsing (Simplified)
+    private func tryParseEvent(_ input: String, categories: [Category]) -> NLPResult? {
+        let lowerInput = input.lowercased()
+        
+        // Assuming extractTitle and parseDate/parseTime are robust after previous fixes
+        let title = extractTitle(from: input, type: .event)
+        let date = parseDate(from: input)
+        let time = parseTime(from: input)
+        let extractedReminder = extractReminderTime(from: input) // Reminder from the initial phrase
+        
+        var finalDate = date
+        if let d = date, let t = time {
+            let calendar = Calendar.current
+            finalDate = calendar.date(bySettingHour: t.hour ?? 12, minute: t.minute ?? 0, second: 0, of: d)
+        } else if date != nil && time == nil {
+            // Date is present, but no specific time was parsed (e.g., "event tomorrow")
+            // finalDate will correctly be just the date part; time will be asked for below if not "all day"
+        }
+
+        let conversationId = startNewConversation()
+
+        // 1. Check if Date is missing
+        if finalDate == nil {
+            return .needsMoreInfo(prompt: "When is '\(title)'? (e.g., 'tomorrow at 3pm', 'next Monday', 'December 15'):",
+                                  originalInput: input,
+                                  context: .eventNeedsDate(title: title, categoryName: nil, reminderTime: extractedReminder),
+                                  conversationId: conversationId)
+        }
+
+        // 2. Check if Time is missing (and it's not an all-day event)
+        // finalDate is guaranteed to be non-nil here.
+        // We check `date` to ensure a date was initially parsed before asking for its time.
+        if date != nil && time == nil && !lowerInput.contains("all day") {
+            return .needsMoreInfo(prompt: "What time is '\(title)'? (e.g., '3:30 PM', '9am'):",
+                                  originalInput: input,
+                                  context: .eventNeedsTime(title: title, date: date!, categoryName: nil, reminderTime: extractedReminder),
+                                  conversationId: conversationId)
+        }
+        
+        // At this point, finalDate is resolved (either with a specific time, or it's an all-day event for a given date)
+
+        // 3. Determine Category
+        var identifiedCategoryName: String? = nil
+
+        // Step 3a: Check if the input string explicitly contains the name of one of the user's existing categories.
+        if !categories.isEmpty {
+            for cat in categories {
+                if lowerInput.contains(cat.name.lowercased()) {
+                    identifiedCategoryName = cat.name // User explicitly mentioned an existing category
+                    break
+                }
+            }
+        }
+
+        // Step 3b: If no explicit category from the user's list was mentioned,
+        // AND the user actually has categories to choose from, then ask for the category.
+        if identifiedCategoryName == nil && !categories.isEmpty {
+            return .needsMoreInfo(prompt: "What category should '\(title)' be in? \(buildCategoryPrompt(categories)):",
+                                  originalInput: input,
+                                  context: .eventNeedsCategory(title: title, date: finalDate!, reminderTime: extractedReminder),
+                                  conversationId: conversationId)
+        }
+
+        // Step 3c: If identifiedCategoryName is STILL nil at this point, it means either:
+        //   - User has no categories defined (so !categories.isEmpty was false).
+        //   - Or, the logic will proceed to follow-up (but this is initial parse).
+        // In the case where the user has no categories, we attempt to infer one using general keywords.
+        if identifiedCategoryName == nil {
+            identifiedCategoryName = findCategoryMatch(input, categories: categories)
+        }
+
+        // 4. Check for Reminder
+        // If reminderTime was not specified in the initial input, then ask.
+        if extractedReminder == nil {
+            return .needsMoreInfo(prompt: "When would you like to be reminded about '\(title)'? (e.g., '15 minutes before', 'no reminder'):",
+                                  originalInput: input,
+                                  context: .eventNeedsReminder(title: title, date: finalDate!, categoryName: identifiedCategoryName),
+                                  conversationId: conversationId)
+        }
+        
+        // All necessary information (title, date, time, category, reminder) is gathered.
+        return .parsedEvent(title: title, date: finalDate, categoryName: identifiedCategoryName, reminderTime: extractedReminder)
+    }
+        
+    // MARK: - Extraction Helper Functions
+    private enum TitleType {
+        case event, schedule
+    }
+    
+    private func extractTitle(from input: String, type: TitleType) -> String {
+        let originalTextForFallback = input
+        var textToProcess = input
+        let lowercasedInput = textToProcess.lowercased()
+
+        // 1. Define Anchor Patterns: phrases that typically precede the actual event name.
+        let anchorStarters = [
+            "yo croski i got a ", "yo croski i have an ", "yo croski i have a ",
+            "i'm going to have a ", "i am going to have a ",
+            "remind me to ", "remind me about ",
+            "i need to ", "i have to ", "i want to ", "i would like to ",
+            "set up a ", "schedule a ", "create an ", "add an ", "book a ",
+            "got an ", "got a ",
+            "have an ", "have a ",
+            "the ", "an ", "a ",
+            "my ", "your ", "his ", "her ", "its ", "our ", "their "
+        ]
+
+        var lastFoundAnchorEndIndex: String.Index? = nil
+
+        for starter in anchorStarters {
+            var searchStartIndex = lowercasedInput.startIndex
+            while searchStartIndex < lowercasedInput.endIndex {
+                if let range = lowercasedInput.range(of: starter, options: .literal, range: searchStartIndex..<lowercasedInput.endIndex) {
+                    if lastFoundAnchorEndIndex == nil || range.upperBound > lastFoundAnchorEndIndex! {
+                        lastFoundAnchorEndIndex = range.upperBound
+                    }
+                    searchStartIndex = range.upperBound
+                } else {
+                    break
+                }
+            }
+        }
+        
+        if let anchorEnd = lastFoundAnchorEndIndex {
+            let offset = lowercasedInput.distance(from: lowercasedInput.startIndex, to: anchorEnd)
+            if offset < textToProcess.count {
+                textToProcess = String(textToProcess.dropFirst(offset)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        // 2. Remove trailing details (end markers) from the (potentially) stripped phrase.
+        let endMarkers = [
+            " on ", " at ", " for ", " from ", " to ", " until ", " by ", " with ", " about ",
+            " today", " tonight", " tomorrow", " tmrw",
+            " next week", " next month", " this week", " this month",
+            " every", " each", // Added " every" and " each"
+            " monday", " tuesday", " wednesday", " thursday", " friday", " saturday", " sunday",
+            ", no reminder", " no reminder",
+            ", exam category", " exam category",
+            ", personal category", " personal category",
+            " category",
+            " reminder"
+        ]
+
+        var earliestEndMarkerActualPosition: String.Index? = nil
+        var textForEndMarkerCheck = textToProcess
+        let currentTextForEndMarkerCheckLowercased = textForEndMarkerCheck.lowercased()
+
+        for marker in endMarkers {
+            var patternToSearch = marker
+            if !marker.starts(with: ",") && !marker.starts(with: " ") {
+                 patternToSearch = " " + marker
+            }
+
+            if let range = currentTextForEndMarkerCheckLowercased.range(of: patternToSearch) {
+                // let isActualBoundary = range.lowerBound == currentTextForEndMarkerCheckLowercased.startIndex ||
+                //                       currentTextForEndMarkerCheckLowercased[currentTextForEndMarkerCheckLowercased.index(before: range.lowerBound)].isWhitespace
+                
+                // if isActualBoundary {
+                    if earliestEndMarkerActualPosition == nil || range.lowerBound < earliestEndMarkerActualPosition! {
+                        earliestEndMarkerActualPosition = range.lowerBound
+                    }
+                 // }
+            }
+            if marker.starts(with: " ") {
+                let markerWithoutLeadingSpace = String(marker.dropFirst())
+                 if let range = currentTextForEndMarkerCheckLowercased.range(of: markerWithoutLeadingSpace), range.lowerBound == currentTextForEndMarkerCheckLowercased.startIndex {
+                     if earliestEndMarkerActualPosition == nil || range.lowerBound < earliestEndMarkerActualPosition! {
+                        earliestEndMarkerActualPosition = range.lowerBound
+                    }
+                 }
+            }
+        }
+        
+        if let endPositionInLower = earliestEndMarkerActualPosition {
+            let distance = currentTextForEndMarkerCheckLowercased.distance(from: currentTextForEndMarkerCheckLowercased.startIndex, to: endPositionInLower)
+            if distance >= 0 {
+                let actualEndIndex = textToProcess.index(textToProcess.startIndex, offsetBy: distance, limitedBy: textToProcess.endIndex) ?? textToProcess.endIndex
+                textToProcess = String(textToProcess.prefix(upTo: actualEndIndex))
+            }
+        }
+        
+        textToProcess = textToProcess.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if textToProcess.isEmpty {
+            let commonWords = ["yo","croski","i","got","a","an","the","to","for","on","at","my","me","is","are","was","were"]
+            let dateFluffWords = [
+                "today", "tonight", "tomorrow", "tmrw",
+                "mon", "tue", "tues", "wed", "thu", "thurs", "fri", "sat", "sun",
+                "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
+            ]
+
+            var significantWords = originalTextForFallback.components(separatedBy: .whitespacesAndNewlines)
+                .filter { !$0.isEmpty && !commonWords.contains($0.lowercased()) }
+            
+            significantWords = significantWords.filter { !dateFluffWords.contains($0.lowercased()) }
+            
+            significantWords = Array(significantWords.prefix(4))
+        
+            if !significantWords.isEmpty {
+                textToProcess = significantWords.joined(separator: " ")
+            } else {
+                return type == .event ? "Event" : (type == .schedule ? "Class" : "Item")
+            }
+        }
+        
+        let words = textToProcess.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        if words.isEmpty {
+             return type == .event ? "Event" : (type == .schedule ? "Class" : "Item")
+        }
+
+        let capitalizedWords = words.map { word -> String in
+            let lowerWord = word.lowercased()
+            if words.count > 1 && words.first?.lowercased() != lowerWord &&
+               ["a", "an", "the", "of", "in", "on", "at", "to", "for", "with", "by", "from", "and", "or", "but"].contains(lowerWord) {
+                return lowerWord
+            }
+            return word.prefix(1).uppercased() + word.dropFirst().lowercased()
+        }
+        textToProcess = capitalizedWords.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return textToProcess.isEmpty ? (type == .event ? "Event" : "Class") : textToProcess
+    }
+
+    private func containsGradePattern(_ text: String) -> Bool {
+        let patterns = [
+            "\\d+%",           // 95%
+            "\\b[A-F][+-]?\\b",
+            "\\d+/\\d+",       // 85/100
+            "\\b\\d{1,3}\\b"   // Just numbers that could be grade
+        ]
+        
+        return patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
+    }
+    
+    private func extractGrade(from input: String) -> String? {
+        // Order matters: more specific patterns first.
+        let lowerInput = input.lowercased()
+
+        // Pattern: 90 percent, 85 percent (extracts "number%")
+        if let range = lowerInput.range(of: "(\\d+(\\.\\d+)?)\\s+percent", options: .regularExpression) {
+            if let numberRange = lowerInput.range(of: "\\d+(\\.\\d+)?", options: .regularExpression, range: range) {
+                return String(lowerInput[numberRange]) + "%"
+            }
+        }
+
+        // Pattern: 95%
+        if let range = input.range(of: "\\d+(\\.\\d+)?%", options: .regularExpression) {
+            return String(input[range])
+        }
+        
+        // Pattern: A, B+, C- etc. (already good)
+        if let range = input.range(of: "\\b[A-F][+-]?\\b", options: .regularExpression) {
+            return String(input[range]).uppercased()
+        }
+        
+        // Pattern: 85/100 or 85 / 100
+        if let range = input.range(of: "(\\d+(\\.\\d+)?)\\s*/\\s*(\\d+(\\.\\d+)?)", options: .regularExpression) {
+            let fractionString = String(input[range]).replacingOccurrences(of: " ", with: "")
+            let parts = fractionString.components(separatedBy: "/")
+            if parts.count == 2, let numerator = Double(parts[0]), let denominator = Double(parts[1]), denominator != 0 {
+                let percentage = (numerator / denominator) * 100
+                return String(format: "%.0f%%", percentage.rounded()) // Rounded to nearest whole number
+            } else if parts.count == 2 { // Keep original if parsing to double fails but it was a valid fraction pattern match
+                 return fractionString
+            }
+        }
+        
+        // Pattern: X out of Y, X over Y (e.g., "8 out of 10", "45 over 50")
+        if let range = lowerInput.range(of: "(\\d+(\\.\\d+)?)\\s+(out\\s+of|over)\\s+(\\d+(\\.\\d+)?)", options: .regularExpression) {
+            let matchedText = String(lowerInput[range])
+            // Extract numbers using regex to be more robust with potential decimal points
+            let numberMatches = emociones(from: matchedText, withPattern: "\\d+(\\.\\d+)?")
+
+            if numberMatches.count == 2, let numerator = Double(numberMatches[0]), let denominator = Double(numberMatches[1]), denominator != 0 {
+                let percentage = (numerator / denominator) * 100
+                return String(format: "%.0f%%", percentage.rounded()) // Rounded to nearest whole number
+            } else if numberMatches.count == 2 { // Fallback to original fraction string if double conversion fails
+                 return "\(numberMatches[0])/\(numberMatches[1])"
+            }
+        }
+        
+        // Fallback for simple numbers if they might be a grade (e.g. "got 87 on the test")
+        // This is less specific, so it comes later.
+        if let range = input.range(of: "\\b(\\d{1,3})\\b", options: .regularExpression) {
+            let numberStr = String(input[range])
+            // Check context if it's just a number to avoid misinterpreting random numbers as grades.
+            // For example, if words like "test", "quiz", "exam", "assignment", "grade", "score" are nearby.
+            let gradeContextKeywords = ["test", "quiz", "exam", "assignment", "grade", "score", "got", "received"]
+            var contextFound = false
+            for keyword in gradeContextKeywords {
+                if lowerInput.contains(keyword) {
+                    contextFound = true
+                    break
+                }
+            }
+            if contextFound {
+                if let number = Int(numberStr), (number <= 100 || (number > 100 && lowerInput.contains("/"))) { // Allow > 100 if it might be part of X/Y that was missed
+                    return numberStr
+                }
+            }
+        }
+        
+        return nil
+    }
+    
+    // Added isFollowUpQuery parameter
+    private func extractWeight(from input: String, isFollowUpQuery: Bool = false) -> String? {
+        let patterns = [
+            "worth\\s+(\\d{1,3})%?",
+            "weighted\\s+(\\d{1,3})%?",
+            "(\\d{1,3})%\\s+weight",
+            "weight.*?(\\d{1,3})%?"
+        ]
+        
+        for pattern in patterns {
+            if let range = input.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                let match = String(input[range])
+                if let numberRange = match.range(of: "\\d{1,3}", options: .regularExpression) {
+                    return String(match[numberRange])
+                }
+            }
+        }
+        
+        // These patterns are more for direct answers to "What's the weight?"
+        if isFollowUpQuery {
+            // Pattern: "X percent"
+            let percentWordPattern = "(\\d{1,3})\\s+percent"
+            if let range = input.range(of: percentWordPattern, options: [.regularExpression, .caseInsensitive]) {
+                 let match = String(input[range])
+                 if let numberRange = match.range(of: "\\d{1,3}", options: .regularExpression) {
+                    return String(match[numberRange])
                 }
             }
             
-            if let range = lowercased.range(of: "^\\s*(\\d{1,2})\\s*$", options: .regularExpression) {
-                let numberString = String(lowercased[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if let number = Int(numberString), number >= 1 && number <= 100 {
-                    return numberString
+            // Pattern: "X%" or "X" when it's the entire input (or trimmed entire input)
+            let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+            let standalonePercentPattern = "^(\\d{1,3})%?$"
+            if let range = trimmed.range(of: standalonePercentPattern, options: .regularExpression) {
+                let match = String(trimmed[range])
+                if let numberRange = match.range(of: "\\d{1,3}", options: .regularExpression) {
+                    return String(match[numberRange])
                 }
             }
         }
@@ -804,84 +778,143 @@ class NLPEngine {
         return nil
     }
     
-    private func extractReminderFromScheduleText(from text: String) -> ReminderTime? {
-        if text.contains("remind me") || text.contains("reminder") || text.contains("alert") {
-            return parseReminderTime(from: text)
-        }
-        return nil
-    }
-    
-    private func extractColorFromText(from text: String) -> String? {
-        let colorMappings: [String: (String, [String])] = [
-            "red": ("FF0000", ["red", "rd", "reed"]),
-            "blue": ("0000FF", ["blue", "blu", "bleu"]),
-            "green": ("00FF00", ["green", "grn", "gren"]),
-            "yellow": ("FFFF00", ["yellow", "yello", "yelow"]),
-            "orange": ("FFA500", ["orange", "orng", "ornge"]),
-            "purple": ("800080", ["purple", "purpl", "prple"]),
-            "pink": ("FFC0CB", ["pink", "pnk", "pinc"]),
-            "cyan": ("00FFFF", ["cyan", "cyn"]),
-            "magenta": ("FF00FF", ["magenta", "mgenta"]),
-            "lime": ("00FF00", ["lime", "lim"]),
-            "indigo": ("4B0082", ["indigo", "indgo"]),
-            "violet": ("8A2BE2", ["violet", "violett"]),
-            "brown": ("A52A2A", ["brown", "brwn", "broun"]),
-            "gray": ("808080", ["gray", "grey", "gry"]),
-            "black": ("000000", ["black", "blck", "blac"]),
-            "white": ("FFFFFF", ["white", "whte", "wht"])
-        ]
+    private func findBestCourseMatch(_ input: String, courses: [Course]) -> Course? {
+        let lowerInput = input.lowercased()
         
-        for (_, (colorHex, variants)) in colorMappings {
-            if containsFuzzyKeyword(text, keywords: variants) {
-                return colorHex
+        for course in courses {
+            if lowerInput.contains(course.name.lowercased()) {
+                return course
+            }
+        }
+        
+        let abbreviations = ["math", "calc", "physics", "chem", "bio", "english", "hist", "psych"]
+        for abbrev in abbreviations {
+            if lowerInput.contains(abbrev) {
+                for course in courses {
+                    if course.name.lowercased().contains(abbrev) {
+                        return course
+                    }
+                }
             }
         }
         
         return nil
     }
     
-    private func parseDate(from text: String) -> Date? {
-        let lowercased = text.lowercased()
+    private func extractDaysOfWeek(from input: String) -> Set<DayOfWeek> {
+        let lowerInput = input.lowercased()
+        var days: Set<DayOfWeek> = []
+        
+        if lowerInput.contains("mwf") {
+            days = [.monday, .wednesday, .friday]
+        } else if lowerInput.contains("tth") || lowerInput.contains("tr") {
+            days = [.tuesday, .thursday]
+        } else if lowerInput.contains("weekdays") {
+            days = [.monday, .tuesday, .wednesday, .thursday, .friday]
+        } else if lowerInput.contains("weekend") {
+            days = [.saturday, .sunday]
+        } else {
+            let dayMap: [String: DayOfWeek] = [
+                "monday": .monday, "mon": .monday,
+                "tuesday": .tuesday, "tue": .tuesday, "tues": .tuesday,
+                "wednesday": .wednesday, "wed": .wednesday,
+                "thursday": .thursday, "thu": .thursday, "thur": .thursday,
+                "friday": .friday, "fri": .friday,
+                "saturday": .saturday, "sat": .saturday,
+                "sunday": .sunday, "sun": .sunday
+            ]
+            
+            for (dayName, dayEnum) in dayMap {
+                if lowerInput.contains(dayName) {
+                    days.insert(dayEnum)
+                }
+            }
+        }
+        
+        return days
+    }
+    
+    private func extractScheduleTimes(from input: String) -> (start: DateComponents?, end: DateComponents?, duration: TimeInterval?) {
+        let lowerInput = input.lowercased()
+        var startTime: DateComponents?
+        var endTime: DateComponents?
+        var duration: TimeInterval?
+        
+        if let range = lowerInput.range(of: "from\\s+(\\d{1,2}:?\\d{0,2}(?:am|pm)?)\\s+to\\s+(\\d{1,2}:?\\d{0,2}(?:am|pm)?)", options: .regularExpression) {
+            let match = String(lowerInput[range])
+            
+            if let startRange = match.range(of: "from\\s+(\\d{1,2}:?\\d{0,2}(?:am|pm)?)", options: .regularExpression) {
+                let startMatch = String(match[startRange])
+                if let timeRange = startMatch.range(of: "\\d{1,2}:?\\d{0,2}(?:am|pm)?", options: .regularExpression) {
+                    startTime = parseTime(from: String(startMatch[timeRange]))
+                }
+            }
+            
+            if let endRange = match.range(of: "to\\s+(\\d{1,2}:?\\d{0,2}(?:am|pm)?)", options: .regularExpression) {
+                let endMatch = String(match[endRange])
+                if let timeRange = endMatch.range(of: "\\d{1,2}:?\\d{0,2}(?:am|pm)?", options: .regularExpression) {
+                    endTime = parseTime(from: String(endMatch[timeRange]))
+                }
+            }
+        } else if let range = lowerInput.range(of: "(\\d{1,2}(?:am|pm)?)-(\\d{1,2}(?:am|pm)?)", options: .regularExpression) {
+            let match = String(lowerInput[range])
+            let components = match.components(separatedBy: "-")
+            
+            if components.count == 2 {
+                startTime = parseTime(from: components[0])
+                endTime = parseTime(from: components[1])
+            }
+        } else if let time = parseTime(from: input) {
+            startTime = time
+        }
+        
+        if let range = lowerInput.range(of: "for\\s+(\\d+)\\s+(hour|hr|minute|min)s?", options: .regularExpression) {
+            let match = String(lowerInput[range])
+            if let numberRange = match.range(of: "\\d+", options: .regularExpression) {
+                let numberStr = String(match[numberRange])
+                if let number = Int(numberStr) {
+                    if match.contains("hour") || match.contains("hr") {
+                        duration = TimeInterval(number * 3600)
+                    } else {
+                        duration = TimeInterval(number * 60)
+                    }
+                }
+            }
+        }
+        
+        return (start: startTime, end: endTime, duration: duration)
+    }
+    
+    private func parseDate(from input: String) -> Date? {
+        let lowerInput = input.lowercased()
         let calendar = Calendar.current
         let now = Date()
         
-        if containsFuzzyKeyword(lowercased, keywords: ["today", "tday", "todey"]) {
+        if lowerInput.contains("today") {
             return now
         }
         
-        if containsFuzzyKeyword(lowercased, keywords: ["tomorrow", "tommorow", "tommorrow", "tomorow"]) {
+        if lowerInput.contains("tomorrow") || lowerInput.contains("tmrw") {
             return calendar.date(byAdding: .day, value: 1, to: now)
         }
         
-        if containsFuzzyKeyword(lowercased, keywords: ["next week", "nxt week", "next wk"]) {
-            return calendar.date(byAdding: .weekOfYear, value: 1, to: now)
-        }
-        
-        if let monthDate = parseMonthDate(from: lowercased, currentYear: calendar.component(.year, from: now)) {
-            return monthDate
-        }
-        
-        if let relativeDate = parseRelativeTime(from: lowercased, baseDate: now) {
-            return relativeDate
-        }
-        
-        let dayMappings: [String: (Int, [String])] = [
-            "monday": (2, ["monday", "mon", "mnday", "moday"]),
-            "tuesday": (3, ["tuesday", "tue", "tues", "tusday", "teusday"]),
-            "wednesday": (4, ["wednesday", "wed", "wednesdey", "wednsday"]),
-            "thursday": (5, ["thursday", "thu", "thur", "thursdy", "thrusday"]),
-            "friday": (6, ["friday", "fri", "fridey", "friady"]),
-            "saturday": (7, ["saturday", "sat", "saturdy", "satruday"]),
-            "sunday": (1, ["sunday", "sun", "sundy", "suday"])
+        let dayMap: [String: Int] = [
+            "monday": 2, "mon": 2,
+            "tuesday": 3, "tue": 3, "tues": 3,
+            "wednesday": 4, "wed": 4,
+            "thursday": 5, "thu": 5, "thur": 5,
+            "friday": 6, "fri": 6,
+            "saturday": 7, "sat": 7,
+            "sunday": 1, "sun": 1
         ]
         
-        for (_, (weekday, variants)) in dayMappings {
-            let nextVariants = variants.map { "next \($0)" }
-            let onVariants = variants.map { "on \($0)" }
-            let thisVariants = variants.map { "this \($0)" }
-            let allVariants = nextVariants + onVariants + thisVariants
-            
-            if containsFuzzyKeyword(lowercased, keywords: allVariants) {
+        for (dayName, weekday) in dayMap {
+            if lowerInput.contains("next \(dayName)") ||
+               lowerInput.contains("this \(dayName)") ||
+               lowerInput.contains("on \(dayName)") ||
+               lowerInput.contains(" \(dayName)") ||
+               lowerInput.hasSuffix(dayName) ||
+               lowerInput.hasPrefix(dayName) {
                 let currentWeekday = calendar.component(.weekday, from: now)
                 var daysToAdd = weekday - currentWeekday
                 if daysToAdd <= 0 {
@@ -891,103 +924,26 @@ class NLPEngine {
             }
         }
         
-        return nil
-    }
-    
-    private func parseMonthDate(from text: String, currentYear: Int) -> Date? {
-        let monthMappings: [String: Int] = [
-            // Full month names
-            "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
-            "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
-            // Common abbreviations
-            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
-            "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12
-        ]
+        let months = ["january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+                     "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+                     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+                     "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12]
         
-        let calendar = Calendar.current
-        
-        for (monthName, monthNumber) in monthMappings {
-            let yearPatterns = [
-                // Regex to capture "month day(ordinal) year" or "month day, year"
-                // Group 1: Day, Group 2: Year
-                "\\b\(monthName)\\s+(\\d{1,2})(?:st|nd|rd|th)?[,]?\\s+(\\d{4})\\b",
-                // Regex to capture "month day year" (no ordinal or comma)
-                // Group 1: Day, Group 2: Year
-                "\\b\(monthName)\\s+(\\d{1,2})\\s+(\\d{4})\\b"
-            ]
-
-            for patternString in yearPatterns {
-                do {
-                    let regex = try NSRegularExpression(pattern: patternString, options: .caseInsensitive)
-                    let nsText = text as NSString
-                    if let matchResult = regex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: nsText.length)) {
-                        if matchResult.numberOfRanges == 3 {
-                            let dayString = nsText.substring(with: matchResult.range(at: 1))
-                            let yearString = nsText.substring(with: matchResult.range(at: 2))
-
-                            if let day = Int(dayString), let year = Int(yearString) {
-                                var dateComponents = DateComponents()
-                                dateComponents.year = year
-                                dateComponents.month = monthNumber
-                                dateComponents.day = day
-                                if let date = calendar.date(from: dateComponents) {
-                                    return date
-                                }
-                            }
-                        }
-                    }
-                } catch {
-                    print("NLPEngine: Regex error for pattern '\(patternString)': \(error)")
-                }
-            }
-
-            let monthDayPatterns = [
-                "\\b\(monthName)\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b",
-                "\\b\(monthName)\\.\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b",
-                "\\bon\\s+\(monthName)\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b"
-            ]
-            
-            for pattern in monthDayPatterns {
-                if let range = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
-                    let match = String(text[range])
-                    if let dayString = match.components(separatedBy: CharacterSet.decimalDigits.inverted).filter({ !$0.isEmpty }).first,
-                       let day = Int(dayString) {
+        for (monthName, monthNumber) in months {
+            let pattern = "\(monthName)\\s+(\\d{1,2})"
+            if let range = lowerInput.range(of: pattern, options: .regularExpression) {
+                let match = String(lowerInput[range])
+                if let dayRange = match.range(of: "\\d{1,2}", options: .regularExpression) {
+                    let dayStr = String(match[dayRange])
+                    if let day = Int(dayStr) {
                         var dateComponents = DateComponents()
-                        dateComponents.year = currentYear
+                        dateComponents.year = calendar.component(.year, from: now)
                         dateComponents.month = monthNumber
                         dateComponents.day = day
                         
                         if let date = calendar.date(from: dateComponents) {
-                            if date < Date() && calendar.component(.year, from: date) == currentYear {
-                                dateComponents.year = currentYear + 1
-                                return calendar.date(from: dateComponents)
-                            }
-                            return date
-                        }
-                    }
-                }
-            }
-        }
-        
-        for (monthName, monthNumber) in monthMappings {
-            let dayMonthPatterns = [
-                "\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+\(monthName)\\b",
-                "\\b(\\d{1,2})(?:st|nd|rd|th)?\\.\\s+\(monthName)\\b"
-            ]
-            
-            for pattern in dayMonthPatterns {
-                if let range = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
-                    let match = String(text[range])
-                    if let dayString = match.components(separatedBy: CharacterSet.decimalDigits.inverted).filter({ !$0.isEmpty }).first,
-                       let day = Int(dayString) {
-                        var dateComponents = DateComponents()
-                        dateComponents.year = currentYear
-                        dateComponents.month = monthNumber
-                        dateComponents.day = day
-                        
-                        if let date = calendar.date(from: dateComponents) {
-                            if date < Date() && calendar.component(.year, from: date) == currentYear {
-                                dateComponents.year = currentYear + 1
+                            if date < now {
+                                dateComponents.year = calendar.component(.year, from: now) + 1
                                 return calendar.date(from: dateComponents)
                             }
                             return date
@@ -1000,743 +956,23 @@ class NLPEngine {
         return nil
     }
     
-    private func parseRelativeTime(from text: String, baseDate: Date) -> Date? {
-        let calendar = Calendar.current
+    private func parseTime(from input: String) -> DateComponents? {
+        let lowerInput = input.lowercased()
         
-        if containsFuzzyKeyword(text, keywords: ["in "]) {
-            if let range = text.range(of: "in\\s+(\\d+(?:\\.\\d+)?(?:\\s+and\\s+a\\s+half)?)\\s+(hour|hr|minute|min|day)s?", options: .regularExpression) {
-                let match = String(text[range])
-                
-                var timeValue: Double = 0
-                var timeUnit: Calendar.Component = .hour
-                
-                if match.contains("and a half") {
-                    if let numberRange = match.range(of: "\\d+", options: .regularExpression) {
-                        let numberString = String(match[numberRange])
-                        if let baseNumber = Double(numberString) {
-                            timeValue = baseNumber + 0.5
-                        }
-                    }
-                } else {
-                    if let numberRange = match.range(of: "\\d+(?:\\.\\d+)?", options: .regularExpression) {
-                        let numberString = String(match[numberRange])
-                        timeValue = Double(numberString) ?? 0
-                    }
-                }
-                
-                let timeInterval: TimeInterval
-                switch timeUnit {
-                case .minute:
-                    timeInterval = timeValue * 60
-                case .hour:
-                    timeInterval = timeValue * 3600
-                case .day:
-                    timeInterval = timeValue * 86400
-                default:
-                    timeInterval = timeValue * 3600
-                }
-                
-                return baseDate.addingTimeInterval(timeInterval)
-            }
-            
-            if let range = text.range(of: "in\\s+(\\d+)\\s+(hour|hr|minute|min|day)s?", options: .regularExpression) {
-                let match = String(text[range])
-                
-                if let numberRange = match.range(of: "\\d+", options: .regularExpression) {
-                    let numberString = String(match[numberRange])
-                    if let number = Int(numberString) {
-                        if match.contains("minute") || match.contains("min") {
-                            return calendar.date(byAdding: .minute, value: number, to: baseDate)
-                        } else if match.contains("hour") || match.contains("hr") {
-                            return calendar.date(byAdding: .hour, value: number, to: baseDate)
-                        } else if match.contains("day") {
-                            return calendar.date(byAdding: .day, value: number, to: baseDate)
-                        }
-                    }
-                }
-            }
-        }
-        
-        return nil
-    }
-    
-    private func parseReminderTime(from text: String) -> ReminderTime {
-        let lowercased = text.lowercased()
-        
-        let noVariants = ["no", "none", "skip", "dont", "don't"]
-        if containsFuzzyKeyword(lowercased, keywords: noVariants) {
-            return .none
-        }
-        
-        let startVariants = ["at the start", "when it starts", "at start time", "exactly at", "at start"]
-        if containsFuzzyKeyword(lowercased, keywords: startVariants) {
-            return .minutes(0)
-        }
-        
-        if lowercased.contains("5") && containsFuzzyKeyword(lowercased, keywords: ["min", "minute", "minutes"]) {
-            return .minutes(5)
-        } else if lowercased.contains("15") && containsFuzzyKeyword(lowercased, keywords: ["min", "minute", "minutes"]) {
-            return .minutes(15)
-        } else if lowercased.contains("30") && containsFuzzyKeyword(lowercased, keywords: ["min", "minute", "minutes"]) {
-            return .minutes(30)
-        } else if lowercased.contains("1") && containsFuzzyKeyword(lowercased, keywords: ["hour", "hr", "hours"]) {
-            return .hours(1)
-        } else if lowercased.contains("2") && containsFuzzyKeyword(lowercased, keywords: ["hour", "hr", "hours"]) {
-            return .hours(2)
-        } else if lowercased.contains("1") && containsFuzzyKeyword(lowercased, keywords: ["day", "days"]) {
-            return .days(1)
-        } else if lowercased.contains("2") && containsFuzzyKeyword(lowercased, keywords: ["day", "days"]) {
-            return .days(2)
-        } else if lowercased.contains("1") && containsFuzzyKeyword(lowercased, keywords: ["week", "weeks", "wk"]) {
-            return .weeks(1)
-        }
-        
-        return .minutes(15)
-    }
-    
-    private func findBestCourseMatch(from text: String, courses: [Course]) -> String? {
-        let lowercaseText = text.lowercased()
-        
-        for course in courses {
-            if lowercaseText.contains(course.name.lowercased()) {
-                return course.name
-            }
-        }
-        
-        let courseAbbreviations = extractCourseAbbreviations(from: lowercaseText)
-        
-        for abbreviation in courseAbbreviations {
-            for course in courses {
-                if courseMatchesAbbreviation(courseName: course.name, abbreviation: abbreviation) {
-                    return course.name
-                }
-            }
-        }
-        
-        let textWords = lowercaseText.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
-        
-        for course in courses {
-            let courseName = course.name.lowercased()
-            let courseWords = courseName.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
-            
-            // Check if any text word matches any course word
-            for textWord in textWords {
-                for courseWord in courseWords {
-                    if courseWord.hasPrefix(textWord) && textWord.count >= 3 {
-                        return course.name
-                    }
-                    if textWord.hasPrefix(courseWord) && courseWord.count >= 3 {
-                        return course.name
-                    }
-                    // Keep existing fuzzy matching as fallback
-                    if fuzzyMatches(textWord, courseWord) && textWord.count >= 3 {
-                        return course.name
-                    }
-                }
-            }
-        }
-        
-        let courseKeywords = extractCourseKeywords(from: lowercaseText)
-        
-        for keyword in courseKeywords {
-            for course in courses {
-                let courseName = course.name.lowercased()
-                if courseName.contains(keyword) || fuzzyMatches(courseName, keyword) {
-                    return course.name
-                }
-            }
-        }
-        
-        return nil
-    }
-    
-    private func extractCourseKeywords(from text: String) -> [String] {
-        let commonSubjects = [
-            "math", "mathematics", "calculus", "calc", "algebra", "geometry", "statistics", "stats", "trig", "trigonometry",
-            "physics", "chemistry", "chem", "biology", "bio", "science", "anatomy", "physiology",
-            "english", "literature", "writing", "composition", "rhetoric",
-            "history", "geography", "social", "studies", "government", "civics", "politics",
-            "computer", "programming", "coding", "software", "cs", "java", "python", "web",
-            "economics", "business", "accounting", "finance", "marketing", "management",
-            "psychology", "psych", "sociology", "philosophy", "anthropology",
-            "spanish", "french", "german", "chinese", "japanese", "italian", "latin",
-            "art", "music", "drama", "theater", "theatre", "dance", "film",
-            "engineering", "mechanical", "electrical", "civil", "chemical", "structural",
-            "organic", "inorganic", "analytical", "physical", "biochemistry", "microbiology",
-            "intro", "introduction", "advanced", "honors", "ap", "basic", "fundamentals",
-            "discrete", "linear", "differential", "integral", "abstract"
-        ]
-        
-        var keywords: [String] = []
-        
-        for subject in commonSubjects {
-            if text.contains(subject) {
-                keywords.append(subject)
-            }
-        }
-        
-        let textWords = text.components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty && $0.count >= 3 }
-        
-        for textWord in textWords {
-            for subject in commonSubjects {
-                if fuzzyMatches(textWord, subject) && !keywords.contains(subject) {
-                    keywords.append(subject)
-                }
-                
-                let subjectWords = subject.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
-                    .filter { !$0.isEmpty && $0.count >= 3 }
-                
-                for subjectWord in subjectWords {
-                    if fuzzyMatches(textWord, subjectWord) {
-                        keywords.append(subject)
-                    }
-                }
-            }
-        }
-        
-        return keywords
-    }
-    
-    private func extractCourseAbbreviations(from text: String) -> [String] {
-        var abbreviations: [String] = []
-        
-        let commonAbbreviations = [
-            "ochem", "orgo", "gen chem", "genchem", "bio", "phys", "calc", "pre calc", "precalc",
-            "stats", "psych", "soc", "anthro", "poli sci", "polisci",
-            "comp sci", "compsci", "lit", "hist", "geo", "trig", "alg", "eng",
-            "chem", "math", "cs", "ap", "honors"
-        ]
-        
-        for abbrev in commonAbbreviations {
-            if text.contains(abbrev) {
-                abbreviations.append(abbrev)
-            }
-        }
-        
-        let textWords = text.components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty && $0.count >= 3 } // Only consider words with 3+ characters
-        
-        for textWord in textWords {
-            // Check if this word is a known abbreviation
-            if commonAbbreviations.contains(textWord.lowercased()) && !abbreviations.contains(textWord.lowercased()) {
-                abbreviations.append(textWord.lowercased())
-            }
-            
-            // Check fuzzy matches only if no exact match found
-            if abbreviations.isEmpty {
-                for abbrev in commonAbbreviations {
-                    if fuzzyMatches(textWord, abbrev) && !abbreviations.contains(abbrev) {
-                        abbreviations.append(abbrev)
-                    }
-                }
-            }
-        }
-        
-        return abbreviations
-    }
-    
-    private func courseMatchesAbbreviation(courseName: String, abbreviation: String) -> Bool {
-        let lowercaseCourseName = courseName.lowercased()
-        let lowercaseAbbrev = abbreviation.lowercased()
-        
-        if lowercaseCourseName.hasPrefix(lowercaseAbbrev) && lowercaseAbbrev.count >= 3 {
-            return true
-        }
-        
-        let abbreviationMappings: [String: [String]] = [
-            "ochem": ["organic chemistry", "organic chem", "org chem"],
-            "orgo": ["organic chemistry", "organic chem", "org chem"],
-            "gen chem": ["general chemistry", "general chem"],
-            "genchem": ["general chemistry", "general chem"],
-            "bio": ["biology", "biological"],
-            "phys": ["physics", "physical"],
-            "calc": ["calculus", "calc"],
-            "precalc": ["precalculus", "pre-calculus", "pre calculus"],
-            "stats": ["statistics", "statistical"],
-            "psych": ["psychology", "psychological"],
-            "econ": ["economics", "economic"],
-            "comp sci": ["computer science", "computing"],
-            "compsci": ["computer science", "computing"],
-            "lit": ["literature", "literary"],
-            "hist": ["history", "historical"],
-            "geo": ["geography", "geological"],
-            "trig": ["trigonometry"],
-            "alg": ["algebra", "algebraic"],
-            "eng": ["english", "engineering"],
-            "chem": ["chemistry", "chemical"],
-            "math": ["mathematics", "mathematical"]
-        ]
-        
-        if let mappings = abbreviationMappings[lowercaseAbbrev] {
-            for mapping in mappings {
-                if lowercaseCourseName.contains(mapping) {
-                    return true
-                }
-            }
-        }
-        
-        for (abbrev, mappings) in abbreviationMappings {
-            if fuzzyMatches(lowercaseAbbrev, abbrev) {
-                for mapping in mappings {
-                    if lowercaseCourseName.contains(mapping) {
-                        return true
-                    }
-                }
-            }
-        }
-        
-        let courseWords = lowercaseCourseName.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
-        for word in courseWords {
-            if word.hasPrefix(lowercaseAbbrev) && lowercaseAbbrev.count >= 3 {
-                return true
-            }
-            if fuzzyMatches(word, lowercaseAbbrev) && lowercaseAbbrev.count >= 3 {
-                return true
-            }
-        }
-        
-        return false
-    }
-    
-    private func parseSpecificTime(from text: String) -> DateComponents? {
-        let lowercased = text.lowercased()
-        
-        if containsFuzzyKeyword(lowercased, keywords: ["noon", "12pm", "12:00pm"]) {
+        if lowerInput.contains("noon") {
             return DateComponents(hour: 12, minute: 0)
         }
-        
-        if containsFuzzyKeyword(lowercased, keywords: ["midnight", "12am", "12:00am"]) {
+        if lowerInput.contains("midnight") {
             return DateComponents(hour: 0, minute: 0)
         }
         
-        if let range = lowercased.range(of: "(\\d{1,2}):(\\d{2})\\b", options: .regularExpression) {
-            let match = String(lowercased[range])
-            let components = match.components(separatedBy: ":")
-            
-            if components.count == 2,
-               let hour = Int(components[0]),
-               let minute = Int(components[1]),
-               hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 {
-                return DateComponents(hour: hour, minute: minute)
-            }
-        }
-        
-        if let range = lowercased.range(of: "(\\d{1,2})\\s*(am|pm)", options: .regularExpression) {
-            let match = String(lowercased[range])
-            if let hourRange = match.range(of: "\\d{1,2}", options: .regularExpression) {
-                let hourString = String(match[hourRange])
-                if let hour = Int(hourString) {
-                    var finalHour = hour
-                    if match.contains("pm") && hour != 12 {
-                        finalHour = hour + 12
-                    } else if match.contains("am") && hour == 12 {
-                        finalHour = 0
-                    }
-                    
-                    return DateComponents(hour: finalHour, minute: 0)
-                }
-            }
-        }
-        
-        if let range = lowercased.range(of: "(\\d{1,2}):(\\d{2})", options: .regularExpression) {
-            let match = String(lowercased[range])
-            let components = match.components(separatedBy: ":")
-            
-            if components.count == 2,
-               let hour = Int(components[0]),
-               let minute = Int(components[1]),
-               hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 {
-                return DateComponents(hour: hour, minute: minute)
-            }
-        }
-        
-        return nil
-    }
-    
-    private func findBestCategoryMatch(from text: String, categories: [Category]) -> String? {
-        let lowercased = text.lowercased()
-        
-        for category in categories {
-            if lowercased.contains(category.name.lowercased()) {
-                return category.name
-            }
-        }
-        
-        let textWords = lowercased.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
-        
-        for category in categories {
-            let categoryWords = category.name.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
-            
-            for textWord in textWords {
-                for categoryWord in categoryWords {
-                    if fuzzyMatches(textWord, categoryWord) {
-                        return category.name
-                    }
-                
-                }
-            }
-        }
-        
-        return nil
-    }
-    
-    private func extractEventTitle(from text: String) -> String {
-        let lowercased = text.lowercased()
-        
-        let conversationalPhrases = [
-            "yo croski i have an ", "yo croski i have a ", "yo croski i have ",
-            "remind me to ", "remind me about ", "remind me ", "i need to remember to ",
-            "i have an ", "i have a ", "i have ", "need to ", "have to ", "gotta ",
-            "got an ", "got a ", "got ", "there's an ", "there's a ", "there's ",
-            "i need an ", "i need a ", "i need ", "i should ", "i must ",
-            "don't forget to ", "remember to ", "make sure to "
-        ]
-        
-        var cleanedText = LeadInStripperModel.shared.stripLeadIn(from: text)
-        for phrase in conversationalPhrases {
-            if cleanedText.lowercased().hasPrefix(phrase) {
-                cleanedText = String(cleanedText.dropFirst(phrase.count)).trimmingCharacters(in: .whitespaces)
-                break
-            }
-        }
-        
-        let timeAndDatePatterns = [
-            "\\s+at\\s+\\d{1,2}:\\d{2}\\s*(am|pm).*",
-            "\\s+at\\s+\\d{1,2}\\s*(am|pm).*",
-            "\\s+\\d{1,2}:\\d{2}\\s*(am|pm).*",
-            "\\s+\\d{1,2}\\s*(am|pm).*",
-            "\\s+at\\s+\\d{1,2}:\\d{2}.*",
-            "\\s+\\d{1,2}:\\d{2}.*",
-            // Date patterns
-            "\\s+on\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*",
-            "\\s+this\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*",
-            "\\s+next\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*",
-            "\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*",
-            "\\s+(today|tomorrow).*",
-            "\\s+on\\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\\s+\\d{1,2}.*",
-            "\\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\\s+\\d{1,2}.*",
-            // Relative time
-            "\\s+in\\s+\\d+.*",
-            "\\s+after\\s+\\d+.*"
-        ]
-        
-        for pattern in timeAndDatePatterns {
-            if let range = cleanedText.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
-                cleanedText = String(cleanedText[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
-                break
-            }
-        }
-        
-        cleanedText = extractCoreSubject(from: cleanedText)
-        
-        cleanedText = properlyCapitalize(cleanedText)
-        
-        if cleanedText.isEmpty || cleanedText.count < 2 {
-            cleanedText = inferTitleFromKeywords(text)
-        }
-        
-        return cleanedText
-    }
-    
-    private func extractScheduleTitle(from text: String) -> String {
-        let lowercased = text.lowercased()
-        
-        var cleanedText = LeadInStripperModel.shared.stripLeadIn(from: text)
-        
-        let conversationalPhrases = [
-            "yo croski i have ", "i have an ", "i have a ", "i have ",
-            "i've got an ", "i've got a ", "i've got ", "i got an ", "i got a ", "i got ",
-            "there's an ", "there's a ", "there's ", "my ", "our ", "the ",
-            "every ", "weekly ", "recurring "
-        ]
-        
-        for phrase in conversationalPhrases {
-            if cleanedText.lowercased().hasPrefix(phrase) {
-                cleanedText = String(cleanedText.dropFirst(phrase.count)).trimmingCharacters(in: .whitespaces)
-                break
-            }
-        }
-        
-        let redundantDescriptors = ["class", "course", "lecture", "tutorial", "lab session", "seminar"]
-        for descriptor in redundantDescriptors {
-            if cleanedText.lowercased().hasSuffix(" " + descriptor) {
-                let range = cleanedText.lowercased().range(of: " " + descriptor + "$", options: .regularExpression)!
-                cleanedText = String(cleanedText[..<range.lowerBound])
-                break
-            }
-        }
-        
-        let timeAndDayPatterns = [
-            "\\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekday|weekdays|weekend|weekends|mwf|tth|tr).*",
-            "\\s+from\\s+\\d+.*",
-            "\\s+at\\s+\\d+.*",
-            "\\s+\\d{1,2}:\\d{2}.*",
-            "\\s+\\d{1,2}\\s*(am|pm).*",
-            "\\s+every\\s+.*"
-        ]
-        
-        for pattern in timeAndDayPatterns {
-            if let range = cleanedText.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
-                cleanedText = String(cleanedText[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
-                break
-            }
-        }
-        
-        cleanedText = extractCoreSubject(from: cleanedText)
-        
-        cleanedText = properlyCapitalize(cleanedText)
-        
-        if cleanedText.isEmpty || cleanedText.count < 2 {
-            cleanedText = "Class"
-        }
-        
-        return cleanedText
-    }
-    
-    private func extractCoreSubject(from text: String) -> String {
-        var cleanedText = text.trimmingCharacters(in: .whitespaces)
-        
-        let unnecessaryWords = ["an ", "a ", "the ", "my ", "our ", "their ", "some ", "this ", "that "]
-        for word in unnecessaryWords {
-            if cleanedText.lowercased().hasPrefix(word) {
-                cleanedText = String(cleanedText.dropFirst(word.count))
-                break
-            }
-        }
-        
-        let subjectExpansions: [String: String] = [
-            "autistic geo": "Autistic Geography",
-            "ochem": "Organic Chemistry",
-            "orgo": "Organic Chemistry", 
-            "gen chem": "General Chemistry",
-            "bio": "Biology",
-            "phys": "Physics",
-            "calc": "Calculus",
-            "precalc": "Pre-Calculus",
-            "stats": "Statistics",
-            "psych": "Psychology",
-            "comp sci": "Computer Science",
-            "lit": "Literature",
-            "hist": "History",
-            "geo": "Geography",
-            "trig": "Trigonometry",
-            "alg": "Algebra"
-        ]
-        
-        let lowercased = cleanedText.lowercased()
-        for (abbrev, fullName) in subjectExpansions {
-            if lowercased.contains(abbrev) {
-                cleanedText = cleanedText.replacingOccurrences(of: abbrev, with: fullName, options: .caseInsensitive)
-                break
-            }
-        }
-        
-        return cleanedText.trimmingCharacters(in: .whitespaces)
-    }
-    
-    private func properlyCapitalize(_ text: String) -> String {
-        let words = text.components(separatedBy: " ").filter { !$0.isEmpty }
-        
-        let capitalizedWords = words.map { word in
-            let lowercaseWord = word.lowercased()
-            let dontCapitalize = ["of", "in", "on", "at", "to", "for", "with", "by", "from", "and", "or", "but", "the", "a", "an"]
-            
-            if words.first == word || !dontCapitalize.contains(lowercaseWord) {
-                return word.prefix(1).uppercased() + word.dropFirst()
-            } else {
-                return lowercaseWord
-            }
-        }
-        
-        return capitalizedWords.joined(separator: " ")
-    }
-    
-    private func inferTitleFromKeywords(_ text: String) -> String {
-        let lowercased = text.lowercased()
-        
-        if containsFuzzyKeyword(lowercased, keywords: ["test", "exam", "quiz"]) {
-            return "Test"
-        } else if containsFuzzyKeyword(lowercased, keywords: ["meeting", "appointment"]) {
-            return "Meeting"
-        } else if containsFuzzyKeyword(lowercased, keywords: ["homework", "assignment", "project"]) {
-            return "Assignment" 
-        } else if containsFuzzyKeyword(lowercased, keywords: ["presentation", "present"]) {
-            return "Presentation"
-        } else if containsFuzzyKeyword(lowercased, keywords: ["interview"]) {
-            return "Interview"
-        } else if containsFuzzyKeyword(lowercased, keywords: ["doctor", "dentist", "appointment"]) {
-            return "Appointment"
-        } else {
-            return "Event"
-        }
-    }
-    
-    // MARK: - Levenshtein Distance and Fuzzy Matching
-    private func cleanAndNormalizeTitle(_ title: String) -> String {
-        return properlyCapitalize(extractCoreSubject(from: title))
-    }
-    
-    private func extractDaysOfWeek(from text: String) -> Set<DayOfWeek> {
-        let lowercased = text.lowercased()
-        var days: Set<DayOfWeek> = []
-        
-        if containsFuzzyKeyword(lowercased, keywords: ["weekday", "weekdays", "wkday", "wkdays", "week day", "week days"]) {
-            days.formUnion([.monday, .tuesday, .wednesday, .thursday, .friday])
-            return days
-        }
-        
-        if containsFuzzyKeyword(lowercased, keywords: ["weekend", "weekends", "wkend", "wkends", "week end", "week ends"]) {
-            days.formUnion([.saturday, .sunday])
-            return days
-        }
-        
-        let dayMappings: [String: (DayOfWeek, [String])] = [
-            "monday": (.monday, ["monday", "mon", "mnday", "moday"]),
-            "tuesday": (.tuesday, ["tuesday", "tue", "tues", "tusday", "teusday"]),
-            "wednesday": (.wednesday, ["wednesday", "wed", "wednesdey", "wednsday"]),
-            "thursday": (.thursday, ["thursday", "thu", "thur", "thursdy", "thrusday"]),
-            "friday": (.friday, ["friday", "fri", "fridey", "friady"]),
-            "saturday": (.saturday, ["saturday", "sat", "saturdy", "satruday"]),
-            "sunday": (.sunday, ["sunday", "sun", "sundy", "suday"])
-        ]
-        
-        for (_, (dayEnum, variants)) in dayMappings {
-            if containsFuzzyKeyword(lowercased, keywords: variants) {
-                days.insert(dayEnum)
-            }
-        }
-        
-        let abbreviations = ["mwf", "tth", "tr", "mw", "wf", "th"]
-        for abbrev in abbreviations {
-            let textWords = lowercased.components(separatedBy: CharacterSet.alphanumerics.inverted)
-                .filter { !$0.isEmpty }
-            
-            for word in textWords {
-                if fuzzyMatches(word, abbrev) {
-                    switch abbrev {
-                    case "mwf":
-                        days.formUnion([.monday, .wednesday, .friday])
-                    case "tth", "tr":
-                        days.formUnion([.tuesday, .thursday])
-                    case "mw":
-                        days.formUnion([.monday, .wednesday])
-                    case "wf":
-                        days.formUnion([.wednesday, .friday])
-                    case "th":
-                        days.insert(.thursday)
-                    default:
-                        break
-                    }
-                }
-            }
-        }
-        
-        return days
-    }
-    
-    private func extractScheduleTimes(from text: String) -> (start: DateComponents?, end: DateComponents?, duration: TimeInterval?) {
-        var startTime: DateComponents? = nil
-        var endTime: DateComponents? = nil
-        var duration: TimeInterval? = nil
-        
-        if let hyphenRange = text.range(of: "(\\d{1,2}(?::\\d{2})?)-?(\\d{1,2}(?::\\d{2})?)\\s*(am|pm)?", options: .regularExpression) {
-            let match = String(text[hyphenRange])
-            let components = match.components(separatedBy: "-")
-            
-            if components.count == 2 {
-                let startPart = components[0].trimmingCharacters(in: .whitespacesAndNewlines)
-                let endPart = components[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                let amPmSuffix = match.lowercased().contains("am") ? "am" : (match.lowercased().contains("pm") ? "pm" : "")
-                
-                if !amPmSuffix.isEmpty {
-                    let startTimeString = startPart + amPmSuffix
-                    startTime = parseTimeString(startTimeString)
-                    
-                    let endTimeString = endPart + amPmSuffix
-                    endTime = parseTimeString(endTimeString)
-                } else {
-                    startTime = parseTimeString(startPart)
-                    endTime = parseTimeString(endPart)
-                }
-            }
-        } else if let fromToRange = text.range(of: "from\\s+(\\d{1,2}:\\d{2}(?:am|pm)?|\\d{1,2}(?:am|pm))\\s+to\\s+(\\d{1,2}:\\d{2}(?:am|pm)?|\\d{1,2}(?:am|pm))", options: .regularExpression) {
-            let match = String(text[fromToRange])
-            
-            if let startRange = match.range(of: "from\\s+(\\d{1,2}:?\\d{0,2}(?:am|pm)?)", options: .regularExpression) {
-                let startMatch = String(match[startRange])
-                if let timeRange = startMatch.range(of: "\\d{1,2}:?\\d{0,2}(?:am|pm)?", options: .regularExpression) {
-                    let timeString = String(startMatch[timeRange])
-                    startTime = parseTimeString(timeString)
-                }
-            }
-            
-            if let endRange = match.range(of: "to\\s+(\\d{1,2}:?\\d{0,2}(?:am|pm)?)", options: .regularExpression) {
-                let endMatch = String(match[endRange])
-                if let timeRange = endMatch.range(of: "\\d{1,2}:?\\d{0,2}(?:am|pm)?", options: .regularExpression) {
-                    let timeString = String(endMatch[timeRange])
-                    endTime = parseTimeString(timeString)
-                }
-            }
-        } else if let range = text.range(of: "(\\d{1,2})\\s*(am|pm)", options: .regularExpression) {
-            let match = String(text[range])
-            if let hourRange = match.range(of: "\\d{1,2}", options: .regularExpression) {
-                let hourString = String(match[hourRange])
-                if let hour = Int(hourString) {
-                    var finalHour = hour
-                    if match.contains("pm") && hour != 12 {
-                        finalHour = hour + 12
-                    } else if match.contains("am") && hour == 12 {
-                        finalHour = 0
-                    }
-                    
-                    startTime = DateComponents(hour: finalHour, minute: 0)
-                }
-            }
-        } else if let range = text.range(of: "\\b(\\d{1,2}):(\\d{2})\\b", options: .regularExpression) {
-            let match = String(text[range])
-            let components = match.components(separatedBy: ":")
-            
-            if components.count == 2,
-               let hour = Int(components[0]),
-               let minute = Int(components[1]),
-               hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 {
-                startTime = DateComponents(hour: hour, minute: minute)
-            }
-        }
-        
-        if let range = text.range(of: "(\\d+)\\s+(hour|hr)", options: .regularExpression) {
-            let match = String(text[range])
-            if let numberRange = match.range(of: "\\d+", options: .regularExpression) {
-                let numberString = String(match[numberRange])
-                if let hours = Int(numberString) {
-                    duration = TimeInterval(hours * 3600)
-                }
-            }
-        }
-        
-        return (start: startTime, end: endTime, duration: duration)
-    }
-    
-    private func parseTimeString(_ timeString: String) -> DateComponents? {
-        let cleaned = timeString.lowercased()
-        
-        if containsFuzzyKeyword(cleaned, keywords: ["noon", "12pm", "12:00pm"]) {
-            return DateComponents(hour: 12, minute: 0)
-        }
-        
-        if containsFuzzyKeyword(cleaned, keywords: ["midnight", "12am", "12:00am"]) {
-            return DateComponents(hour: 0, minute: 0)
-        }
-        
-        if let range = cleaned.range(of: "(\\d{1,2}):(\\d{2})\\s*(am|pm)?", options: .regularExpression) {
-            let match = String(cleaned[range])
+        if let range = lowerInput.range(of: "(\\d{1,2}):(\\d{2})\\s*(am|pm)", options: .regularExpression) {
+            let match = String(lowerInput[range])
             let components = match.components(separatedBy: ":")
             
             if components.count >= 2,
                let hour = Int(components[0]),
-               let minute = Int(components[1].prefix(2)) {
+               let minute = Int(String(components[1].prefix(2))) {
                 
                 var finalHour = hour
                 if match.contains("pm") && hour != 12 {
@@ -1745,15 +981,17 @@ class NLPEngine {
                     finalHour = 0
                 }
                 
-                return DateComponents(hour: finalHour, minute: minute)
+                if finalHour >= 0 && finalHour <= 23 && minute >= 0 && minute <= 59 {
+                    return DateComponents(hour: finalHour, minute: minute)
+                }
             }
         }
         
-        if let range = cleaned.range(of: "(\\d{1,2})\\s*(am|pm)", options: .regularExpression) {
-            let match = String(cleaned[range])
+        if let range = lowerInput.range(of: "(\\d{1,2})\\s*(am|pm)", options: .regularExpression) {
+            let match = String(lowerInput[range])
             if let hourRange = match.range(of: "\\d{1,2}", options: .regularExpression) {
-                let hourString = String(match[hourRange])
-                if let hour = Int(hourString) {
+                let hourStr = String(match[hourRange])
+                if let hour = Int(hourStr) {
                     var finalHour = hour
                     if match.contains("pm") && hour != 12 {
                         finalHour = hour + 12
@@ -1761,13 +999,15 @@ class NLPEngine {
                         finalHour = 0
                     }
                     
-                    return DateComponents(hour: finalHour, minute: 0)
+                    if finalHour >= 0 && finalHour <= 23 {
+                        return DateComponents(hour: finalHour, minute: 0)
+                    }
                 }
             }
         }
         
-        if let range = cleaned.range(of: "(\\d{1,2}):(\\d{2})", options: .regularExpression) {
-            let match = String(cleaned[range])
+        if let range = lowerInput.range(of: "(\\d{1,2}):(\\d{2})", options: .regularExpression) {
+            let match = String(lowerInput[range])
             let components = match.components(separatedBy: ":")
             
             if components.count == 2,
@@ -1781,143 +1021,238 @@ class NLPEngine {
         return nil
     }
     
-    private func formatTime(_ timeComponents: DateComponents) -> String {
-        guard let hour = timeComponents.hour, let minute = timeComponents.minute else {
-            return "Unknown time"
-        }
+    private func extractDuration(from input: String) -> TimeInterval? {
+        let lowerInput = input.lowercased()
         
-        let displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour)
-        let period = hour >= 12 ? "PM" : "AM"
-        
-        if minute == 0 {
-            return "\(displayHour) \(period)"
-        } else {
-            return "\(displayHour):\(String(format: "%02d", minute)) \(period)"
-        }
-    }
-    
-    private func buildCategoryPrompt(for title: String, availableCategories: [Category], isRetry: Bool = false) -> String {
-        let basePrompt = isRetry ? "I couldn't find that category. " : ""
-        
-        if availableCategories.isEmpty {
-            return "\(basePrompt)What category should '\(title)' be in? (e.g., 'assignment', 'exam', 'personal', 'meeting')"
-        } else {
-            let categoryNames = availableCategories.prefix(5).map { $0.name }.joined(separator: ", ")
-            return "\(basePrompt)What category should '\(title)' be in? Available categories: \(categoryNames)"
-        }
-    }
-    
-    private func findCategoryFromUserInput(_ input: String, availableCategories: [Category]) -> String? {
-        let lowercased = input.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        for category in availableCategories {
-            if lowercased == category.name.lowercased() || category.name.lowercased().contains(lowercased) || lowercased.contains(category.name.lowercased()) {
-                return category.name
-            }
-        }
-        
-        for category in availableCategories {
-            if fuzzyMatches(lowercased, category.name.lowercased()) {
-                return category.name
-            }
-        }
-        
-        let commonCategoryMappings: [String: String] = [
-            "homework": "Assignment", "assignment": "Assignment", "test": "Exam", "exam": "Exam",
-            "quiz": "Exam", "personal": "Personal", "meeting": "Meeting"
+        let patterns = [
+            "for\\s+(\\d+)\\s+(hour|hr)s?": 3600,
+            "for\\s+(\\d+)\\s+(minute|min)s?": 60,
+            "(\\d+)\\s+(hour|hr)s?": 3600,
+            "(\\d+)\\s+(minute|min)s?": 60
         ]
         
-        for (keyword, categoryName) in commonCategoryMappings {
-            if lowercased.contains(keyword) {
-                if let existingCategory = availableCategories.first(where: { $0.name.lowercased() == categoryName.lowercased() }) {
-                    return existingCategory.name
-                } else {
-                    return categoryName
+        for (pattern, multiplier) in patterns {
+            if let range = lowerInput.range(of: pattern, options: .regularExpression) {
+                let match = String(lowerInput[range])
+                if let numberRange = match.range(of: "\\d+", options: .regularExpression) {
+                    let numberStr = String(match[numberRange])
+                    if let number = Int(numberStr) {
+                        return TimeInterval(number * multiplier)
+                    }
                 }
             }
-        }
-        
-        for (keyword, categoryName) in commonCategoryMappings {
-            if containsFuzzyKeyword(lowercased, keywords: [keyword]) {
-                if let existingCategory = availableCategories.first(where: { $0.name.lowercased() == categoryName.lowercased() }) {
-                    return existingCategory.name
-                } else {
-                    return categoryName
-                }
-            }
-        }
-        
-        let words = lowercased.components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-        
-        if words.count == 1, let singleWord = words.first, singleWord.count >= 3 {
-            return singleWord.capitalized
         }
         
         return nil
     }
     
-    private func isEventNotGrade(text: String) -> Bool {
-        let strongEventIndicators = [
-            "remind me", "in 5 hours", "in 1 hour", "tomorrow", "complete homework",
-            "finish homework", "submit", "turn in", "meeting", "appointment",
-            "next tuesday", "next monday", "next wednesday", "next thursday",
-            "next friday", "next saturday", "next sunday", "at 3pm", "at 4pm",
-            "no reminder", "personal category", "in the"
+    private func extractReminderTime(from input: String) -> ReminderTime? {
+        let lowerInput = input.lowercased()
+        
+        if lowerInput.contains("no reminder") {
+            return .none
+        }
+        
+        let positiveReminderPatterns = [
+            ("5\\s*min", ReminderTime.minutes(5)),
+            ("15\\s*min", ReminderTime.minutes(15)),
+            ("30\\s*min", ReminderTime.minutes(30)),
+            ("1\\s*hour", ReminderTime.hours(1)),
+            ("2\\s*hour", ReminderTime.hours(2)),
+            ("1\\s*day", ReminderTime.days(1)),
+            ("2\\s*day", ReminderTime.days(2)),
+            ("1\\s*week", ReminderTime.weeks(1))
         ]
-        
-        if isActualGradeContext(text) {
-            return false
-        }
-        
-        if containsFuzzyKeyword(text, keywords: strongEventIndicators) {
-            return true
-        }
-        
-        if text.contains("got") {
-            let eventContext = ["meeting", "appointment", "interview", "class", "lecture"]
-            if containsFuzzyKeyword(text, keywords: eventContext) {
-                return true
-            }
-            
-            let timeContext = ["next", "tomorrow", "today", "at ", "pm", "am", "tuesday", "monday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-            if containsFuzzyKeyword(text, keywords: timeContext) {
-                return true
+        for (pattern, reminderTimeValue) in positiveReminderPatterns {
+            if lowerInput.range(of: pattern, options: .regularExpression) != nil {
+                return reminderTimeValue
             }
         }
-        
-        return false
+
+        if lowerInput.contains("remind") || lowerInput.contains("before") {
+            return .minutes(15)
+        }
+
+        return nil
     }
     
-    private func isActualGradeContext(_ text: String) -> Bool {
-        let lowercased = text.lowercased()
+    private func parseReminderTime(from input: String) -> ReminderTime {
+        if let reminderTime = extractReminderTime(from: input) {
+            return reminderTime
+        }
         
-        let gradePatterns = [
-            "got.*\\d+/\\d+.*on",
-            "got.*\\d+%.*on",
-            "got.*[a-f][+-)?.*on",
-            "received.*\\d+/\\d+.*on",
-            "received.*\\d+%.*on",
-            "received.*[a-f][+-]?.*on",
-            "scored.*\\d+/\\d+.*on",
-            "scored.*\\d+%.*on",
-            "earned.*\\d+/\\d+.*on",
-            "earned.*\\d+%.*on"
+        let lowerInput = input.lowercased()
+        if lowerInput.contains("no") ||
+           lowerInput.contains("none") ||
+           lowerInput.contains("skip") ||
+           lowerInput.contains("don't") {
+            return .none
+        }
+        
+        return .minutes(15)
+    }
+    
+    private func findCategoryMatch(_ input: String, categories: [Category]) -> String? {
+        let lowerInput = input.lowercased()
+        
+        for category in categories {
+            if lowerInput.contains(category.name.lowercased()) {
+                return category.name
+            }
+        }
+        
+        let mappings: [String: String] = [
+            "assignment": "Assignment",
+            "homework": "Assignment",
+            "test": "Exam",
+            "exam": "Exam",
+            "quiz": "Exam",
+            "meeting": "Meeting",
+            "personal": "Personal"
         ]
         
-        for pattern in gradePatterns {
-            if lowercased.range(of: pattern, options: .regularExpression) != nil {
-                return true
+        for (keyword, categoryName) in mappings {
+            if lowerInput.contains(keyword) {
+                if let existing = categories.first(where: { $0.name.lowercased() == categoryName.lowercased() }) {
+                    return existing.name
+                }
+                return categoryName
             }
         }
         
-        if containsGradePattern(lowercased) {
-            let academicContext = ["exam", "test", "quiz", "assignment", "homework", "project", "midterm", "final"]
-            if containsFuzzyKeyword(lowercased, keywords: academicContext) {
-                return true
-            }
+        return nil
+    }
+    
+    private func buildCategoryPrompt(_ categories: [Category]) -> String {
+        if categories.isEmpty {
+            return "(e.g., 'Assignment', 'Exam', 'Personal')"
+        } else {
+            let categoryNames = categories.prefix(5).map { $0.name }.joined(separator: ", ")
+            return "Available: \(categoryNames)"
         }
+    }
+    
+    // MARK: - Conversation Management
+    private func startNewConversation() -> UUID {
+        let conversationId = UUID()
+        activeConversations[conversationId] = Date()
+        return conversationId
+    }
+    
+    private func cleanupExpiredConversations() {
+        let now = Date()
+        activeConversations = activeConversations.filter { _, startTime in
+            now.timeIntervalSince(startTime) < conversationTimeout
+        }
+    }
+    
+    // MARK: - Helper to detect date references (ENHANCED)
+    private func hasDateReference(_ input: String) -> Bool {
+        let lowerInput = input.lowercased()
+        let dateKeywords = [
+            "today", "tomorrow", "tmrw", "yesterday",
+            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+            "mon", "tue", "tues", "wed", "thu", "thurs", "fri", "sat", "sun",
+            "next ", "this ", "on ",
+            "january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december",
+            "jan ", "feb ", "mar ", "apr ", "may ", "jun ",
+            "jul ", "aug ", "sep ", "sept ", "oct ", "nov ", "dec ",
+            " am", " pm",
+            " o'clock", " oclock"
+        ]
         
+        if dateKeywords.contains(where: { lowerInput.contains($0) }) {
+            return true
+        }
+        let timePattern = "\\b\\d{1,2}((:\\d{2})?(\\s*(am|pm))?|\\s*o[''']?clock)\\b"
+        if lowerInput.range(of: timePattern, options: .regularExpression) != nil {
+            return true
+        }
+        let fullDatePattern = "\\b(\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{4}[-/]\\d{1,2}[-/]\\d{1,2})\\b"
+        if lowerInput.range(of: fullDatePattern, options: .regularExpression) != nil {
+            return true
+        }
         return false
     }
+
+    private func containsActualGradePattern(_ text: String) -> Bool {
+        let lowerText = text.lowercased()
+        let patterns = [
+            "\\b[A-F][+-]?\\b",                                     // A, B+, C- (Corrected to A-F)
+            "\\b\\d+\\s*(\\.\\d+)?\\s*/\\s*\\d+(\\.\\d+)?\\b",       // X/Y or X.Y / Z.W (Corrected to d+)
+            "\\b(pass|fail)(ed)?\\b",                               // pass, failed
+            "%",                                                    // % symbol
+            "\\b\\d+\\s+percent\\b",                      // "90 percent"
+            "\\b\\d+\\s+(out\\s+of|over)\\s+\\d+\\b"                // "X out of Y", "X over Y"
+        ]
+        
+        return patterns.contains { lowerText.range(of: $0, options: .regularExpression) != nil }
+    }
+    
+    private func resultIsNotUnrecognizedOrNotAttempted(_ result: NLPResult?) -> Bool {
+        guard let result = result else { return false }
+        switch result {
+        case .unrecognized, .notAttempted:
+            return false
+        default:
+            return true
+        }
+    }
+    
+    // Helper function to extract all matches of a regex pattern from a string
+    private func emociones(from text: String, withPattern pattern: String) -> [String] {
+        do {
+            let regex = try NSRegularExpression(pattern: pattern, options: [])
+            let results = regex.matches(in: text, options: [], range: NSRange(text.startIndex..., in: text))
+            return results.map {
+                String(text[Range($0.range, in: text)!])
+            }
+        } catch {
+            print("Invalid regex: \(error.localizedDescription)")
+            return []
+        }
+    }
+}
+
+private func extractColor(from input: String) -> String? {
+    let lowerInput = input.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    
+    // Direct hex code match first
+    let hexPattern = "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$" // Matches only if input IS a hex code
+    if lowerInput.range(of: hexPattern, options: .regularExpression) != nil {
+        return lowerInput.uppercased()
+    }
+
+    let colorMap: [String: String] = [
+        "red": "#FF3B30", "orange": "#FF9500", "yellow": "#FFCC00",
+        "green": "#34C759", "mint": "#00C7BE", "teal": "#30B0C7",
+        "cyan": "#32ADE6", "blue": "#007AFF", "indigo": "#5856D6",
+        "purple": "#AF52DE", "pink": "#FF2D55", "brown": "#A2845E",
+        "gray": "#8E8E93", "grey": "#8E8E93", "black": "#000000",
+        "white": "#FFFFFF", "light blue": "#5AC8FA", "dark blue": "#0A2A4C",
+        "light green": "#90EE90", "dark green": "#006400",
+        "light gray": "#D3D3D3", "dark gray": "#A9A9A9", "silver": "#C0C0C0",
+        "gold": "#FFD700", "magenta": "#FF00FF", "violet": "#EE82EE"
+    ]
+
+    // Check for exact color name matches
+    if let hexValue = colorMap[lowerInput] {
+        return hexValue
+    }
+
+    // Check for color names contained in the input (less strict)
+    for (colorName, hexValue) in colorMap {
+        if lowerInput.contains(colorName) {
+            // To avoid partial matches like "redo" for "red", check word boundaries if color name is short
+            if colorName.count <= 3 {
+                if lowerInput.range(of: "\\b\(colorName)\\b", options: .regularExpression) != nil {
+                    return hexValue
+                }
+            } else {
+                return hexValue
+            }
+        }
+    }
+    return nil
 }
