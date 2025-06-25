@@ -1,8 +1,11 @@
 import SwiftUI
+import Combine
+import EventKit
 
 struct SettingsView: View {
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var notificationManager: StudentCompanion.NotificationManager
+    @EnvironmentObject private var calendarSyncManager: CalendarSyncManager
     @AppStorage("liveActivitiesEnabled") private var liveActivitiesEnabled: Bool = true
     @EnvironmentObject private var eventViewModel: EventViewModel
 
@@ -10,6 +13,16 @@ struct SettingsView: View {
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
     @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
     @State private var showingNotificationSettings = false
+
+    // State properties for authorization statuses
+    @State private var calendarAuthStatus: EKAuthorizationStatus = .notDetermined
+    @State private var remindersAuthStatus: EKAuthorizationStatus = .notDetermined
+
+    @AppStorage("appleCalendarIntegrationEnabled") private var appleCalendarIntegrationEnabled: Bool = true
+    @AppStorage("appleRemindersIntegrationEnabled") private var appleRemindersIntegrationEnabled: Bool = true
+
+    @State private var showingRemoveCalendarDataAlert = false
+    @State private var showingRemoveRemindersDataAlert = false
 
     var body: some View {
         ScrollView {
@@ -20,6 +33,10 @@ struct SettingsView: View {
                 notificationSection
 
                 liveActivitySection
+                
+                calendarIntegrationSection
+
+                remindersIntegrationSection
                 
                 // Grade Display Settings
                 gradeDisplaySection
@@ -37,17 +54,13 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingNotificationSettings) {
             NotificationSettingsView()
-                .environmentObject(notificationManager) // This should be okay as notificationManager is already qualified.
-                                                        // If preview fails, qualify the init: .environmentObject(StudentCompanion.NotificationManager.shared)
-                                                        // but given it's passed, the type inference should work.
+                .environmentObject(notificationManager)
         }
         .onChange(of: liveActivitiesEnabled) { oldValue, newValue in
-            Task { @MainActor in 
+            Task { @MainActor in
                 if !newValue {
-                    // If toggled off, end all activities
-                    LiveActivityManager.shared.endAllActivities() 
+                    LiveActivityManager.shared.endAllActivities()
                 } else {
-                    // If toggled on, try to manage/start activities
                     eventViewModel.manageLiveActivities(themeManager: themeManager)
                 }
             }
@@ -64,8 +77,8 @@ struct SettingsView: View {
                 title: "Show Current Event",
                 subtitle: "Display ongoing schedule items in the Dynamic Island and on the Lock Screen.",
                 isOn: $liveActivitiesEnabled,
-                icon: "sparkles", 
-                color: themeManager.currentTheme.secondaryColor 
+                icon: "sparkles",
+                color: themeManager.currentTheme.secondaryColor
             )
         }
         .padding()
@@ -205,6 +218,161 @@ struct SettingsView: View {
         .background(Color(.systemBackground))
         .cornerRadius(16)
     }
+
+    private var calendarIntegrationSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Calendar Integrations")
+                .font(.title3.bold())
+                .foregroundColor(.primary)
+
+            VStack(spacing: 12) {
+                SettingToggleRow(
+                    title: "Sync Apple Calendar",
+                    subtitle: appleCalendarIntegrationEnabled ? (calendarSyncManager.isCalendarAccessGranted ? "Syncing enabled" : "Tap to grant access") : "Sync disabled",
+                    isOn: $appleCalendarIntegrationEnabled,
+                    icon: "calendar",
+                    color: appleCalendarIntegrationEnabled && calendarSyncManager.isCalendarAccessGranted ? .green : themeManager.currentTheme.primaryColor
+                )
+                .onChange(of: appleCalendarIntegrationEnabled) { oldValue, newValue in
+                    if newValue {
+                        // Turning ON
+                        Task {
+                            if !calendarSyncManager.isCalendarAccessGranted {
+                                await calendarSyncManager.requestCalendarAccess() // This will also trigger a fetch if access is granted
+                            } else {
+                                // Already has permission, trigger a fetch manually
+                                await calendarSyncManager.fetchEventsAndUpdatePublishedProperty()
+                            }
+                            // Update local auth status for UI
+                            self.calendarAuthStatus = calendarSyncManager.checkCalendarAuthorizationStatus()
+                        }
+                    } else {
+                        // Turning OFF - Ask to remove data
+                        showingRemoveCalendarDataAlert = true
+                    }
+                }
+
+                // Display system permission status if toggle is on but access is denied
+                if appleCalendarIntegrationEnabled && (calendarAuthStatus == .denied || calendarAuthStatus == .restricted) {
+                     Text("Calendar access was denied at the system level. Please enable it in the Settings app.")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .padding(.leading, 42) // Align with toggle text
+                }
+                
+                // Keep the text for fetched events for now, or remove if too cluttered
+                if appleCalendarIntegrationEnabled && calendarSyncManager.isCalendarAccessGranted && !calendarSyncManager.appleCalendarEvents.isEmpty {
+                    Text("Last sync: \(calendarSyncManager.appleCalendarEvents.count) calendar events.")
+                        .font(.caption)
+                        .foregroundColor(.green)
+                        .padding(.leading, 42)
+                } else if appleCalendarIntegrationEnabled && calendarSyncManager.isCalendarAccessGranted && calendarSyncManager.appleCalendarEvents.isEmpty && calendarAuthStatus != .notDetermined {
+                    Text("No calendar events found in the selected range or an error occurred.")
+                         .font(.caption)
+                         .foregroundColor(.orange)
+                         .padding(.leading, 42)
+                }
+
+                // Google Calendar button remains for future implementation
+                SettingButtonRow(
+                    title: "Connect Google Calendar",
+                    icon: "calendar",
+                    color: .blue,
+                    action: {
+                        print("Connect Google Calendar tapped")
+                    }
+                )
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+        .onAppear {
+            self.calendarAuthStatus = calendarSyncManager.checkCalendarAuthorizationStatus()
+            // If toggle is on but access not granted, it will show in subtitle
+        }
+        .alert("Remove Calendar Data?", isPresented: $showingRemoveCalendarDataAlert) {
+            Button("Remove Imported Data", role: .destructive) {
+                eventViewModel.removeImportedData(sourcePrefix: "Apple Calendar -")
+                calendarSyncManager.clearAppleCalendarEventsData() // New method to add in CalendarSyncManager
+                print("User opted to remove Apple Calendar data.")
+            }
+            Button("Keep Data", role: .cancel) {
+                 print("User opted to keep Apple Calendar data despite disabling sync.")
+            }
+        } message: {
+            Text("Disabling Apple Calendar sync. Would you also like to remove calendar events previously imported from Apple Calendar from this app?")
+        }
+    }
+
+    private var remindersIntegrationSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Reminders Integration")
+                .font(.title3.bold())
+                .foregroundColor(.primary)
+
+            SettingToggleRow(
+                title: "Sync Apple Reminders",
+                subtitle: appleRemindersIntegrationEnabled ? (calendarSyncManager.isRemindersAccessGranted ? "Syncing enabled" : "Tap to grant access") : "Sync disabled",
+                isOn: $appleRemindersIntegrationEnabled,
+                icon: "list.bullet.clipboard",
+                color: appleRemindersIntegrationEnabled && calendarSyncManager.isRemindersAccessGranted ? .green : themeManager.currentTheme.secondaryColor
+            )
+            .onChange(of: appleRemindersIntegrationEnabled) { oldValue, newValue in
+                if newValue {
+                    // Turning ON
+                    Task {
+                        if !calendarSyncManager.isRemindersAccessGranted {
+                            await calendarSyncManager.requestRemindersAccess()
+                        } else {
+                            await calendarSyncManager.fetchRemindersAndUpdatePublishedProperty()
+                        }
+                        self.remindersAuthStatus = calendarSyncManager.checkRemindersAuthorizationStatus()
+                    }
+                } else {
+                    // Turning OFF
+                    showingRemoveRemindersDataAlert = true
+                }
+            }
+            
+            if appleRemindersIntegrationEnabled && (remindersAuthStatus == .denied || remindersAuthStatus == .restricted) {
+                 Text("Reminders access was denied at the system level. Please enable it in the Settings app.")
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .padding(.leading, 42)
+            }
+
+            if appleRemindersIntegrationEnabled && calendarSyncManager.isRemindersAccessGranted && !calendarSyncManager.appleReminders.isEmpty {
+                Text("Last sync: \(calendarSyncManager.appleReminders.count) reminders.")
+                    .font(.caption)
+                    .foregroundColor(.green)
+                    .padding(.leading, 42)
+            } else if appleRemindersIntegrationEnabled && calendarSyncManager.isRemindersAccessGranted && calendarSyncManager.appleReminders.isEmpty && remindersAuthStatus != .notDetermined {
+                 Text("No incomplete reminders found or an error occurred.")
+                     .font(.caption)
+                     .foregroundColor(.orange)
+                     .padding(.leading, 42)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+        .onAppear {
+            self.remindersAuthStatus = calendarSyncManager.checkRemindersAuthorizationStatus()
+        }
+        .alert("Remove Reminders Data?", isPresented: $showingRemoveRemindersDataAlert) {
+            Button("Remove Imported Data", role: .destructive) {
+                eventViewModel.removeImportedData(sourcePrefix: "Apple Reminders -")
+                calendarSyncManager.clearAppleRemindersData() // New method to add
+                print("User opted to remove Apple Reminders data.")
+            }
+            Button("Keep Data", role: .cancel) {
+                print("User opted to keep Apple Reminders data despite disabling sync.")
+            }
+        } message: {
+            Text("Disabling Apple Reminders sync. Would you also like to remove reminders previously imported from Apple Reminders from this app?")
+        }
+    }
 }
 
 struct ThemeSelectionRow: View {
@@ -305,13 +473,67 @@ struct SettingToggleRow: View {
     }
 }
 
+struct SettingButtonRow: View {
+    let title: String
+    let subtitle: String?
+    let icon: String
+    let color: Color
+    let action: () -> Void
+
+    init(title: String, subtitle: String? = nil, icon: String, color: Color, action: @escaping () -> Void) {
+        self.title = title
+        self.subtitle = subtitle
+        self.icon = icon
+        self.color = color
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.title2)
+                    .foregroundColor(color)
+                    .frame(width: 30)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(.primary)
+
+                    
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(12)
+            .background(Color(.systemGray6).opacity(0.5))
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct SettingsView_Previews: PreviewProvider {
     static var previews: some View {
-        NavigationView {
+        let previewCalendarSyncManager = CalendarSyncManager()
+        let previewEventViewModel = EventViewModel()
+
+        return NavigationView {
             SettingsView()
                 .environmentObject(ThemeManager())
-                .environmentObject(StudentCompanion.NotificationManager.shared) 
-                .environmentObject(EventViewModel())
+                .environmentObject(StudentCompanion.NotificationManager.shared)
+                .environmentObject(previewEventViewModel)
+                .environmentObject(previewCalendarSyncManager)
         }
     }
 }

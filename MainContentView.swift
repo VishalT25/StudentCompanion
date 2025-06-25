@@ -13,6 +13,7 @@ struct MainContentView: View {
     @EnvironmentObject private var viewModel: EventViewModel
     @EnvironmentObject private var themeManager: ThemeManager
     @StateObject private var weatherService = WeatherService()
+    @StateObject private var calendarSyncManager = CalendarSyncManager()
 
     @State private var showMenu = false
     @State private var selectedRoute: AppRoute?
@@ -56,6 +57,9 @@ struct MainContentView: View {
             .background(Color.white)
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
+            .refreshable {
+                await viewModel.refreshLiveData()
+            }
             .navigationDestination(for: AppRoute.self) { route in
                 switch route {
                 case .schedule:
@@ -75,6 +79,8 @@ struct MainContentView: View {
                 case .settings:
                     SettingsView()
                         .environmentObject(themeManager)
+                        .environmentObject(calendarSyncManager)
+                        .environmentObject(weatherService)
                         .background(Color.white)
                 case .resources:
                     ResourcesView()
@@ -107,6 +113,12 @@ struct MainContentView: View {
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 12) {
+                        if viewModel.isRefreshing {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                                .progressViewStyle(CircularProgressViewStyle(tint: themeManager.currentTheme.primaryColor))
+                        }
+                        
                         if let currentWeather = weatherService.currentWeather {
                             Button {
                                 withAnimation(.easeInOut(duration: 0.3)) {
@@ -225,6 +237,8 @@ struct MainContentView: View {
             }
         }
         .onAppear {
+            viewModel.setLiveDataServices(weatherService: weatherService, calendarSyncManager: calendarSyncManager)
+            
             Task { @MainActor in
                 viewModel.manageLiveActivities(themeManager: themeManager)
             }

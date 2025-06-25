@@ -46,5 +46,15 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSCalendarsUsageDescription</key>
+	<string>StudentCompanion needs access to your calendars to display your events alongside your academic schedule, helping you manage your time effectively.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>StudentCompanion needs access to your reminders to integrate your tasks and academic deadlines, keeping everything organized in one place.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>StudentCompanion needs to add events to your calendar to help you manage your academic schedule.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>StudentCompanion needs full access to your calendars to display and manage your events alongside your academic schedule, helping you manage your time effectively.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>StudentCompanion needs full access to your reminders to integrate and manage your tasks and academic deadlines, keeping everything organized in one place.</string>
 </dict>
 </plist>

@@ -33,10 +33,12 @@ struct TodayScheduleView: View {
             let events = viewModel.todaysEvents()
             
             if schedule.isEmpty && events.isEmpty {
-                Text("Nothing scheduled for today")
-                    .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.8))
-                    .padding(.vertical, 4)
+                VStack(spacing: 4) {
+                    Text("Nothing scheduled for today")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                .padding(.vertical, 4)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     if !schedule.isEmpty {
