@@ -365,11 +365,23 @@ class EventViewModel: ObservableObject {
     private var weatherService: WeatherService?
     private var calendarSyncManager: CalendarSyncManager?
     
+    private var cancellables = Set<AnyCancellable>() // For Combine subscribers
+
     init() {
         loadData()
         Task {
             await notificationManager.requestAuthorization()
         }
+        // Observe Google Calendar event fetches
+        NotificationCenter.default.publisher(for: .googleCalendarEventsFetched)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                print("EventViewModel received googleCalendarEventsFetched notification.")
+                Task {
+                    await self?.processFetchedGoogleCalendarEvents()
+                }
+            }
+            .store(in: &cancellables)
     }
     
     // MARK: - Pull to Refresh
@@ -380,7 +392,7 @@ class EventViewModel: ObservableObject {
     
     @MainActor
     func refreshLiveData() async {
-        print("🔄 Starting pull-to-refresh for live data...")
+        print("Starting pull-to-refresh for live data...")
         isRefreshing = true
         
         // Create a task group to run all refresh operations concurrently
@@ -388,7 +400,7 @@ class EventViewModel: ObservableObject {
             // Refresh weather data
             if let weatherService = weatherService {
                 group.addTask {
-                    print("🌤️ Refreshing weather data...")
+                    print("Refreshing weather data...")
                     await MainActor.run {
                         weatherService.fetchWeatherData()
                     }
@@ -398,7 +410,7 @@ class EventViewModel: ObservableObject {
             // Refresh calendar data
             if let calendarSyncManager = calendarSyncManager {
                 group.addTask {
-                    print("📅 Refreshing calendar sync data...")
+                    print("Refreshing calendar sync data...")
                     await calendarSyncManager.fetchEventsAndUpdatePublishedProperty()
                     await calendarSyncManager.fetchRemindersAndUpdatePublishedProperty()
                     await self.processFetchedCalendarEvents()
@@ -413,13 +425,13 @@ class EventViewModel: ObservableObject {
             
             // Refresh notification permissions status
             group.addTask {
-                print("🔔 Refreshing notification permissions...")
+                print("Refreshing notification permissions...")
                 await NotificationManager.shared.checkAuthorizationStatus()
             }
             
             // Add task for refreshing any other live data sources
             group.addTask {
-                print("🔄 Refreshing additional data sources...")
+                print("Refreshing additional data sources...")
                 await self.refreshAdditionalData()
             }
         }
@@ -428,7 +440,7 @@ class EventViewModel: ObservableObject {
         lastRefreshTime = Date()
         isRefreshing = false
         
-        print("✅ Pull-to-refresh completed successfully!")
+        print("Pull-to-refresh completed successfully!")
         
         // Post notification for other parts of the app that might need to update
         NotificationCenter.default.post(name: .liveDataRefreshed, object: nil)
@@ -436,7 +448,7 @@ class EventViewModel: ObservableObject {
     
     private func refreshAdditionalData() async {
         try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
-        print("📊 Additional data sources refreshed")
+        print("Additional data sources refreshed")
     }
     
     private func loadData() {
@@ -752,18 +764,28 @@ class EventViewModel: ObservableObject {
             }
     }
 
-    private func getOrCreateImportedCategory(sourceBaseName: String) -> Category {
-        if let existingCategory = categories.first(where: { $0.name.hasPrefix(sourceBaseName) }) {
+    private func getOrCreateImportedCategory(sourceBaseName: String, defaultColor: Color) -> Category {
+        let categoryName: String
+        switch sourceBaseName {
+        case "Google Calendar":
+            categoryName = "GC Imports"
+        case "Apple Calendar":
+            categoryName = "AC Imports"
+        case "Apple Reminders":
+            categoryName = "AR Imports"
+        default:
+            categoryName = "\(sourceBaseName) Imports"
+        }
+        
+        if let existingCategory = categories.first(where: { $0.name == categoryName }) {
             return existingCategory
         } else {
-            let defaultImportedCategoryName = "Imported"
-            if let genericImported = categories.first(where: { $0.name == defaultImportedCategoryName }) {
+            if let genericImported = categories.first(where: { $0.name == "Imported" && $0.color == defaultColor }) {
                  return genericImported
-            } else {
-                let newCategory = Category(name: defaultImportedCategoryName, color: .gray)
-                addCategory(newCategory)
-                return newCategory
             }
+            let newCategory = Category(name: categoryName, color: defaultColor)
+            addCategory(newCategory) // This already saves data
+            return newCategory
         }
     }
     
@@ -782,7 +804,7 @@ class EventViewModel: ObservableObject {
         }
 
         print("Processing \(fetchedEKvents.count) fetched Apple Calendar events...")
-        let importedCategory = getOrCreateImportedCategory(sourceBaseName: "Apple Calendar")
+        let importedCategory = getOrCreateImportedCategory(sourceBaseName: "Apple Calendar", defaultColor: .gray)
 
         for ekEvent in fetchedEKvents {
             // Avoid adding duplicates if event already exists (check by externalIdentifier)
@@ -812,7 +834,7 @@ class EventViewModel: ObservableObject {
         }
         
         print("Processing \(fetchedReminders.count) fetched Apple Reminders...")
-        let importedCategory = getOrCreateImportedCategory(sourceBaseName: "Apple Reminders")
+        let importedCategory = getOrCreateImportedCategory(sourceBaseName: "Apple Reminders", defaultColor: .blue) 
         let calendar = Calendar.current
 
         for ekReminder in fetchedReminders {
@@ -833,6 +855,95 @@ class EventViewModel: ObservableObject {
             }
         }
         saveData() // Save after processing all
+    }
+
+    @MainActor
+    private func processFetchedGoogleCalendarEvents() async {
+        guard let googleEvents = calendarSyncManager?.googleCalendarEvents,
+              UserDefaults.standard.bool(forKey: "googleCalendarIntegrationEnabled") else { 
+            print("Google Calendar integration disabled or no events fetched.")
+            return
+        }
+
+        print("EventViewModel: Processing \(googleEvents.count) fetched Google Calendar events...")
+        let googleCategory = getOrCreateImportedCategory(sourceBaseName: "Google Calendar", defaultColor: Color(red: 66/255, green: 133/255, blue: 244/255)) 
+
+        var newEventsAdded = 0
+        var eventsUpdated = 0
+
+        for gEvent in googleEvents {
+            guard let eventId = gEvent.identifier, !eventId.isEmpty else {
+                print("Skipping Google event with missing ID.")
+                continue
+            }
+            
+            let sourceName = "Google Calendar: \(calendarSyncManager?.googleCalendars.first(where: { $0.identifier == gEvent.organizer?.identifier })?.summary ?? gEvent.organizer?.displayName ?? "Default")"
+            
+            var eventDate: Date?
+            if let startDateTime = gEvent.start?.dateTime?.date {
+                eventDate = startDateTime
+            } else if let startDate = gEvent.start?.date?.date { // All-day event
+                eventDate = startDate
+            }
+
+            guard let date = eventDate, let title = gEvent.summary, !title.isEmpty else {
+                print("Skipping Google event with missing date or title: \(gEvent.summary ?? "No Title")")
+                continue
+            }
+
+            // Check if event already exists (imported from Google Calendar)
+            if let existingEventIndex = events.firstIndex(where: { $0.externalIdentifier == eventId && $0.sourceName?.hasPrefix("Google Calendar") == true }) {
+                // Update existing event
+                var updatedEvent = events[existingEventIndex]
+                updatedEvent.title = title
+                updatedEvent.date = date
+                updatedEvent.categoryId = googleCategory.id // Ensure category is correct
+                // Update other fields as necessary, e.g., completion status if available
+                // GTLRCalendar_Event status: "confirmed", "tentative", "cancelled"
+                if gEvent.status == "cancelled" {
+                    // Decide how to handle cancelled events (e.g., delete them or mark them differently)
+                    print("Google event \(title) was cancelled. Deleting from app.")
+                    deleteEvent(updatedEvent) // Assuming deleteEvent handles notifications etc.
+                    continue
+                }
+                
+                // For simplicity, we are not mapping all GTLRCalendar_Event fields here.
+                // Add more mappings if needed (e.g., description, location).
+                
+                if events[existingEventIndex].title != updatedEvent.title || events[existingEventIndex].date != updatedEvent.date {
+                    updateEvent(updatedEvent)
+                    eventsUpdated += 1
+                }
+            } else {
+                // Add as new event
+                // For now, all Google events become `Event` type in our app.
+                // Handling of recurring events to `ScheduleItem` can be added later.
+                if gEvent.status == "cancelled" {
+                     print("Google event \(title) is cancelled. Skipping add.")
+                     continue
+                }
+
+                let newAppEvent = Event(
+                    date: date,
+                    title: title,
+                    categoryId: googleCategory.id,
+                    reminderTime: .none, // Google Calendar reminders are separate; decide if/how to map them
+                    isCompleted: false, // Or map from gEvent.status if applicable
+                    externalIdentifier: eventId,
+                    sourceName: sourceName
+                )
+                addEvent(newAppEvent)
+                newEventsAdded += 1
+            }
+        }
+
+        if newEventsAdded > 0 || eventsUpdated > 0 {
+            print("Google Calendar Sync: \(newEventsAdded) new events added, \(eventsUpdated) events updated.")
+            saveData() // Ensure data is saved after processing
+            NotificationCenter.default.post(name: .liveDataRefreshed, object: nil) // Notify UI to refresh
+        } else {
+            print("Google Calendar Sync: No new events or updates.")
+        }
     }
 }
 
@@ -974,6 +1085,7 @@ struct EmptyEventsView: View {
 
 struct EventPreviewCard: View {
     @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
     let event: Event
     
     var body: some View {
@@ -1606,6 +1718,8 @@ extension EventsListView {
 
 extension Notification.Name {
     static let liveDataRefreshed = Notification.Name("liveDataRefreshed")
+    static let googleCalendarEventsFetched = Notification.Name("googleCalendarEventsFetched")
+    static let googleSignInStateChanged = Notification.Name("googleSignInStateChanged")
 }
 
 // MARK: - AddEventView (Enhanced)

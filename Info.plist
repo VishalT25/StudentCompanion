@@ -56,5 +56,20 @@
 	<string>StudentCompanion needs full access to your calendars to display and manage your events alongside your academic schedule, helping you manage your time effectively.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>StudentCompanion needs full access to your reminders to integrate and manage your tasks and academic deadlines, keeping everything organized in one place.</string>
+	<!-- ADD: Google Sign-In URL Scheme -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.802192919415-cnjmfbihba29nb3m23hb1gslqcf974f2</string>
+			</array>
+		</dict>
+	</array>
+	<!-- ADD: Google Client ID for GIDConfiguration -->
+	<key>GIDClientID</key>
+	<string>802192919415-cnjmfbihba29nb3m23hb1gslqcf974f2.apps.googleusercontent.com</string>
 </dict>
 </plist>

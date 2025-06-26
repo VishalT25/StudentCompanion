@@ -20,9 +20,11 @@ struct SettingsView: View {
 
     @AppStorage("appleCalendarIntegrationEnabled") private var appleCalendarIntegrationEnabled: Bool = true
     @AppStorage("appleRemindersIntegrationEnabled") private var appleRemindersIntegrationEnabled: Bool = true
+    @AppStorage("googleCalendarIntegrationEnabled") private var googleCalendarIntegrationEnabled: Bool = true
 
     @State private var showingRemoveCalendarDataAlert = false
     @State private var showingRemoveRemindersDataAlert = false
+    @State private var showingRemoveGoogleDataAlert = false
 
     var body: some View {
         ScrollView {
@@ -64,6 +66,42 @@ struct SettingsView: View {
                     eventViewModel.manageLiveActivities(themeManager: themeManager)
                 }
             }
+        }
+        .alert("Remove Calendar Data?", isPresented: $showingRemoveCalendarDataAlert) {
+            Button("Remove Imported Data", role: .destructive) {
+                eventViewModel.removeImportedData(sourcePrefix: "Apple Calendar -")
+                calendarSyncManager.clearAppleCalendarEventsData() 
+                print("User opted to remove Apple Calendar data.")
+            }
+            Button("Keep Data", role: .cancel) {
+                 print("User opted to keep Apple Calendar data despite disabling sync.")
+            }
+        } message: {
+            Text("Disabling Apple Calendar sync. Would you also like to remove calendar events previously imported from Apple Calendar from this app?")
+        }
+        .alert("Remove Reminders Data?", isPresented: $showingRemoveRemindersDataAlert) {
+            Button("Remove Imported Data", role: .destructive) {
+                eventViewModel.removeImportedData(sourcePrefix: "Apple Reminders -")
+                calendarSyncManager.clearAppleRemindersData() 
+                print("User opted to remove Apple Reminders data.")
+            }
+            Button("Keep Data", role: .cancel) {
+                print("User opted to keep Apple Reminders data despite disabling sync.")
+            }
+        } message: {
+            Text("Disabling Apple Reminders sync. Would you also like to remove reminders previously imported from Apple Reminders from this app?")
+        }
+        .alert("Remove Google Calendar Data?", isPresented: $showingRemoveGoogleDataAlert) {
+            Button("Remove Imported Data", role: .destructive) {
+                eventViewModel.removeImportedData(sourcePrefix: "Google Calendar:") 
+                calendarSyncManager.googleCalendarEvents = []
+                print("User opted to remove Google Calendar data.")
+            }
+            Button("Keep Data", role: .cancel) {
+                 print("User opted to keep Google Calendar data despite disabling sync.")
+            }
+        } message: {
+            Text("Disabling Google Calendar sync. Would you also like to remove calendar events previously imported from Google Calendar from this app?")
         }
     }
     
@@ -225,6 +263,7 @@ struct SettingsView: View {
                 .font(.title3.bold())
                 .foregroundColor(.primary)
 
+            // --- Apple Calendar Section ---
             VStack(spacing: 12) {
                 SettingToggleRow(
                     title: "Sync Apple Calendar",
@@ -238,7 +277,7 @@ struct SettingsView: View {
                         // Turning ON
                         Task {
                             if !calendarSyncManager.isCalendarAccessGranted {
-                                await calendarSyncManager.requestCalendarAccess() // This will also trigger a fetch if access is granted
+                                await calendarSyncManager.requestCalendarAccess() 
                             } else {
                                 // Already has permission, trigger a fetch manually
                                 await calendarSyncManager.fetchEventsAndUpdatePublishedProperty()
@@ -257,7 +296,7 @@ struct SettingsView: View {
                      Text("Calendar access was denied at the system level. Please enable it in the Settings app.")
                         .font(.caption)
                         .foregroundColor(.red)
-                        .padding(.leading, 42) // Align with toggle text
+                        .padding(.leading, 42) 
                 }
                 
                 // Keep the text for fetched events for now, or remove if too cluttered
@@ -273,15 +312,58 @@ struct SettingsView: View {
                          .padding(.leading, 42)
                 }
 
-                // Google Calendar button remains for future implementation
-                SettingButtonRow(
-                    title: "Connect Google Calendar",
-                    icon: "calendar",
-                    color: .blue,
-                    action: {
-                        print("Connect Google Calendar tapped")
+                // --- Google Calendar Section ---
+                Divider().padding(.vertical, 8)
+
+                NavigationLink(destination: GoogleCalendarSettingsView()
+                                               .environmentObject(calendarSyncManager)
+                                               .environmentObject(themeManager)
+                ) {
+                    HStack(spacing: 12) {
+                        Image(systemName: calendarSyncManager.isGoogleCalendarAccessGranted ? "checkmark.circle.fill" : "g.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(calendarSyncManager.isGoogleCalendarAccessGranted ? .green : Color(red: 66/255, green: 133/255, blue: 244/255))
+                            .frame(width: 30)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Google Calendar")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.primary)
+                            
+                            if calendarSyncManager.isGoogleCalendarAccessGranted {
+                                if !calendarSyncManager.selectedGoogleCalendarIDs.isEmpty {
+                                    Text("\(calendarSyncManager.selectedGoogleCalendarIDs.count) calendars selected")
+                                        .font(.caption)
+                                        .foregroundColor(.green)
+                                } else {
+                                    Text("Connected • No calendars selected")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            } else {
+                                Text("Not connected")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        Spacer()
+                        
+                        if calendarSyncManager.isGoogleCalendarAccessGranted && !calendarSyncManager.selectedGoogleCalendarIDs.isEmpty {
+                            Circle()
+                                .fill(.green)
+                                .frame(width: 8, height: 8)
+                        }
+                        
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                )
+                    .padding(12)
+                    .background(Color(.systemGray6).opacity(0.5))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding()
@@ -289,22 +371,18 @@ struct SettingsView: View {
         .cornerRadius(16)
         .onAppear {
             self.calendarAuthStatus = calendarSyncManager.checkCalendarAuthorizationStatus()
-            // If toggle is on but access not granted, it will show in subtitle
-        }
-        .alert("Remove Calendar Data?", isPresented: $showingRemoveCalendarDataAlert) {
-            Button("Remove Imported Data", role: .destructive) {
-                eventViewModel.removeImportedData(sourcePrefix: "Apple Calendar -")
-                calendarSyncManager.clearAppleCalendarEventsData() // New method to add in CalendarSyncManager
-                print("User opted to remove Apple Calendar data.")
-            }
-            Button("Keep Data", role: .cancel) {
-                 print("User opted to keep Apple Calendar data despite disabling sync.")
-            }
-        } message: {
-            Text("Disabling Apple Calendar sync. Would you also like to remove calendar events previously imported from Apple Calendar from this app?")
         }
     }
 
+    private func getRootViewController() -> UIViewController? {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootViewController = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            print("Could not find key window or root view controller.")
+            return nil
+        }
+        return rootViewController.presentedViewController ?? rootViewController 
+    }
+    
     private var remindersIntegrationSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Reminders Integration")
@@ -359,18 +437,6 @@ struct SettingsView: View {
         .cornerRadius(16)
         .onAppear {
             self.remindersAuthStatus = calendarSyncManager.checkRemindersAuthorizationStatus()
-        }
-        .alert("Remove Reminders Data?", isPresented: $showingRemoveRemindersDataAlert) {
-            Button("Remove Imported Data", role: .destructive) {
-                eventViewModel.removeImportedData(sourcePrefix: "Apple Reminders -")
-                calendarSyncManager.clearAppleRemindersData() // New method to add
-                print("User opted to remove Apple Reminders data.")
-            }
-            Button("Keep Data", role: .cancel) {
-                print("User opted to keep Apple Reminders data despite disabling sync.")
-            }
-        } message: {
-            Text("Disabling Apple Reminders sync. Would you also like to remove reminders previously imported from Apple Reminders from this app?")
         }
     }
 }
