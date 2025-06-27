@@ -137,24 +137,26 @@ struct ScheduleEditView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(schedule == nil ? "Add" : "Save") {
-                        let item = ScheduleItem(
-                            title: title,
-                            startTime: startTime,
-                            endTime: endTime,
-                            daysOfWeek: selectedDays,
-                            color: selectedColor,
-                            reminderTime: reminderTime,
-                            isLiveActivityEnabled: isLiveActivityEnabled
-                        )
-                        if schedule == nil {
-                            viewModel.addScheduleItem(item, themeManager: themeManager)
-                        } else {
-                            var updatedItem = item
-                            updatedItem.id = schedule?.id ?? item.id
-                            updatedItem.skippedInstanceIdentifiers = schedule?.skippedInstanceIdentifiers ?? []
-                            viewModel.updateScheduleItem(updatedItem, themeManager: themeManager)
+                        Task {
+                            let item = ScheduleItem(
+                                title: title,
+                                startTime: startTime,
+                                endTime: endTime,
+                                daysOfWeek: selectedDays,
+                                color: selectedColor,
+                                reminderTime: reminderTime,
+                                isLiveActivityEnabled: isLiveActivityEnabled
+                            )
+                            if schedule == nil {
+                                viewModel.addScheduleItem(item, themeManager: themeManager)
+                            } else {
+                                var updatedItem = item
+                                updatedItem.id = schedule?.id ?? item.id
+                                updatedItem.skippedInstanceIdentifiers = schedule?.skippedInstanceIdentifiers ?? []
+                                await viewModel.updateScheduleItem(updatedItem, themeManager: themeManager)
+                            }
+                            dismiss()
                         }
-                        dismiss()
                     }
                     .disabled(title.isEmpty || selectedDays.isEmpty || endTime <= startTime)
                 }

@@ -445,8 +445,10 @@ struct NaturalLanguageInputView: View {
         }
 
         let newEvent = Event(date: eventDate, title: title, categoryId: categoryId, reminderTime: reminderTime ?? .none)
-        eventViewModel.addEvent(newEvent)
-        dismiss()
+        Task {
+            await eventViewModel.addEvent(newEvent)
+            dismiss()
+        }
     }
 
     private func handleAddScheduleItem(title: String, days: Set<DayOfWeek>, startTimeComponents: DateComponents?, endTimeComponents: DateComponents?, duration: TimeInterval?, reminderTime: ReminderTime?, colorHex: String?) {

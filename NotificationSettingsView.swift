@@ -197,7 +197,9 @@ struct EventReminderRow: View {
             set: { newValue in
                 var updatedEvent = event
                 updatedEvent.reminderTime = newValue
-                viewModel.updateEvent(updatedEvent)
+                Task {
+                    await viewModel.updateEvent(updatedEvent)
+                }
             }
         )
     }
@@ -278,7 +280,9 @@ struct ScheduleReminderRow: View {
             set: { newValue in
                 var updatedItem = scheduleItem
                 updatedItem.reminderTime = newValue
-                viewModel.updateScheduleItem(updatedItem)
+                Task {
+                    await viewModel.updateScheduleItem(updatedItem)
+                }
             }
         )
     }

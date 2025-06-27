@@ -385,6 +385,7 @@ class NotificationManager: ObservableObject {
     }
     
     // MARK: - Batch Operations
+    @MainActor
     func rescheduleAllNotifications(for viewModel: EventViewModel) {
         // Get all pending notifications to avoid duplicates
         notificationCenter.removeAllPendingNotificationRequests()

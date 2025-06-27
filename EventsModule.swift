@@ -3,6 +3,11 @@ import Combine
 import UserNotifications
 import ActivityKit
 import EventKit
+//import SwiftUI
+//import Combine
+//import UserNotifications
+//import ActivityKit
+//import EventKit
 
 // MARK: - Theme System
 enum AppTheme: String, CaseIterable, Identifiable {
@@ -218,13 +223,17 @@ struct Event: Identifiable, Codable {
     var isCompleted: Bool = false
     var externalIdentifier: String? = nil
     var sourceName: String? = nil
+    var syncToAppleCalendar: Bool = false
+    var syncToGoogleCalendar: Bool = false
+    var appleCalendarIdentifier: String? = nil
+    var googleCalendarIdentifier: String? = nil
     
     func category(from categories: [Category]) -> Category {
         categories.first { $0.id == categoryId } ?? Category(name: "Unknown", color: .gray)
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, date, title, categoryId, reminderTime, isCompleted, externalIdentifier, sourceName
+        case id, date, title, categoryId, reminderTime, isCompleted, externalIdentifier, sourceName, syncToAppleCalendar, syncToGoogleCalendar, appleCalendarIdentifier, googleCalendarIdentifier
     }
     
     init(from decoder: Decoder) throws {
@@ -237,6 +246,10 @@ struct Event: Identifiable, Codable {
         isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
         externalIdentifier = try container.decodeIfPresent(String.self, forKey: .externalIdentifier)
         sourceName = try container.decodeIfPresent(String.self, forKey: .sourceName)
+        syncToAppleCalendar = try container.decodeIfPresent(Bool.self, forKey: .syncToAppleCalendar) ?? false
+        syncToGoogleCalendar = try container.decodeIfPresent(Bool.self, forKey: .syncToGoogleCalendar) ?? false
+        appleCalendarIdentifier = try container.decodeIfPresent(String.self, forKey: .appleCalendarIdentifier)
+        googleCalendarIdentifier = try container.decodeIfPresent(String.self, forKey: .googleCalendarIdentifier)
     }
     
     func encode(to encoder: Encoder) throws {
@@ -249,9 +262,13 @@ struct Event: Identifiable, Codable {
         try container.encode(isCompleted, forKey: .isCompleted)
         try container.encodeIfPresent(externalIdentifier, forKey: .externalIdentifier)
         try container.encodeIfPresent(sourceName, forKey: .sourceName)
+        try container.encode(syncToAppleCalendar, forKey: .syncToAppleCalendar)
+        try container.encode(syncToGoogleCalendar, forKey: .syncToGoogleCalendar)
+        try container.encodeIfPresent(appleCalendarIdentifier, forKey: .appleCalendarIdentifier)
+        try container.encodeIfPresent(googleCalendarIdentifier, forKey: .googleCalendarIdentifier)
     }
     
-    init(id: UUID = UUID(), date: Date, title: String, categoryId: UUID, reminderTime: ReminderTime = .none, isCompleted: Bool = false, externalIdentifier: String? = nil, sourceName: String? = nil) {
+    init(id: UUID = UUID(), date: Date, title: String, categoryId: UUID, reminderTime: ReminderTime = .none, isCompleted: Bool = false, externalIdentifier: String? = nil, sourceName: String? = nil, syncToAppleCalendar: Bool = false, syncToGoogleCalendar: Bool = false, appleCalendarIdentifier: String? = nil, googleCalendarIdentifier: String? = nil) {
         self.id = id
         self.date = date
         self.title = title
@@ -260,6 +277,10 @@ struct Event: Identifiable, Codable {
         self.isCompleted = isCompleted
         self.externalIdentifier = externalIdentifier
         self.sourceName = sourceName
+        self.syncToAppleCalendar = syncToAppleCalendar
+        self.syncToGoogleCalendar = syncToGoogleCalendar
+        self.appleCalendarIdentifier = appleCalendarIdentifier
+        self.googleCalendarIdentifier = googleCalendarIdentifier
     }
 }
 
@@ -349,6 +370,7 @@ enum DayOfWeek: Int, Codable, CaseIterable {
     }
 }
 
+
 class EventViewModel: ObservableObject {
     @Published var categories: [Category] = []
     @Published var events: [Event] = []
@@ -410,11 +432,24 @@ class EventViewModel: ObservableObject {
             // Refresh calendar data
             if let calendarSyncManager = calendarSyncManager {
                 group.addTask {
-                    print("Refreshing calendar sync data...")
+                    print("Refreshing Apple calendar sync data...")
                     await calendarSyncManager.fetchEventsAndUpdatePublishedProperty()
                     await calendarSyncManager.fetchRemindersAndUpdatePublishedProperty()
                     await self.processFetchedCalendarEvents()
                     await self.processFetchedReminders()
+                }
+                
+                group.addTask {
+                    print("Refreshing Google Calendar sync data...")
+                    // Check access on main actor since it's a @Published property
+                    let hasAccess = await MainActor.run { calendarSyncManager.isGoogleCalendarAccessGranted }
+                    if hasAccess {
+                        await calendarSyncManager.fetchGoogleCalendarList()
+                        await calendarSyncManager.fetchGoogleCalendarEvents()
+                        // Google Calendar events are processed automatically via NotificationCenter
+                    } else {
+                        print("Google Calendar access not granted, skipping Google Calendar refresh.")
+                    }
                 }
             }
             
@@ -443,7 +478,7 @@ class EventViewModel: ObservableObject {
         print("Pull-to-refresh completed successfully!")
         
         // Post notification for other parts of the app that might need to update
-        NotificationCenter.default.post(name: .liveDataRefreshed, object: nil)
+        NotificationCenter.default.post(name: .liveDataRefreshed, object: nil) // Notify UI to refresh
     }
     
     private func refreshAdditionalData() async {
@@ -519,7 +554,7 @@ class EventViewModel: ObservableObject {
         saveData()
     }
     
-    private func saveData() {
+    func saveData() {
         do {
             let encoder = JSONEncoder()
             let categoriesData = try encoder.encode(categories)
@@ -535,29 +570,131 @@ class EventViewModel: ObservableObject {
     
     func addEvent(_ event: Event) {
         events.append(event)
+        guard let eventIndex = events.firstIndex(where: { $0.id == event.id }) else { return }
+
         if event.reminderTime != .none {
             notificationManager.scheduleEventNotification(for: event, reminderTime: event.reminderTime, categories: categories)
         }
+
+        if event.syncToAppleCalendar || event.syncToGoogleCalendar {
+            guard let calendarSyncManager = calendarSyncManager else {
+                print("CalendarSyncManager is nil when trying to add an event.")
+                saveData()
+                return
+            }
+            Task {
+                var eventToUpdate = event
+                if event.syncToAppleCalendar {
+                    if let newID = await calendarSyncManager.createAppleCalendarEvent(from: event) {
+                        eventToUpdate.appleCalendarIdentifier = newID
+                    }
+                }
+                if event.syncToGoogleCalendar {
+                    if let newID = await calendarSyncManager.createGoogleCalendarEvent(from: event, calendarId: "primary") {
+                        eventToUpdate.googleCalendarIdentifier = newID
+                        eventToUpdate.externalIdentifier       = newID
+                    }
+                }
+                
+                await MainActor.run {
+                    self.events[eventIndex] = eventToUpdate
+                    self.saveData()
+                }
+            }
+        }
+        
         saveData()
     }
     
     func updateEvent(_ event: Event) {
-        if let idx = events.firstIndex(where: { $0.id == event.id }) {
-            let oldEvent = events[idx]
-            events[idx] = event
-            
-            notificationManager.removeAllEventNotifications(for: oldEvent)
-            if event.reminderTime != .none {
-                notificationManager.scheduleEventNotification(for: event, reminderTime: event.reminderTime, categories: categories)
-            }
-            saveData()
+        guard let idx = events.firstIndex(where: { $0.id == event.id }) else { return }
+        
+        let oldEvent = events[idx]
+        events[idx] = event
+        
+        notificationManager.removeAllEventNotifications(for: oldEvent)
+        if event.reminderTime != .none {
+            notificationManager.scheduleEventNotification(for: event, reminderTime: event.reminderTime, categories: categories)
         }
+        
+        handleCalendarSyncOnUpdate(oldEvent: oldEvent, newEvent: event)
+        
+        saveData()
     }
     
     func deleteEvent(_ event: Event) {
+        if let calendarSyncManager = calendarSyncManager {
+            Task {
+                if event.syncToAppleCalendar, let appleId = event.appleCalendarIdentifier {
+                    _ = await calendarSyncManager.deleteAppleCalendarEvent(withIdentifier: appleId)
+                }
+                if event.syncToGoogleCalendar, event.googleCalendarIdentifier != nil {
+                    _ = await calendarSyncManager.deleteGoogleCalendarEvent(from: event, calendarId: "primary")
+                }
+            }
+        }
+        
         events.removeAll { $0.id == event.id }
         notificationManager.removeAllEventNotifications(for: event)
         saveData()
+    }
+    
+    private func handleCalendarSyncOnUpdate(oldEvent: Event, newEvent: Event) {
+        guard let calendarSyncManager = calendarSyncManager else { return }
+        guard let eventIndex = events.firstIndex(where: { $0.id == newEvent.id }) else { return }
+
+        Task {
+            var eventToMutate = newEvent
+
+            // Apple Calendar Logic
+            switch (oldEvent.syncToAppleCalendar, newEvent.syncToAppleCalendar) {
+            case (false, true): // Toggled ON
+                if let newId = await calendarSyncManager.createAppleCalendarEvent(from: newEvent) {
+                    eventToMutate.appleCalendarIdentifier = newId
+                }
+            case (true, true): // Already ON
+                if oldEvent.title != newEvent.title || oldEvent.date != newEvent.date {
+                    _ = await calendarSyncManager.updateAppleCalendarEvent(from: newEvent)
+                }
+            case (true, false): // Toggled OFF
+                if let oldId = oldEvent.appleCalendarIdentifier {
+                    _ = await calendarSyncManager.deleteAppleCalendarEvent(withIdentifier: oldId)
+                    eventToMutate.appleCalendarIdentifier = nil
+                }
+            case (false, false):
+                break
+            }
+
+            // Google Calendar Logic
+            switch (oldEvent.syncToGoogleCalendar, newEvent.syncToGoogleCalendar) {
+            case (false, true): // Toggled ON
+                if let newId = await calendarSyncManager
+                            .createGoogleCalendarEvent(from: newEvent, calendarId: "primary") {
+                        eventToMutate.googleCalendarIdentifier = newId
+                        eventToMutate.externalIdentifier       = newId
+                    }
+            case (true, true): // Already ON
+                if oldEvent.title != newEvent.title || oldEvent.date != newEvent.date {
+                     _ = await calendarSyncManager.updateGoogleCalendarEvent(from: newEvent, calendarId: "primary")
+                }
+            case (true, false): // Toggled OFF
+                 if oldEvent.googleCalendarIdentifier != nil {
+                     _ = await calendarSyncManager.deleteGoogleCalendarEvent(from: newEvent, calendarId: "primary")
+                     eventToMutate.googleCalendarIdentifier = nil
+                 }
+            case (false, false):
+                break
+            }
+
+            // If identifiers changed, update the model on the main thread
+            if eventToMutate.appleCalendarIdentifier != self.events[eventIndex].appleCalendarIdentifier ||
+               eventToMutate.googleCalendarIdentifier != self.events[eventIndex].googleCalendarIdentifier {
+                await MainActor.run {
+                    self.events[eventIndex] = eventToMutate
+                    self.saveData()
+                }
+            }
+        }
     }
     
     func markEventCompleted(_ event: Event) {
@@ -658,10 +795,10 @@ class EventViewModel: ObservableObject {
             scheduleItems[index].skippedInstanceIdentifiers.insert(instanceIdentifier)
         }
         
-        let updatedItem = scheduleItems[index] 
+        let updatedItem = scheduleItems[index]
         
         if updatedItem.reminderTime != .none {
-            notificationManager.removeAllScheduleItemNotifications(for: updatedItem) 
+            notificationManager.removeAllScheduleItemNotifications(for: updatedItem)
             notificationManager.scheduleScheduleItemNotifications(for: updatedItem, reminderTime: updatedItem.reminderTime)
         }
         
@@ -671,7 +808,7 @@ class EventViewModel: ObservableObject {
             Task { @MainActor in
                 let now = Date()
                 let calendar = Calendar.current
-                if calendar.isDate(onDate, inSameDayAs: now) { 
+                if calendar.isDate(onDate, inSameDayAs: now) {
                     if updatedItem.isSkipped(onDate: now) && updatedItem.id == currentActiveClass(at: now)?.id {
                          LiveActivityManager.shared.endActivity(for: updatedItem.id.uuidString)
                     } else {
@@ -802,29 +939,76 @@ class EventViewModel: ObservableObject {
         guard let fetchedEKvents = calendarSyncManager?.appleCalendarEvents, UserDefaults.standard.bool(forKey: "appleCalendarIntegrationEnabled") else {
             return
         }
-
-        print("Processing \(fetchedEKvents.count) fetched Apple Calendar events...")
+        
+        print("Processing \(fetchedEKvents.count) fetched Apple Calendar events for sync...")
         let importedCategory = getOrCreateImportedCategory(sourceBaseName: "Apple Calendar", defaultColor: .gray)
+        let sourcePrefix = "Apple Calendar"
+        var somethingChanged = false
 
+        // Get IDs of all fetched events for efficient lookup
+        let fetchedEventIDs = Set(fetchedEKvents.map { $0.eventIdentifier })
+
+        // 1. Handle Deletions: Remove local events that were deleted in the external calendar
+        let deletedEventsCount = events.filter {
+            $0.sourceName?.hasPrefix(sourcePrefix) == true && !fetchedEventIDs.contains($0.externalIdentifier ?? "")
+        }.count
+        
+        if deletedEventsCount > 0 {
+            events.removeAll { event in
+                let wasDeleted = event.sourceName?.hasPrefix(sourcePrefix) == true && !fetchedEventIDs.contains(event.externalIdentifier ?? "")
+                if wasDeleted {
+                    print("Event '\(event.title)' was deleted from Apple Calendar. Removing from app.")
+                    notificationManager.removeAllEventNotifications(for: event)
+                }
+                return wasDeleted
+            }
+            somethingChanged = true
+        }
+
+        // 2. Handle Additions and Updates
         for ekEvent in fetchedEKvents {
-            // Avoid adding duplicates if event already exists (check by externalIdentifier)
-            if !events.contains(where: { $0.externalIdentifier == ekEvent.eventIdentifier }) {
-                guard let startDate = ekEvent.startDate else { continue } // EKEvent must have a start date
-                
+            guard let startDate = ekEvent.startDate else { continue }
+            
+            // Check if this event was originally created in our app and exported
+            let existingAppEvent = events.first { $0.appleCalendarIdentifier == ekEvent.eventIdentifier }
+            if let appEvent = existingAppEvent, appEvent.sourceName == nil {
+                // This is an event we exported from our app, don't import it back
+                print("Skipping event '\(ekEvent.title ?? "")' as it was originally created in our app and exported to Apple Calendar.")
+                continue
+            }
+            
+            if let existingEventIndex = events.firstIndex(where: { $0.externalIdentifier == ekEvent.eventIdentifier }) {
+                // Update existing event if something changed
+                var eventToUpdate = events[existingEventIndex]
+                if eventToUpdate.title != ekEvent.title || eventToUpdate.date != startDate {
+                    print("Event '\(eventToUpdate.title)' was updated in Apple Calendar. Syncing changes.")
+                    eventToUpdate.title = ekEvent.title
+                    eventToUpdate.date = startDate
+                    events[existingEventIndex] = eventToUpdate
+                    somethingChanged = true
+                }
+            } else {
+                // Add as new event
+                print("New event '\(ekEvent.title ?? "")' found in Apple Calendar. Adding to app.")
                 let newEvent = Event(
                     date: startDate,
                     title: ekEvent.title ?? "Untitled Calendar Event",
                     categoryId: importedCategory.id,
-                    reminderTime: .none, 
-                    isCompleted: false, 
+                    isCompleted: ekEvent.isAllDay, // Or some other logic for completion
                     externalIdentifier: ekEvent.eventIdentifier,
-                    sourceName: "Apple Calendar: \(ekEvent.calendar.title)"
+                    sourceName: "\(sourcePrefix): \(ekEvent.calendar.title)"
                 )
                 self.events.append(newEvent)
-                print("Added calendar event to app: \(newEvent.title)")
+                somethingChanged = true
             }
         }
-        saveData() // Save after processing all
+
+        if somethingChanged {
+            print("Apple Calendar sync finished. Changes were made.")
+            saveData()
+        } else {
+            print("Apple Calendar sync finished. No changes detected.")
+        }
     }
 
     @MainActor
@@ -833,116 +1017,200 @@ class EventViewModel: ObservableObject {
             return
         }
         
-        print("Processing \(fetchedReminders.count) fetched Apple Reminders...")
-        let importedCategory = getOrCreateImportedCategory(sourceBaseName: "Apple Reminders", defaultColor: .blue) 
-        let calendar = Calendar.current
+        print("Processing \(fetchedReminders.count) fetched Apple Reminders for sync...")
+        let importedCategory = getOrCreateImportedCategory(sourceBaseName: "Apple Reminders", defaultColor: .blue)
+        let sourcePrefix = "Apple Reminders"
+        var somethingChanged = false
 
+        // Get IDs of all fetched reminders
+        let fetchedReminderIDs = Set(fetchedReminders.map { $0.calendarItemIdentifier })
+
+        // 1. Handle Deletions
+        let deletedRemindersCount = events.filter {
+            $0.sourceName?.hasPrefix(sourcePrefix) == true && !fetchedReminderIDs.contains($0.externalIdentifier ?? "")
+        }.count
+
+        if deletedRemindersCount > 0 {
+            events.removeAll { event in
+                let wasDeleted = event.sourceName?.hasPrefix(sourcePrefix) == true && !fetchedReminderIDs.contains(event.externalIdentifier ?? "")
+                if wasDeleted {
+                    print("Reminder '\(event.title)' was deleted from Apple Reminders. Removing from app.")
+                    notificationManager.removeAllEventNotifications(for: event)
+                }
+                return wasDeleted
+            }
+            somethingChanged = true
+        }
+        
+        // 2. Handle Additions and Updates
         for ekReminder in fetchedReminders {
-            if !events.contains(where: { $0.externalIdentifier == ekReminder.calendarItemIdentifier }) {
-                guard let dueDate = ekReminder.dueDateComponents?.date else { continue } 
-
+            guard let dueDate = ekReminder.dueDateComponents?.date else { continue }
+            
+            // Check if this reminder was originally created in our app and exported
+            // Note: Apple Reminders don't have the same export mechanism as Calendar events
+            // but we'll keep this logic for consistency
+            let existingAppEvent = events.first { $0.appleCalendarIdentifier == ekReminder.calendarItemIdentifier }
+            if let appEvent = existingAppEvent, appEvent.sourceName == nil {
+                print("Skipping reminder '\(ekReminder.title ?? "")' as it was originally created in our app.")
+                continue
+            }
+            
+            if let existingEventIndex = events.firstIndex(where: { $0.externalIdentifier == ekReminder.calendarItemIdentifier }) {
+                // Update existing event if needed
+                var eventToUpdate = events[existingEventIndex]
+                if eventToUpdate.title != ekReminder.title || eventToUpdate.date != dueDate || eventToUpdate.isCompleted != ekReminder.isCompleted {
+                    print("Reminder '\(eventToUpdate.title)' was updated in Apple Reminders. Syncing changes.")
+                    eventToUpdate.title = ekReminder.title ?? "Untitled Reminder"
+                    eventToUpdate.date = dueDate
+                    eventToUpdate.isCompleted = ekReminder.isCompleted
+                    events[existingEventIndex] = eventToUpdate
+                    somethingChanged = true
+                }
+            } else {
+                // Add as new event
+                print("New reminder '\(ekReminder.title ?? "")' found in Apple Reminders. Adding to app.")
                 let newEvent = Event(
                     date: dueDate,
                     title: ekReminder.title ?? "Untitled Reminder",
                     categoryId: importedCategory.id,
-                    reminderTime: .none, 
                     isCompleted: ekReminder.isCompleted,
                     externalIdentifier: ekReminder.calendarItemIdentifier,
-                    sourceName: "Apple Reminders: \(ekReminder.calendar.title)"
+                    sourceName: "\(sourcePrefix): \(ekReminder.calendar.title)"
                 )
                 self.events.append(newEvent)
-                print("Added reminder to app: \(newEvent.title)")
+                somethingChanged = true
             }
         }
-        saveData() // Save after processing all
+        
+        if somethingChanged {
+            print("Apple Reminders sync finished. Changes were made.")
+            saveData()
+        } else {
+            print("Apple Reminders sync finished. No changes detected.")
+        }
     }
 
     @MainActor
     private func processFetchedGoogleCalendarEvents() async {
         guard let googleEvents = calendarSyncManager?.googleCalendarEvents,
-              UserDefaults.standard.bool(forKey: "googleCalendarIntegrationEnabled") else { 
+              UserDefaults.standard.bool(forKey: "googleCalendarIntegrationEnabled") else {
             print("Google Calendar integration disabled or no events fetched.")
             return
         }
 
-        print("EventViewModel: Processing \(googleEvents.count) fetched Google Calendar events...")
-        let googleCategory = getOrCreateImportedCategory(sourceBaseName: "Google Calendar", defaultColor: Color(red: 66/255, green: 133/255, blue: 244/255)) 
+        print("EventViewModel: Processing \(googleEvents.count) fetched Google Calendar events for sync...")
+        let googleCategory = getOrCreateImportedCategory(sourceBaseName: "Google Calendar", defaultColor: .blue)
+        let sourcePrefix = "Google Calendar"
+        var somethingChanged = false
 
-        var newEventsAdded = 0
-        var eventsUpdated = 0
+        // Get IDs of non-cancelled Google events
+        let fetchedEventIDs = Set(googleEvents.filter { $0.status != "cancelled" }.compactMap { $0.identifier })
+        
+        // 1. Handle Deletions: Remove local events that no longer appear in the fetched list or are cancelled
+        let eventsToDelete = events.filter { event in
+            guard event.sourceName?.hasPrefix(sourcePrefix) == true, let externalId = event.externalIdentifier else {
+                return false
+            }
+            // Delete if not in the fetched list
+            return !fetchedEventIDs.contains(externalId)
+        }
+        
+        if !eventsToDelete.isEmpty {
+            for event in eventsToDelete {
+                 print("Event '\(event.title)' was deleted from Google Calendar. Removing from app.")
+                 notificationManager.removeAllEventNotifications(for: event)
+            }
+            events.removeAll { event in
+                eventsToDelete.contains { $0.id == event.id }
+            }
+            somethingChanged = true
+        }
 
+        // 2. Handle Additions and Updates
         for gEvent in googleEvents {
-            guard let eventId = gEvent.identifier, !eventId.isEmpty else {
-                print("Skipping Google event with missing ID.")
+            guard let eventId = gEvent.identifier, !eventId.isEmpty else { continue }
+            
+            // Skip cancelled events explicitly
+            if gEvent.status == "cancelled" {
+                if let existingEventIndex = events.firstIndex(where: { $0.externalIdentifier == eventId }) {
+                    print("Event '\(events[existingEventIndex].title)' was cancelled in Google Calendar. Removing.")
+                    notificationManager.removeAllEventNotifications(for: events[existingEventIndex])
+                    events.remove(at: existingEventIndex)
+                    somethingChanged = true
+                }
                 continue
             }
             
-            let sourceName = "Google Calendar: \(calendarSyncManager?.googleCalendars.first(where: { $0.identifier == gEvent.organizer?.identifier })?.summary ?? gEvent.organizer?.displayName ?? "Default")"
+            // Check if this event was originally created in our app and exported to Google Calendar.
+            // Two checks are needed to handle the potential race condition of exporting an event but
+            // not yet having the Google Calendar ID saved locally:
+            let appCreatedEventWithSameId = events.first {
+                $0.sourceName == nil && $0.googleCalendarIdentifier == eventId
+            }
             
+            if appCreatedEventWithSameId != nil {
+                print("CIRCULAR IMPORT PREVENTED (by ID): Skipping event '\(gEvent.summary ?? "")' as it was originally created in our app and exported to Google Calendar.")
+                continue
+            }
+            
+            // Additional check: look for app events with same title and date (within 1 hour)
             var eventDate: Date?
             if let startDateTime = gEvent.start?.dateTime?.date {
                 eventDate = startDateTime
             } else if let startDate = gEvent.start?.date?.date { // All-day event
                 eventDate = startDate
             }
-
-            guard let date = eventDate, let title = gEvent.summary, !title.isEmpty else {
-                print("Skipping Google event with missing date or title: \(gEvent.summary ?? "No Title")")
+            
+            var appCreatedEventWithSameTitleAndDate: Event?
+            if let date = eventDate, let title = gEvent.summary, !title.isEmpty {
+                appCreatedEventWithSameTitleAndDate = events.first { appEvent in
+                    appEvent.sourceName == nil &&
+                    appEvent.title == title &&
+                    abs(appEvent.date.timeIntervalSince(date)) < 3600 // Within 1 hour
+                }
+            }
+            
+            if appCreatedEventWithSameId != nil || appCreatedEventWithSameTitleAndDate != nil {
+                // This is an event we exported from our app, don't import it back
+                print("CIRCULAR IMPORT PREVENTED: Skipping event '\(gEvent.summary ?? "")' as it was originally created in our app and exported to Google Calendar.")
                 continue
             }
 
-            // Check if event already exists (imported from Google Calendar)
-            if let existingEventIndex = events.firstIndex(where: { $0.externalIdentifier == eventId && $0.sourceName?.hasPrefix("Google Calendar") == true }) {
+            guard let date = eventDate, let title = gEvent.summary, !title.isEmpty else { continue }
+            
+            if let existingEventIndex = events.firstIndex(where: { $0.externalIdentifier == eventId }) {
                 // Update existing event
                 var updatedEvent = events[existingEventIndex]
-                updatedEvent.title = title
-                updatedEvent.date = date
-                updatedEvent.categoryId = googleCategory.id // Ensure category is correct
-                // Update other fields as necessary, e.g., completion status if available
-                // GTLRCalendar_Event status: "confirmed", "tentative", "cancelled"
-                if gEvent.status == "cancelled" {
-                    // Decide how to handle cancelled events (e.g., delete them or mark them differently)
-                    print("Google event \(title) was cancelled. Deleting from app.")
-                    deleteEvent(updatedEvent) // Assuming deleteEvent handles notifications etc.
-                    continue
-                }
-                
-                // For simplicity, we are not mapping all GTLRCalendar_Event fields here.
-                // Add more mappings if needed (e.g., description, location).
-                
-                if events[existingEventIndex].title != updatedEvent.title || events[existingEventIndex].date != updatedEvent.date {
-                    updateEvent(updatedEvent)
-                    eventsUpdated += 1
+                if updatedEvent.title != title || updatedEvent.date != date {
+                    print("Event '\(updatedEvent.title)' was updated in Google Calendar. Syncing changes.")
+                    updatedEvent.title = title
+                    updatedEvent.date = date
+                    updatedEvent.categoryId = googleCategory.id
+                    events[existingEventIndex] = updatedEvent
+                    somethingChanged = true
                 }
             } else {
                 // Add as new event
-                // For now, all Google events become `Event` type in our app.
-                // Handling of recurring events to `ScheduleItem` can be added later.
-                if gEvent.status == "cancelled" {
-                     print("Google event \(title) is cancelled. Skipping add.")
-                     continue
-                }
-
+                 print("New event '\(title)' found in Google Calendar. Adding to app.")
+                let sourceName = "\(sourcePrefix): \(calendarSyncManager?.googleCalendars.first(where: { $0.identifier == gEvent.organizer?.identifier })?.summary ?? gEvent.organizer?.displayName ?? "Default")"
                 let newAppEvent = Event(
                     date: date,
                     title: title,
                     categoryId: googleCategory.id,
-                    reminderTime: .none, // Google Calendar reminders are separate; decide if/how to map them
-                    isCompleted: false, // Or map from gEvent.status if applicable
                     externalIdentifier: eventId,
                     sourceName: sourceName
                 )
-                addEvent(newAppEvent)
-                newEventsAdded += 1
+                self.events.append(newAppEvent)
+                somethingChanged = true
             }
         }
 
-        if newEventsAdded > 0 || eventsUpdated > 0 {
-            print("Google Calendar Sync: \(newEventsAdded) new events added, \(eventsUpdated) events updated.")
+        if somethingChanged {
+            print("Google Calendar Sync: Finished with changes.")
             saveData() // Ensure data is saved after processing
             NotificationCenter.default.post(name: .liveDataRefreshed, object: nil) // Notify UI to refresh
         } else {
-            print("Google Calendar Sync: No new events or updates.")
+            print("Google Calendar Sync: Finished. No new events or updates.")
         }
     }
 }
@@ -1118,7 +1386,7 @@ struct EventPreviewCard: View {
                     Text(event.category(from: viewModel.categories).name)
                         .font(.caption.weight(.medium))
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
+                        .padding(.vertical, 4)
                         .background(event.category(from: viewModel.categories).color.opacity(0.2))
                         .foregroundColor(event.category(from: viewModel.categories).color)
                         .cornerRadius(8)
@@ -1264,10 +1532,6 @@ struct EventsListView: View {
                 } header: {
                     HStack {
                         Text("Categories")
-                        Spacer()
-                        Text("\(viewModel.categories.count)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
                     }
                 }
             }
@@ -1459,7 +1723,7 @@ struct EnhancedEventRow: View {
                     Text(event.category(from: viewModel.categories).name)
                         .font(.caption.weight(.medium))
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
+                        .padding(.vertical, 4)
                         .background(event.category(from: viewModel.categories).color.opacity(0.2))
                         .foregroundColor(event.category(from: viewModel.categories).color)
                         .cornerRadius(8)
@@ -1732,6 +1996,18 @@ struct AddEventView: View {
     @State private var selectedCategory: Category?
     @State private var reminderTime: ReminderTime = .none
     @State private var showingReminderPicker = false
+    @State private var syncToAppleCalendar = false
+    @State private var syncToGoogleCalendar = false
+    @State private var showingUnsavedChangesAlert = false
+
+    var hasUnsavedChanges: Bool {
+        !title.isEmpty ||
+        date != Date() ||
+        selectedCategory != nil ||
+        reminderTime != .none ||
+        syncToAppleCalendar ||
+        syncToGoogleCalendar
+    }
 
     var body: some View {
         NavigationView {
@@ -1807,6 +2083,13 @@ struct AddEventView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                
+                Section {
+                    Toggle("Sync to Apple Calendar", isOn: $syncToAppleCalendar)
+                        .tint(themeManager.currentTheme.primaryColor)
+                    Toggle("Sync to Google Calendar", isOn: $syncToGoogleCalendar)
+                        .tint(themeManager.currentTheme.primaryColor)
+                }
             }
             .navigationTitle("Add Reminder")
             .navigationBarTitleDisplayMode(.inline)
@@ -1817,7 +2100,7 @@ struct AddEventView: View {
                             print("No category selected")
                             return
                         }
-                        let newEvent = Event(date: date, title: title.isEmpty ? "Untitled Reminder" : title, categoryId: category.id, reminderTime: reminderTime, isCompleted: false)
+                        let newEvent = Event(date: date, title: title.isEmpty ? "Untitled Reminder" : title, categoryId: category.id, reminderTime: reminderTime, isCompleted: false, syncToAppleCalendar: syncToAppleCalendar, syncToGoogleCalendar: syncToGoogleCalendar)
                         viewModel.addEvent(newEvent)
                         isPresented = false
                     }
@@ -1825,9 +2108,24 @@ struct AddEventView: View {
                     .foregroundColor((title.isEmpty || selectedCategory == nil) ? .secondary : themeManager.currentTheme.primaryColor)
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isPresented = false }
+                    Button("Cancel") {
+                        if hasUnsavedChanges {
+                            showingUnsavedChangesAlert = true
+                        } else {
+                            isPresented = false
+                        }
+                    }
                         .foregroundColor(.secondary)
                 }
+            }
+            .interactiveDismissDisabled(hasUnsavedChanges)
+            .alert("Unsaved Changes", isPresented: $showingUnsavedChangesAlert) {
+                Button("Discard Changes", role: .destructive) {
+                    isPresented = false
+                }
+                Button("Keep Editing", role: .cancel) { }
+            } message: {
+                Text("You have unsaved changes. Are you sure you want to discard them?")
             }
             .sheet(isPresented: $showingReminderPicker) {
                 CustomReminderPickerView(selectedReminder: $reminderTime)
@@ -1882,7 +2180,9 @@ struct AddCategoryView: View {
                     .foregroundColor(name.isEmpty ? .secondary : themeManager.currentTheme.primaryColor)
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isPresented = false }
+                    Button("Cancel") {
+                        isPresented = false
+                    }
                         .foregroundColor(.secondary)
                 }
             }
@@ -1897,7 +2197,25 @@ struct EventEditView: View {
     @State var event: Event
     @Environment(\.dismiss) var dismiss
     @State private var showingReminderPicker = false
+    @State private var showingUnsavedChangesAlert = false
+    @State private var originalEvent: Event
     var isNew: Bool
+
+    init(event: Event, isNew: Bool) {
+        self.isNew = isNew
+        self._event = State(initialValue: event)
+        self._originalEvent = State(initialValue: event)
+    }
+
+    var hasUnsavedChanges: Bool {
+        event.title != originalEvent.title ||
+        event.date != originalEvent.date ||
+        event.categoryId != originalEvent.categoryId ||
+        event.reminderTime != originalEvent.reminderTime ||
+        event.isCompleted != originalEvent.isCompleted ||
+        event.syncToAppleCalendar != originalEvent.syncToAppleCalendar ||
+        event.syncToGoogleCalendar != originalEvent.syncToGoogleCalendar
+    }
 
     var body: some View {
         Form {
@@ -1974,6 +2292,20 @@ struct EventEditView: View {
                 }
             }
 
+            // Show calendar sync options for events that are NOT imported from external sources
+            if shouldShowCalendarSyncOptions() {
+                Section(header: Text("Calendar Sync")) {
+                    if shouldShowAppleCalendarSync() {
+                        Toggle("Sync to Apple Calendar", isOn: $event.syncToAppleCalendar)
+                            .tint(themeManager.currentTheme.primaryColor)
+                    }
+                    if shouldShowGoogleCalendarSync() {
+                        Toggle("Sync to Google Calendar", isOn: $event.syncToGoogleCalendar)
+                            .tint(themeManager.currentTheme.primaryColor)
+                    }
+                }
+            }
+            
             if !isNew {
                 Section {
                     Button(role: .destructive) {
@@ -2006,16 +2338,56 @@ struct EventEditView: View {
                 .disabled(event.title.isEmpty)
                 .foregroundColor(event.title.isEmpty ? .secondary : themeManager.currentTheme.primaryColor)
             }
-            if isNew {
+             if isNew {
                  ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        if hasUnsavedChanges {
+                            showingUnsavedChangesAlert = true
+                        } else {
+                            dismiss()
+                        }
+                    }
                         .foregroundColor(.secondary)
                  }
             }
         }
+        .interactiveDismissDisabled(hasUnsavedChanges)
+        .onDisappear {
+            if hasUnsavedChanges && !isNew {
+                // This handles the case where user navigates back without saving
+                print("User left edit view with unsaved changes")
+            }
+        }
+        .alert("Unsaved Changes", isPresented: $showingUnsavedChangesAlert) {
+            Button("Discard Changes", role: .destructive) {
+                dismiss()
+            }
+            Button("Keep Editing", role: .cancel) { }
+        } message: {
+            Text("You have unsaved changes. Are you sure you want to discard them?")
+        }
         .sheet(isPresented: $showingReminderPicker) {
             CustomReminderPickerView(selectedReminder: $event.reminderTime)
         }
+    }
+    
+    private func shouldShowCalendarSyncOptions() -> Bool {
+        // Show sync options for events that are NOT imported from external sources
+        let eventCategory = event.category(from: viewModel.categories)
+        let importCategoryNames = ["GC Imports", "AC Imports", "AR Imports", "Imported"]
+        return !importCategoryNames.contains(eventCategory.name)
+    }
+    
+    private func shouldShowAppleCalendarSync() -> Bool {
+        // Don't show Apple Calendar sync for events imported from Apple Calendar or Apple Reminders
+        let eventCategory = event.category(from: viewModel.categories)
+        return !["AC Imports", "AR Imports"].contains(eventCategory.name)
+    }
+    
+    private func shouldShowGoogleCalendarSync() -> Bool {
+        // Don't show Google Calendar sync for events imported from Google Calendar
+        let eventCategory = event.category(from: viewModel.categories)
+        return eventCategory.name != "GC Imports"
     }
 }
 
@@ -2025,7 +2397,20 @@ struct CategoryEditView: View {
     @EnvironmentObject var themeManager: ThemeManager
     @Binding var category: Category
     @Environment(\.dismiss) var dismiss
+    @State private var originalCategory: Category
+    @State private var showingUnsavedChangesAlert = false
     var isNew: Bool
+
+    init(category: Binding<Category>, isNew: Bool) {
+        self.isNew = isNew
+        self._category = category
+        self._originalCategory = State(initialValue: category.wrappedValue)
+    }
+
+    var hasUnsavedChanges: Bool {
+        category.name != originalCategory.name ||
+        category.color != originalCategory.color
+    }
 
     var body: some View {
         Form {
@@ -2085,10 +2470,25 @@ struct CategoryEditView: View {
             }
              if isNew {
                  ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        if hasUnsavedChanges {
+                            showingUnsavedChangesAlert = true
+                        } else {
+                            dismiss()
+                        }
+                    }
                         .foregroundColor(.secondary)
                  }
             }
+        }
+        .interactiveDismissDisabled(hasUnsavedChanges)
+        .alert("Unsaved Changes", isPresented: $showingUnsavedChangesAlert) {
+            Button("Discard Changes", role: .destructive) {
+                dismiss()
+            }
+            Button("Keep Editing", role: .cancel) { }
+        } message: {
+            Text("You have unsaved changes. Are you sure you want to discard them?")
         }
     }
 }

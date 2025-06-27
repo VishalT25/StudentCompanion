@@ -401,10 +401,70 @@ class CalendarSyncManager: ObservableObject {
         print("Cleared cached Apple Reminders data in CalendarSyncManager.")
     }
 
+    func createAppleCalendarEvent(from event: Event) async -> String? {
+        guard isCalendarAccessGranted else {
+            print("Cannot create Apple Calendar event, access not granted.")
+            return nil
+        }
+        
+        let newEKEvent = EKEvent(eventStore: eventStore)
+        newEKEvent.title = event.title
+        newEKEvent.startDate = event.date
+        newEKEvent.endDate = event.date.addingTimeInterval(3600) // Default 1-hour duration
+        newEKEvent.calendar = eventStore.defaultCalendarForNewEvents
+        
+        do {
+            try eventStore.save(newEKEvent, span: .thisEvent, commit: true)
+            print("Successfully created Apple Calendar event with identifier: \(newEKEvent.eventIdentifier ?? "N/A")")
+            return newEKEvent.eventIdentifier
+        } catch {
+            print("Error creating Apple Calendar event: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    func updateAppleCalendarEvent(from event: Event) async -> Bool {
+        guard isCalendarAccessGranted, let eventIdentifier = event.appleCalendarIdentifier,
+              let ekEvent = eventStore.event(withIdentifier: eventIdentifier) else {
+            print("Cannot update Apple Calendar event, access denied or event not found.")
+            return false
+        }
+        
+        ekEvent.title = event.title
+        ekEvent.startDate = event.date
+        ekEvent.endDate = event.date.addingTimeInterval(3600) // Assuming 1-hour duration
+        
+        do {
+            try eventStore.save(ekEvent, span: .thisEvent, commit: true)
+            print("Successfully updated Apple Calendar event with identifier: \(ekEvent.eventIdentifier ?? "N/A")")
+            return true
+        } catch {
+            print("Error updating Apple Calendar event: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    func deleteAppleCalendarEvent(withIdentifier identifier: String) async -> Bool {
+        guard isCalendarAccessGranted, let ekEvent = eventStore.event(withIdentifier: identifier) else {
+            print("Cannot delete Apple Calendar event, access denied or event not found.")
+            return false
+        }
+        
+        do {
+            try eventStore.remove(ekEvent, span: .thisEvent, commit: true)
+            print("Successfully deleted Apple Calendar event with identifier: \(identifier)")
+            return true
+        } catch {
+            print("Error deleting Apple Calendar event: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     func createGoogleCalendarEvent(event: GTLRCalendar_Event, calendarId: String = "primary") async throws -> GTLRCalendar_Event? {
         guard isGoogleCalendarAccessGranted, googleCalendarService.authorizer != nil else {
             throw NSError(domain: "CalendarSyncManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not signed into Google or no authorizer."])
         }
+        
         let query = GTLRCalendarQuery_EventsInsert.query(withObject: event, calendarId: calendarId)
         print("Creating Google Calendar event: \(event.summary ?? "Untitled") on calendar: \(calendarId)")
         do {
@@ -416,7 +476,7 @@ class CalendarSyncManager: ObservableObject {
                     } else if let evt = object as? GTLRCalendar_Event {
                         continuation.resume(returning: evt)
                     } else {
-                        print("CalendarSyncManager.createGoogleCalendarEvent: Unexpected response type or nil. Expected GTLRCalendar_Event, got \(type(of: object ?? "nil")).")
+                        print("CalendarSyncManager.createGoogleCalendarEvent: Unexpected response object type or nil. Expected GTLRCalendar_Event, got \(type(of: object ?? "nil")).")
                         continuation.resume(throwing: NSError(domain: "CalendarSyncManagerError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unexpected response type for create event."]))
                     }
                 }
@@ -484,6 +544,73 @@ class CalendarSyncManager: ObservableObject {
         } catch {
             print("Error deleting Google Calendar event: \(error.localizedDescription)")
             throw error
+        }
+    }
+
+    func createGoogleCalendarEvent(from event: Event, calendarId: String = "primary") async -> String? {
+        let googleEvent = GTLRCalendar_Event()
+        googleEvent.summary = event.title
+        let startDateTime = GTLRDateTime(date: event.date)
+        let endDateTime = GTLRDateTime(date: event.date.addingTimeInterval(3600)) // 1 hr duration
+        googleEvent.start = GTLRCalendar_EventDateTime()
+        googleEvent.start?.dateTime = startDateTime
+        googleEvent.end = GTLRCalendar_EventDateTime()
+        googleEvent.end?.dateTime = endDateTime
+
+        do {
+            let createdEvent = try await createGoogleCalendarEvent(event: googleEvent, calendarId: calendarId)
+            return createdEvent?.identifier
+        } catch {
+            print("Failed to create Google Calendar event from App Event: \(error)")
+            return nil
+        }
+    }
+
+    @discardableResult
+    func updateGoogleCalendarEvent(from event: Event,
+                                   calendarId: String = "primary") async -> Bool {
+
+        guard let eventId = event.googleCalendarIdentifier else {
+            print("Cannot update Google event without an identifier.")
+            return false
+        }
+
+        let gEvent           = GTLRCalendar_Event()
+        gEvent.identifier    = eventId
+        gEvent.summary       = event.title
+        gEvent.start         = GTLRCalendar_EventDateTime()
+        gEvent.start?.dateTime = GTLRDateTime(date: event.date)
+        gEvent.end           = GTLRCalendar_EventDateTime()
+        gEvent.end?.dateTime   = GTLRDateTime(date: event.date.addingTimeInterval(3600))
+
+        do {
+            // ── Google call ───────────────────────────────────────────────────────────
+            let result = try await updateGoogleCalendarEvent(event: gEvent,
+                                                             calendarId: calendarId)
+            // `result` is GTLRCalendar_Event
+            if let updated = result as? GTLRCalendar_Event,
+               let updatedId = updated.identifier {
+                EventStore.setGoogleId(updatedId, forLocalId: event.id, in: EventViewModel())
+            }
+            return true
+        } catch {
+            print("Failed to update Google Calendar event: \(error)")
+            return false
+        }
+    }
+
+
+    func deleteGoogleCalendarEvent(from event: Event, calendarId: String = "primary") async -> Bool {
+        guard let eventId = event.googleCalendarIdentifier else {
+            print("Cannot delete Google event without an identifier.")
+            return false
+        }
+        do {
+            try await deleteGoogleCalendarEvent(eventId: eventId, calendarId: calendarId)
+            return true
+        } catch {
+            print("Failed to delete Google Calendar event from App Event: \(error)")
+            return false
         }
     }
 }
