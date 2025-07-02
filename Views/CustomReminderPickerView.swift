@@ -34,7 +34,7 @@ struct CustomReminderPickerView: View {
                         .foregroundColor(.primary)
                     
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
-                        ForEach(ReminderTime.commonPresets, id: \.id) { preset in
+                        ForEach(commonPresets, id: \.id) { preset in
                             Button(action: {
                                 selectedReminder = preset
                                 useCustom = false
@@ -92,11 +92,17 @@ struct CustomReminderPickerView: View {
                             
                             // Preview of custom time
                             if let value = Int(customValue), value > 0 {
-                                let customReminder = createCustomReminder(value: value, unit: selectedUnit)
-                                Text("Preview: \(customReminder.displayName)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .padding(.horizontal)
+                                if let customReminder = createCustomReminder(value: value, unit: selectedUnit) {
+                                    Text("Preview: \(customReminder.displayName)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .padding(.horizontal)
+                                } else {
+                                    Text("Invalid time value")
+                                        .font(.caption)
+                                        .foregroundColor(.red)
+                                        .padding(.horizontal)
+                                }
                             }
                         }
                         .padding()
@@ -135,23 +141,43 @@ struct CustomReminderPickerView: View {
         }
     }
     
-    private func createCustomReminder(value: Int, unit: TimeUnit) -> ReminderTime {
+    // MARK: - Helper Properties and Methods
+    
+    private var commonPresets: [ReminderTime] {
+        return [
+            .none,
+            .fiveMinutes,
+            .fifteenMinutes,
+            .thirtyMinutes,
+            .oneHour,
+            .oneDay
+        ]
+    }
+    
+    private func createCustomReminder(value: Int, unit: TimeUnit) -> ReminderTime? {
+        let totalMinutes: Int
+        
         switch unit {
         case .minutes:
-            return .minutes(value)
+            totalMinutes = value
         case .hours:
-            return .hours(value)
+            totalMinutes = value * 60
         case .days:
-            return .days(value)
+            totalMinutes = value * 1440
         case .weeks:
-            return .weeks(value)
+            totalMinutes = value * 10080
         }
+        
+        // Use the fromMinutes factory method
+        return ReminderTime.fromMinutes(totalMinutes)
     }
     
     private func applySelection() {
         if useCustom {
             if let value = Int(customValue), value > 0 {
-                selectedReminder = createCustomReminder(value: value, unit: selectedUnit)
+                if let customReminder = createCustomReminder(value: value, unit: selectedUnit) {
+                    selectedReminder = customReminder
+                }
             }
         }
         // If not using custom, selectedReminder is already set by preset buttons
@@ -160,26 +186,31 @@ struct CustomReminderPickerView: View {
     
     private func updateFromCurrentSelection() {
         // Check if current selection matches any preset
-        let matchesPreset = ReminderTime.commonPresets.contains(selectedReminder)
+        let matchesPreset = commonPresets.contains(selectedReminder)
         
         if !matchesPreset && selectedReminder != .none {
             useCustom = true
             
-            switch selectedReminder {
-            case .none:
-                break
-            case .minutes(let m):
-                customValue = String(m)
-                selectedUnit = .minutes
-            case .hours(let h):
-                customValue = String(h)
-                selectedUnit = .hours
-            case .days(let d):
-                customValue = String(d)
-                selectedUnit = .days
-            case .weeks(let w):
-                customValue = String(w)
+            // Extract value from total minutes
+            let totalMinutes = selectedReminder.totalMinutes
+            
+            // Determine the best unit to display
+            if totalMinutes % 10080 == 0 && totalMinutes >= 10080 {
+                // Display in weeks
+                customValue = String(totalMinutes / 10080)
                 selectedUnit = .weeks
+            } else if totalMinutes % 1440 == 0 && totalMinutes >= 1440 {
+                // Display in days
+                customValue = String(totalMinutes / 1440)
+                selectedUnit = .days
+            } else if totalMinutes % 60 == 0 && totalMinutes >= 60 {
+                // Display in hours
+                customValue = String(totalMinutes / 60)
+                selectedUnit = .hours
+            } else {
+                // Display in minutes
+                customValue = String(totalMinutes)
+                selectedUnit = .minutes
             }
         }
     }
@@ -188,6 +219,6 @@ struct CustomReminderPickerView: View {
 // MARK: - Preview
 struct CustomReminderPickerView_Previews: PreviewProvider {
     static var previews: some View {
-        CustomReminderPickerView(selectedReminder: .constant(.minutes(15)))
+        CustomReminderPickerView(selectedReminder: .constant(.fifteenMinutes))
     }
 }

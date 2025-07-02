@@ -1,454 +1,402 @@
+//
+//  NotificationManager.swift
+//  StudentCompanion
+//
+
 import Foundation
 import UserNotifications
 import UIKit
 
-// MARK: - Reminder Time Options
-enum ReminderTime: Codable, Equatable, Identifiable {
-    case none
-    case minutes(Int)
-    case hours(Int)
-    case days(Int)
-    case weeks(Int)
-    
-    var id: String {
-        switch self {
-        case .none:
-            return "none"
-        case .minutes(let m):
-            return "minutes-\(m)"
-        case .hours(let h):
-            return "hours-\(h)"
-        case .days(let d):
-            return "days-\(d)"
-        case .weeks(let w):
-            return "weeks-\(w)"
-        }
-    }
-    
-    var displayName: String {
-        switch self {
-        case .none:
-            return "No reminder"
-        case .minutes(let m):
-            return m == 1 ? "1 minute before" : "\(m) minutes before"
-        case .hours(let h):
-            return h == 1 ? "1 hour before" : "\(h) hours before"
-        case .days(let d):
-            return d == 1 ? "1 day before" : "\(d) days before"
-        case .weeks(let w):
-            return w == 1 ? "1 week before" : "\(w) weeks before"
-        }
-    }
-    
-    var shortDisplayName: String {
-        switch self {
-        case .none:
-            return "None"
-        case .minutes(let m):
-            return "\(m)m"
-        case .hours(let h):
-            return "\(h)h"
-        case .days(let d):
-            return "\(d)d"
-        case .weeks(let w):
-            return "\(w)w"
-        }
-    }
-    
-    var timeInterval: TimeInterval {
-        switch self {
-        case .none:
-            return 0
-        case .minutes(let m):
-            return TimeInterval(m * 60)
-        case .hours(let h):
-            return TimeInterval(h * 3600)
-        case .days(let d):
-            return TimeInterval(d * 86400)
-        case .weeks(let w):
-            return TimeInterval(w * 604800)
-        }
-    }
-    
-    var totalMinutes: Int {
-        switch self {
-        case .none:
-            return 0
-        case .minutes(let m):
-            return m
-        case .hours(let h):
-            return h * 60
-        case .days(let d):
-            return d * 1440
-        case .weeks(let w):
-            return w * 10080
-        }
-    }
-    
-    // Common presets for UI convenience
-    static let commonPresets: [ReminderTime] = [
-        .none,
-        .minutes(1),
-        .minutes(5),
-        .minutes(10),
-        .minutes(15),
-        .minutes(30),
-        .hours(1),
-        .hours(2),
-        .days(1),
-        .days(2),
-        .weeks(1)
-    ]
-    
-    // MARK: - Codable Implementation
-    enum CodingKeys: String, CodingKey {
-        case type, value
-    }
-    
-    enum ReminderType: String, Codable {
-        case none, minutes, hours, days, weeks
-    }
-    
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let type = try container.decode(ReminderType.self, forKey: .type)
-        
-        switch type {
-        case .none:
-            self = .none
-        case .minutes:
-            let value = try container.decode(Int.self, forKey: .value)
-            self = .minutes(value)
-        case .hours:
-            let value = try container.decode(Int.self, forKey: .value)
-            self = .hours(value)
-        case .days:
-            let value = try container.decode(Int.self, forKey: .value)
-            self = .days(value)
-        case .weeks:
-            let value = try container.decode(Int.self, forKey: .value)
-            self = .weeks(value)
-        }
-    }
-    
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        
-        switch self {
-        case .none:
-            try container.encode(ReminderType.none, forKey: .type)
-        case .minutes(let value):
-            try container.encode(ReminderType.minutes, forKey: .type)
-            try container.encode(value, forKey: .value)
-        case .hours(let value):
-            try container.encode(ReminderType.hours, forKey: .type)
-            try container.encode(value, forKey: .value)
-        case .days(let value):
-            try container.encode(ReminderType.days, forKey: .type)
-            try container.encode(value, forKey: .value)
-        case .weeks(let value):
-            try container.encode(ReminderType.weeks, forKey: .type)
-            try container.encode(value, forKey: .value)
-        }
-    }
-    
-    // MARK: - Factory Methods
-    static func fromMinutes(_ minutes: Int) -> ReminderTime {
-        if minutes == 0 {
-            return .none
-        } else if minutes < 60 {
-            return .minutes(minutes)
-        } else if minutes < 1440 && minutes % 60 == 0 {
-            return .hours(minutes / 60)
-        } else if minutes >= 1440 && minutes % 1440 == 0 {
-            let days = minutes / 1440
-            if days >= 7 && days % 7 == 0 {
-                return .weeks(days / 7)
-            } else {
-                return .days(days)
-            }
-        } else {
-            return .minutes(minutes)
-        }
-    }
-    
-    // For backward compatibility with old enum values
-    static func fromLegacyRawValue(_ rawValue: Int) -> ReminderTime {
-        switch rawValue {
-        case 0: return .none
-        case 5: return .minutes(5)
-        case 15: return .minutes(15)
-        case 30: return .minutes(30)
-        case 60: return .hours(1)
-        case 120: return .hours(2)
-        case 1440: return .days(1)
-        case 2880: return .days(2)
-        case 10080: return .weeks(1)
-        default: return .fromMinutes(rawValue)
-        }
-    }
-}
-
-// MARK: - Notification Manager
-class NotificationManager: ObservableObject {
+class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
     
-    @Published var isAuthorized = false
-    @Published var notificationSettings: UNNotificationSettings?
+    @Published var notificationAuthorisation: UNAuthorizationStatus = .denied
+    @Published var isAuthorized: Bool = false
     
-    private let notificationCenter = UNUserNotificationCenter.current()
-    
-    init() {
-        checkAuthorizationStatus()
+    private override init() {
+        super.init()
+        UNUserNotificationCenter.current().delegate = self
+        Task {
+            await requestAuthorization()
+            checkAuthorizationStatus()
+        }
     }
     
-    // MARK: - Authorization
-    func requestAuthorization() async -> Bool {
+    // MARK: - Computed Properties
+    var authorizationStatusText: String {
+        switch notificationAuthorisation {
+        case .authorized:
+            return "Authorized"
+        case .denied:
+            return "Denied"
+        case .notDetermined:
+            return "Not Determined"
+        case .provisional:
+            return "Provisional"
+        case .ephemeral:
+            return "Ephemeral"
+        @unknown default:
+            return "Unknown"
+        }
+    }
+    
+    // MARK: - Authorization Methods
+    func requestAuthorization() async {
+        let center = UNUserNotificationCenter.current()
         do {
-            let granted = try await notificationCenter.requestAuthorization(options: [.alert, .badge, .sound])
+            let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
             await MainActor.run {
+                self.notificationAuthorisation = granted ? .authorized : .denied
                 self.isAuthorized = granted
+                print(granted ? "✅ Notifications enabled" : "❌ Notifications denied")
             }
-            return granted
         } catch {
-            print("Notification authorization error: \(error)")
-            return false
+            await MainActor.run {
+                print("❌ Notification authorization error: \(error)")
+                self.notificationAuthorisation = .denied
+                self.isAuthorized = false
+            }
         }
     }
     
     func checkAuthorizationStatus() {
-        notificationCenter.getNotificationSettings { settings in
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
-                self.notificationSettings = settings
+                self.notificationAuthorisation = settings.authorizationStatus
                 self.isAuthorized = settings.authorizationStatus == .authorized
+                
+                print("🔔 Notification authorization status: \(settings.authorizationStatus.rawValue)")
             }
         }
+    }
+    
+    func openNotificationSettings() {
+        guard let settingsUrl = URL(string: UIApplication.openSettingsURLString) else { return }
+        if UIApplication.shared.canOpenURL(settingsUrl) {
+            UIApplication.shared.open(settingsUrl)
+        }
+    }
+    
+    // MARK: - Pending Notifications
+    func getPendingNotifications() async -> [UNNotificationRequest] {
+        let center = UNUserNotificationCenter.current()
+        return await center.pendingNotificationRequests()
+    }
+    
+    func getPendingNotificationsCount() async -> Int {
+        let requests = await getPendingNotifications()
+        return requests.count
     }
     
     // MARK: - Event Notifications
-    func scheduleEventNotification(for event: Event, reminderTime: ReminderTime, categories: [Category]) {
-        guard reminderTime != .none else { return }
+    func scheduleEventNotification(for event: Event) {
+        guard event.reminderTime != .none else { return }
         
-        let category = event.category(from: categories)
-        let notificationDate = event.date.addingTimeInterval(-reminderTime.timeInterval)
-        
-        // Don't schedule notifications for past dates
-        guard notificationDate > Date() else { return }
-        
+        let center = UNUserNotificationCenter.current()
         let content = UNMutableNotificationContent()
         content.title = "Upcoming Event"
-        content.body = "\(event.title) starts in \(reminderTime.shortDisplayName)"
+        content.body = event.title
         content.sound = .default
-        content.badge = 1
         
-        // Add category-specific emoji
-        let emoji = getEmojiForCategory(category.name)
-        content.title = "\(emoji) \(content.title)"
+        guard let triggerDate = Calendar.current.date(
+            byAdding: .minute,
+            value: -event.reminderTime.totalMinutes,
+            to: event.date
+        ), triggerDate > Date() else {
+            print("❌ Invalid trigger date for event: \(event.title)")
+            return
+        }
         
-        // Create date components for trigger
-        let dateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: notificationDate)
-        let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: false)
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate),
+            repeats: false
+        )
         
-        let identifier = "event-\(event.id.uuidString)-\(reminderTime.totalMinutes)"
-        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        let request = UNNotificationRequest(
+            identifier: "event-\(event.id.uuidString)",
+            content: content,
+            trigger: trigger
+        )
         
-        notificationCenter.add(request) { error in
+        center.add(request) { error in
             if let error = error {
-                print("Error scheduling event notification: \(error)")
+                print("❌ Failed to schedule event notification: \(error)")
             } else {
-                print("Successfully scheduled notification for event: \(event.title)")
+                print("✅ Scheduled notification for \(event.title)")
             }
         }
     }
     
-    func removeEventNotification(for event: Event, reminderTime: ReminderTime) {
-        let identifier = "event-\(event.id.uuidString)-\(reminderTime.totalMinutes)"
-        notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
-    }
-    
-    func removeAllEventNotifications(for event: Event) {
-        let reminderTimeOptions: [ReminderTime] = [
-            .none, .minutes(5), .minutes(15), .minutes(30), .hours(1), .hours(2), 
-            .days(1), .days(2), .weeks(1)
-        ]
-        let identifiers = reminderTimeOptions.map { "event-\(event.id.uuidString)-\($0.totalMinutes)" }
-        notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
-    }
-    
     // MARK: - Schedule Item Notifications
+    func scheduleScheduleItemNotification(for item: ScheduleItem) {
+        guard item.reminderTime != .none else { return }
+        
+        let center = UNUserNotificationCenter.current()
+        let content = UNMutableNotificationContent()
+        content.title = "Upcoming Class"
+        content.body = item.title
+        content.sound = .default
+        
+        guard let triggerDate = Calendar.current.date(
+            byAdding: .minute,
+            value: -item.reminderTime.totalMinutes,
+            to: item.startTime
+        ), triggerDate > Date() else {
+            print("❌ Invalid trigger date for schedule item: \(item.title)")
+            return
+        }
+        
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate),
+            repeats: false
+        )
+        
+        let request = UNNotificationRequest(
+            identifier: "schedule-\(item.id.uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        
+        center.add(request) { error in
+            if let error = error {
+                print("❌ Failed to schedule schedule notification: \(error)")
+            } else {
+                print("✅ Scheduled notification for \(item.title)")
+            }
+        }
+    }
+    
+    // MARK: - Grade Notifications
+    func scheduleGradeNotification(for grade: Grade) {
+        let center = UNUserNotificationCenter.current()
+        let content = UNMutableNotificationContent()
+        content.title = "New Grade Added"
+        content.body = "Grade: \(grade.grade) for \(grade.assignmentName) in \(grade.courseName)"
+        content.sound = .default
+        
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        
+        let request = UNNotificationRequest(
+            identifier: "grade-\(grade.id.uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        
+        center.add(request) { error in
+            if let error = error {
+                print("❌ Failed to schedule grade notification: \(error)")
+            } else {
+                print("✅ Scheduled notification for new grade")
+            }
+        }
+    }
+    
+    // MARK: - Cancel Notifications
+    func cancelNotification(for eventId: UUID) {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: ["event-\(eventId.uuidString)"])
+        print("✅ Cancelled notification for event \(eventId)")
+    }
+    
+    func cancelScheduleNotification(for scheduleId: UUID) {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: ["schedule-\(scheduleId.uuidString)"])
+        print("✅ Cancelled notification for schedule item \(scheduleId)")
+    }
+    
+    func cancelAllNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.removeAllPendingNotificationRequests()
+        print("✅ Cancelled all notifications")
+    }
+    
+    // MARK: - Utility Methods
+    func formatReminderTimeForDisplay(_ reminderTime: ReminderTime) -> String {
+        return reminderTime.displayName
+    }
+    
+    func getReminderOptions() -> [ReminderTime] {
+        return ReminderTime.allCases
+    }
+    
+    func isValidReminderTime(_ reminderTime: ReminderTime?) -> Bool {
+        guard let reminderTime = reminderTime else { return false }
+        return reminderTime != .none
+    }
+    
+    // MARK: - UNUserNotificationCenterDelegate
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                               willPresent notification: UNNotification,
+                               withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.alert, .sound, .badge])
+    }
+    
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                               didReceive response: UNNotificationResponse,
+                               withCompletionHandler completionHandler: @escaping () -> Void) {
+        print("✅ User tapped notification: \(response.notification.request.identifier)")
+        completionHandler()
+    }
+    
+    func scheduleEventNotification(for event: Event, reminderTime: ReminderTime, categories: [Category]) {
+        guard reminderTime != .none else { return }
+        
+        let center = UNUserNotificationCenter.current()
+        let content = UNMutableNotificationContent()
+        content.title = "Upcoming Event"
+        content.body = event.title
+        content.sound = .default
+        
+        // Get category name for better notification content
+        if let category = categories.first(where: { $0.id == event.categoryId }) {
+            content.subtitle = "Category: \(category.name)"
+        }
+        
+        guard let triggerDate = Calendar.current.date(
+            byAdding: .minute,
+            value: -reminderTime.totalMinutes,
+            to: event.date
+        ), triggerDate > Date() else {
+            print("❌ Invalid trigger date for event: \(event.title)")
+            return
+        }
+        
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate),
+            repeats: false
+        )
+        
+        let request = UNNotificationRequest(
+            identifier: "event-\(event.id.uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        
+        center.add(request) { error in
+            if let error = error {
+                print("❌ Failed to schedule event notification: \(error)")
+            } else {
+                print("✅ Scheduled notification for \(event.title)")
+            }
+        }
+    }
+
+    func removeAllEventNotifications(for event: Event) {
+        let center = UNUserNotificationCenter.current()
+        let identifiers = [
+            "event-\(event.id.uuidString)",
+            "reminder-\(event.id.uuidString)" // Alternative identifier format
+        ]
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
+        print("✅ Removed all notifications for event: \(event.title)")
+    }
+
+    // MARK: - Schedule Item Notification Methods
     func scheduleScheduleItemNotifications(for item: ScheduleItem, reminderTime: ReminderTime) {
         guard reminderTime != .none else { return }
         
-        // Remove existing notifications for this item
-        removeAllScheduleItemNotifications(for: item)
-        
+        let center = UNUserNotificationCenter.current()
         let calendar = Calendar.current
-        let today = Date()
+        let now = Date()
         
-        // Schedule notifications for the next 4 weeks
-        for weekOffset in 0..<4 {
+        // Schedule notifications for the next 4 weeks for recurring items
+        for week in 0..<4 {
             for dayOfWeek in item.daysOfWeek {
-                if let notificationDate = getNextOccurrence(of: dayOfWeek, 
-                                                          at: item.startTime, 
-                                                          from: today, 
-                                                          weekOffset: weekOffset) {
-                    
-                    let reminderDate = notificationDate.addingTimeInterval(-reminderTime.timeInterval)
-                    
-                    // Skip if the reminder date is in the past
-                    guard reminderDate > Date() else { continue }
-                    
-                    // Check if this specific instance is skipped using the new method
-                    if item.isSkipped(onDate: notificationDate) { continue }
-                    
-                    let content = UNMutableNotificationContent()
-                    content.title = "📚 Class Starting Soon"
-                    content.body = "\(item.title) starts in \(reminderTime.shortDisplayName)"
-                    content.sound = .default
-                    content.badge = 1
-                    
-                    let dateComponents = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: reminderDate)
-                    let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: false)
-                    
-                    let identifier = "schedule-\(item.id.uuidString)-\(weekOffset)-\(dayOfWeek.rawValue)-\(reminderTime.totalMinutes)"
-                    let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-                    
-                    notificationCenter.add(request) { error in
-                        if let error = error {
-                            print("Error scheduling schedule notification: \(error)")
-                        }
+                guard let baseDate = calendar.date(byAdding: .weekOfYear, value: week, to: now),
+                      let scheduleDate = calendar.nextDate(after: baseDate, matching: DateComponents(weekday: dayOfWeek.rawValue), matchingPolicy: .nextTime) else {
+                    continue
+                }
+                
+                // Create the actual time for this schedule item on this date
+                let scheduleComponents = calendar.dateComponents([.hour, .minute], from: item.startTime)
+                guard let actualDateTime = calendar.date(bySettingHour: scheduleComponents.hour ?? 0,
+                                                       minute: scheduleComponents.minute ?? 0,
+                                                       second: 0,
+                                                       of: scheduleDate) else {
+                    continue
+                }
+                
+                // Skip if this time has already passed
+                guard actualDateTime > now else { continue }
+                
+                // Calculate reminder time
+                guard let reminderDateTime = calendar.date(
+                    byAdding: .minute,
+                    value: -reminderTime.totalMinutes,
+                    to: actualDateTime
+                ), reminderDateTime > now else {
+                    continue
+                }
+                
+                let content = UNMutableNotificationContent()
+                content.title = "Upcoming Class"
+                content.body = item.title
+                content.sound = .default
+                
+                let trigger = UNCalendarNotificationTrigger(
+                    dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: reminderDateTime),
+                    repeats: false
+                )
+                
+                let identifier = "schedule-\(item.id.uuidString)-\(week)-\(dayOfWeek.rawValue)"
+                let request = UNNotificationRequest(
+                    identifier: identifier,
+                    content: content,
+                    trigger: trigger
+                )
+                
+                center.add(request) { error in
+                    if let error = error {
+                        print("❌ Failed to schedule schedule notification: \(error)")
+                    } else {
+                        print("✅ Scheduled notification for \(item.title) on \(scheduleDate)")
                     }
                 }
             }
         }
     }
-    
-    func removeScheduleItemNotification(for item: ScheduleItem, reminderTime: ReminderTime) {
-        // Remove notifications for the next 4 weeks
-        for weekOffset in 0..<4 {
-            for dayOfWeek in item.daysOfWeek {
-                let identifier = "schedule-\(item.id.uuidString)-\(weekOffset)-\(dayOfWeek.rawValue)-\(reminderTime.totalMinutes)"
-                notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
-            }
-        }
-    }
-    
+
     func removeAllScheduleItemNotifications(for item: ScheduleItem) {
-        let reminderTimeOptions: [ReminderTime] = [
-            .none, .minutes(5), .minutes(15), .minutes(30), .hours(1), .hours(2), 
-            .days(1), .days(2), .weeks(1)
-        ]
-        reminderTimeOptions.forEach { reminderTime in
-            removeScheduleItemNotification(for: item, reminderTime: reminderTime)
-        }
-    }
-    
-    // MARK: - Helper Methods
-    private func getNextOccurrence(of dayOfWeek: DayOfWeek, at time: Date, from startDate: Date, weekOffset: Int) -> Date? {
-        let calendar = Calendar.current
+        let center = UNUserNotificationCenter.current()
         
-        // Get the target week
-        guard let targetWeek = calendar.date(byAdding: .weekOfYear, value: weekOffset, to: startDate) else {
-            return nil
-        }
-        
-        // Find the specific day in that week
-        let weekday = dayOfWeek.rawValue
-        let timeComponents = calendar.dateComponents([.hour, .minute], from: time)
-        
-        var components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: targetWeek)
-        components.weekday = weekday
-        components.hour = timeComponents.hour
-        components.minute = timeComponents.minute
-        
-        return calendar.date(from: components)
-    }
-    
-    private func getEmojiForCategory(_ categoryName: String) -> String {
-        let lowercased = categoryName.lowercased()
-        switch lowercased {
-        case let name where name.contains("assignment"):
-            return "📝"
-        case let name where name.contains("exam"):
-            return "📊"
-        case let name where name.contains("lab"):
-            return "🧪"
-        case let name where name.contains("personal"):
-            return "👤"
-        case let name where name.contains("study"):
-            return "📖"
-        case let name where name.contains("meeting"):
-            return "👥"
-        default:
-            return "📅"
-        }
-    }
-    
-    // MARK: - Batch Operations
-    @MainActor
-    func rescheduleAllNotifications(for viewModel: EventViewModel) {
-        // Get all pending notifications to avoid duplicates
-        notificationCenter.removeAllPendingNotificationRequests()
-        
-        // Reschedule event notifications
-        for event in viewModel.events {
-            let reminderTime = getReminderTime(for: event.id, type: .event)
-            if reminderTime != .none {
-                scheduleEventNotification(for: event, reminderTime: reminderTime, categories: viewModel.categories)
+        // Remove notifications for all possible weeks and days
+        var identifiers: [String] = []
+        for week in 0..<4 {
+            for dayOfWeek in DayOfWeek.allCases {
+                identifiers.append("schedule-\(item.id.uuidString)-\(week)-\(dayOfWeek.rawValue)")
             }
         }
         
-        // Reschedule schedule item notifications
-        for item in viewModel.scheduleItems {
-            let reminderTime = getReminderTime(for: item.id, type: .schedule)
-            if reminderTime != .none {
-                scheduleScheduleItemNotifications(for: item, reminderTime: reminderTime)
-            }
-        }
-    }
-    
-    // MARK: - Reminder Preferences Storage
-    enum NotificationType {
-        case event
-        case schedule
-    }
-    
-    func setReminderTime(_ reminderTime: ReminderTime, for id: UUID, type: NotificationType) {
-        let key = "\(type == .event ? "event" : "schedule")-reminder-\(id.uuidString)"
+        // Also remove with the simple identifier format
+        identifiers.append("schedule-\(item.id.uuidString)")
         
-        // Store as total minutes for simplicity
-        UserDefaults.standard.set(reminderTime.totalMinutes, forKey: key)
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
+        print("✅ Removed all notifications for schedule item: \(item.title)")
     }
-    
-    func getReminderTime(for id: UUID, type: NotificationType) -> ReminderTime {
-        let key = "\(type == .event ? "event" : "schedule")-reminder-\(id.uuidString)"
-        let minutes = UserDefaults.standard.integer(forKey: key)
-        
-        // Handle migration from old enum values
-        if UserDefaults.standard.object(forKey: key) == nil {
-            return .none
-        }
-        
-        return ReminderTime.fromMinutes(minutes)
+
+    // MARK: - Alias methods for backward compatibility
+    func scheduleScheduleItemNotification(for item: ScheduleItem, reminderTime: ReminderTime) {
+        scheduleScheduleItemNotifications(for: item, reminderTime: reminderTime)
     }
-    
-    // MARK: - Debug Methods
-    func getPendingNotifications() async -> [UNNotificationRequest] {
-        return await notificationCenter.pendingNotificationRequests()
-    }
-    
-    func printPendingNotifications() {
-        Task {
-            let pending = await getPendingNotifications()
-            print("Pending notifications: \(pending.count)")
-            for notification in pending {
-                print("- \(notification.identifier): \(notification.content.title)")
-            }
-        }
+
+    func removeAllScheduleItemNotification(for item: ScheduleItem) {
+        removeAllScheduleItemNotifications(for: item)
     }
 }
 
-// MARK: - Notification Helper Extensions
-extension NotificationCenter {
-    static let courseDataDidChange = Notification.Name("courseDataDidChange")
+// MARK: - Helper Extensions
+extension NotificationManager {
+    func scheduleMultipleNotifications(for events: [Event]) {
+        for event in events {
+            scheduleEventNotification(for: event)
+        }
+    }
+    
+    func scheduleMultipleScheduleNotifications(for items: [ScheduleItem]) {
+        for item in items {
+            scheduleScheduleItemNotification(for: item)
+        }
+    }
 }

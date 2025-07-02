@@ -4,19 +4,28 @@ struct NaturalLanguageInputView: View {
     @EnvironmentObject var themeManager: ThemeManager
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var eventViewModel: EventViewModel
-
+    
     @State private var inputText: String = ""
     @FocusState private var isTextFieldFocused: Bool
-    private let nlpEngine = NLPEngine()
+    private let smartEngine = SmartInputEngine()
     @State private var existingCourses: [Course] = []
     @State private var showAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
     @State private var selectedSuggestionIndex = 0
-    
+    @State private var isProcessing = false
     @State private var isInFollowUpMode = false
     @State private var followUpContext: ParseContext? = nil
     @State private var conversationHistory: [String] = []
+    @State private var currentIntent = ""
+    @State private var processingAttempts = 0 
+    @State private var conversationContext: [String: String] = [:]
+    @State private var pendingIntent: String = ""
+    @State private var isAwaitingFollowUp: Bool = false
+    
+    @StateObject private var courseSelectionManager = CourseSelectionManager()
+    @State private var pendingCourseSelectionInput = ""
+    @State private var pendingCourseSelectionContext: [String: String] = [:]
     
     private let suggestions = [
         "Lunch on Friday at 12:30",
@@ -32,11 +41,10 @@ struct NaturalLanguageInputView: View {
         ("🗓️", "Schedule", "Add recurring schedule"),
         ("📊", "Grade", "Record a grade")
     ]
-
+    
     var body: some View {
         NavigationView {
             ZStack {
-                // Beautiful gradient background
                 LinearGradient(
                     gradient: Gradient(colors: [
                         themeManager.currentTheme.primaryColor.opacity(0.1),
@@ -50,7 +58,6 @@ struct NaturalLanguageInputView: View {
                 
                 ScrollView {
                     VStack(spacing: 24) {
-                        // Header section with icon and description
                         VStack(spacing: 16) {
                             HStack {
                                 Image(systemName: isInFollowUpMode ? "bubble.left.and.bubble.right" : "brain.head.profile")
@@ -116,9 +123,7 @@ struct NaturalLanguageInputView: View {
                             .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                         
-                        // Main input section
                         VStack(spacing: 20) {
-                            // Text input with beautiful styling
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack {
                                     Image(systemName: "pencil.line")
@@ -144,7 +149,7 @@ struct NaturalLanguageInputView: View {
                                                         .stroke(
                                                             isTextFieldFocused ?
                                                             themeManager.currentTheme.primaryColor :
-                                                            Color.gray.opacity(0.3),
+                                                                Color.gray.opacity(0.3),
                                                             lineWidth: isTextFieldFocused ? 2 : 1
                                                         )
                                                 )
@@ -191,7 +196,6 @@ struct NaturalLanguageInputView: View {
                                 .transition(.opacity.combined(with: .scale))
                             }
                             
-                            // Quick action buttons (only show when not in follow-up mode)
                             if !isInFollowUpMode {
                                 VStack(alignment: .leading, spacing: 16) {
                                     HStack {
@@ -212,8 +216,8 @@ struct NaturalLanguageInputView: View {
                                                 title: action.1,
                                                 subtitle: action.2,
                                                 color: index == 0 ? themeManager.currentTheme.primaryColor :
-                                                       index == 1 ? themeManager.currentTheme.secondaryColor :
-                                                       themeManager.currentTheme.tertiaryColor
+                                                    index == 1 ? themeManager.currentTheme.secondaryColor :
+                                                    themeManager.currentTheme.tertiaryColor
                                             ) {
                                                 fillQuickAction(for: index)
                                             }
@@ -227,7 +231,6 @@ struct NaturalLanguageInputView: View {
                                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                             }
                             
-                            // Example suggestions (only show when not in follow-up mode and input is empty)
                             if inputText.isEmpty && !isInFollowUpMode {
                                 VStack(alignment: .leading, spacing: 16) {
                                     HStack {
@@ -284,6 +287,25 @@ struct NaturalLanguageInputView: View {
                         Spacer(minLength: 100)
                     }
                 }
+                
+                if courseSelectionManager.showPopup {
+                    CourseSelectionPopup(
+                        originalInput: courseSelectionManager.originalInput,
+                        suggestedAlias: courseSelectionManager.suggestedAlias,
+                        availableCourses: courseSelectionManager.availableCourses,
+                        onCourseSelected: { course in
+                            courseSelectionManager.selectCourse(course)
+                            handleCourseSelection(course: course)
+                        },
+                        onDismiss: {
+                            courseSelectionManager.dismissPopup()
+                            resetCourseSelectionState()
+                        }
+                    )
+                    .environmentObject(themeManager)
+                    .transition(.opacity)
+                    .zIndex(1000)
+                }
             }
             .navigationTitle(isInFollowUpMode ? "Follow-up" : "Add Something New")
             .navigationBarTitleDisplayMode(.inline)
@@ -308,12 +330,39 @@ struct NaturalLanguageInputView: View {
                     // Check if this is a grade success alert and dismiss the view
                     if alertTitle == "Grade Added" {
                         dismiss()
+                        resetConversation()
                     }
                 }
             } message: {
                 Text(alertMessage)
             }
             .onAppear {
+                let courseNames = eventViewModel.courses.map { $0.name }
+                smartEngine.updateUserCourses(courseNames)
+                
+                smartEngine.updateUserCoursesWithObjects(eventViewModel.courses)
+                
+                smartEngine.setCourseSelectionCallback { [self] originalInput, suggestedAlias, availableCourses in
+                    DispatchQueue.main.async {
+                        self.pendingCourseSelectionInput = originalInput
+                        self.pendingCourseSelectionContext = self.conversationContext
+                        
+                        courseSelectionManager.requestCourseSelection(
+                            originalInput: originalInput,
+                            suggestedAlias: suggestedAlias,
+                            availableCourses: availableCourses,
+                            onSelection: { course in
+                                handleCourseSelection(course: course)
+                            },
+                            onDismiss: {
+                                resetCourseSelectionState()
+                            }
+                        )
+                    }
+                }
+                
+                print("SmartInputEngine initialized with \(courseNames.count) user courses")
+                
                 isTextFieldFocused = true
                 loadCourses()
                 if !isInFollowUpMode {
@@ -329,6 +378,7 @@ struct NaturalLanguageInputView: View {
         conversationHistory.removeAll()
         inputText = ""
         isTextFieldFocused = true
+        processingAttempts = 0
     }
     
     private func startSuggestionRotation() {
@@ -354,11 +404,11 @@ struct NaturalLanguageInputView: View {
     private func fillQuickAction(for index: Int) {
         withAnimation(.spring()) {
             switch index {
-            case 0: // Event
+            case 0:
                 inputText = "Meeting tomorrow at 2pm"
-            case 1: // Schedule
+            case 1:
                 inputText = "Study session every Tuesday 6pm for 2 hours"
-            case 2: // Grade
+            case 2:
                 inputText = "Got 95% on CS101 midterm"
             default:
                 break
@@ -366,107 +416,200 @@ struct NaturalLanguageInputView: View {
             isTextFieldFocused = true
         }
     }
-
+    
     private func loadCourses() {
         self.existingCourses = CourseStorage.load()
-        print("🔍 NLP Debug - Loaded \(existingCourses.count) courses from CourseStorage")
+        print("NLP Debug - Loaded \(existingCourses.count) courses from CourseStorage")
         for course in existingCourses {
-            print("🔍 NLP Debug - Course: '\(course.name)' with \(course.assignments.count) assignments")
-        }
-    }
-
-    private func processInput() {
-        let result: NLPResult
-        
-        if isInFollowUpMode, let context = followUpContext {
-            result = nlpEngine.parseFollowUp(inputText: inputText, context: context, conversationId: nil, availableCategories: eventViewModel.categories, existingCourses: existingCourses)
-        } else {
-            result = nlpEngine.parse(inputText: inputText,
-                                     availableCategories: eventViewModel.categories,
-                                     existingCourses: existingCourses)
-        }
-        
-        switch result {
-        case .parsedEvent(let title, let date, let categoryName, let reminderTime):
-            handleAddEvent(title: title, date: date, categoryName: categoryName, reminderTime: reminderTime)
-        case .parsedScheduleItem(let title, let days, let startTimeComponents, let endTimeComponents, let duration, let reminderTime, let colorHex):
-            handleAddScheduleItem(title: title, days: days, startTimeComponents: startTimeComponents, endTimeComponents: endTimeComponents, duration: duration, reminderTime: reminderTime, colorHex: colorHex)
-        case .parsedGrade(let courseName, let assignmentName, let grade, let weight):
-            handleAddGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: weight)
-        case .needsMoreInfo(let prompt, _, let context, let conversationId):
-            handleFollowUpQuestion(prompt: prompt, context: context, conversationId: conversationId)
-        case .unrecognized(_):
-            showSimpleAlert(title: "Input Not Understood", message: "Sorry, I couldn't understand that. Please try rephrasing. Examples:\n'Meeting tomorrow at 2pm about project'\n'Math class every Monday 9am'\n'Got 95% on CS101 midterm'")
-        case .notAttempted:
-            dismiss()
+            print("NLP Debug - Course: '\(course.name)' with \(course.assignments.count) assignments")
         }
     }
     
-    private func handleFollowUpQuestion(prompt: String, context: ParseContext?, conversationId: UUID?) {
-        withAnimation(.easeInOut) {
-            conversationHistory.append("You: \(inputText)")
-            conversationHistory.append("Assistant: \(prompt)")
-            isInFollowUpMode = true
-            followUpContext = context
+    private func processInput() {
+        // SAFEGUARD: Prevent infinite processing loops
+        guard processingAttempts < 3 else {
+            print("❌ SAFEGUARD: Too many processing attempts, resetting state")
+            showSimpleAlert(title: "Processing Error", message: "Unable to process input. Please try again.")
+            resetConversation()
+            processingAttempts = 0
+            isProcessing = false
+            return
+        }
+        
+        processingAttempts += 1
+        
+        Task {
+            isProcessing = true
+            var entities = [String: String]()
+            
+            if isInFollowUpMode, let context = followUpContext {
+                // FOLLOW-UP MODE: Combine new input with previous context
+                print("📝 FOLLOW-UP MODE: Processing answer with context")
+                print("📝 Previous context: \(conversationContext)")
+                print("📝 Current input: '\(inputText)'")
+                
+                // Process the follow-up answer
+                let result = await smartEngine.process(inputText)
+                print("📝 Follow-up result: \(result)")
+                
+                // Merge new entities with previous context
+                entities = conversationContext
+                for (key, value) in result.entities {
+                    entities[key] = value
+                    print("📝 Added/Updated entity: \(key) = \(value)")
+                }
+                
+                // Check if we have all required fields now
+                let missingFields = smartEngine.getMissingFields(for: pendingIntent, from: entities)
+                
+                if missingFields.isEmpty {
+                    // All fields complete - create the item
+                    print("📝 All fields complete! Creating item...")
+                    switch pendingIntent {
+                    case "grade_tracking":
+                        handleCompleteGrade(entities: entities)
+                    case "scheduled_event", "event_reminder":
+                        handleCompleteEvent(entities: entities)
+                    default:
+                        showSimpleAlert(title: "Error", message: "Unknown intent: \(pendingIntent)")
+                    }
+                    
+                    // Reset conversation state
+                    resetConversationState()
+                    
+                } else {
+                    // Still missing fields - ask for next one
+                    if let nextMissingField = missingFields.first {
+                        let question = smartEngine.generateFollowUpQuestion(for: nextMissingField, intent: pendingIntent)
+                        let context: ParseContext = pendingIntent == "grade_tracking" ? .grade : .event
+                        handleFollowUpQuestion(prompt: question, context: context, conversationId: nil)
+                    }
+                }
+                
+            } else {
+                // INITIAL MODE: First time processing
+                print("📝 INITIAL MODE: Processing initial input")
+                let result = await smartEngine.process(inputText)
+                currentIntent = result.intent
+                entities = result.entities
+                
+                print("📝 INITIAL MODE: Intent=\(currentIntent), Entities=\(entities)")
+                
+                // CRITICAL: Only proceed if intent is valid
+                guard currentIntent != "unknown" else {
+                    showSimpleAlert(title: "Input Not Understood",
+                                    message: "Try phrases like:\n'Got 95% on CS101 midterm'\n'Math class every Monday 9am'")
+                    inputText = ""
+                    isProcessing = false
+                    return
+                }
+                
+                // Check for missing fields
+                let missingFields = smartEngine.getMissingFields(for: currentIntent, from: entities)
+                print("📝 Missing fields: \(missingFields)")
+                
+                if missingFields.isEmpty {
+                    // CRITICAL: Double-check we actually have all required data before creating
+                    print("📝 No missing fields reported, validating data...")
+                    
+                    switch currentIntent {
+                    case "grade_tracking":
+                        // STRICT validation for grade data
+                        let hasCourse = entities["COURSE_NAME"] != nil
+                        let hasAssignment = entities["ASSIGNMENT"] != nil
+                        let hasScore = entities["SCORE_VALUE"] != nil
+                        
+                        print("📝 Grade validation: course=\(hasCourse), assignment=\(hasAssignment), score=\(hasScore)")
+                        print("📝 Entities: \(entities)")
+                        
+                        if hasCourse && hasAssignment && hasScore {
+                            print("📝 ✅ All grade data validated, creating grade...")
+                            handleCompleteGrade(entities: entities)
+                        } else {
+                            print("📝 ❌ Grade validation failed despite missing fields check")
+                            showSimpleAlert(title: "Input Error", message: "Could not extract all required grade information")
+                        }
+                        
+                    case "scheduled_event", "event_reminder":
+                        handleCompleteEvent(entities: entities)
+                    default:
+                        showSimpleAlert(title: "Input Not Understood",
+                                        message: "Try phrases like:\n'Got 95% on CS101 midterm'\n'Math class every Monday 9am'")
+                    }
+                } else {
+                    // Missing fields - start follow-up conversation
+                    if let missingField = missingFields.first {
+                        print("📝 Starting follow-up for missing field: \(missingField)")
+                        conversationContext = entities
+                        pendingIntent = currentIntent
+                        isAwaitingFollowUp = true
+                        
+                        let question = smartEngine.generateFollowUpQuestion(for: missingField, intent: currentIntent)
+                        let context: ParseContext = currentIntent == "grade_tracking" ? .grade : .event
+                        
+                        handleFollowUpQuestion(prompt: question, context: context, conversationId: nil)
+                    }
+                }
+            }
+            
+            print("📝 Final entities: \(entities)")
             inputText = ""
-            isTextFieldFocused = true
+            isProcessing = false
+            processingAttempts = 0 // RESET: Processing completed successfully
         }
     }
-
+    
     private func showSimpleAlert(title: String, message: String) {
         self.alertTitle = title
         self.alertMessage = message
         self.showAlert = true
     }
-
+    
     private func handleAddEvent(title: String, date: Date?, categoryName: String?, reminderTime: ReminderTime?) {
         guard !title.isEmpty else {
             showSimpleAlert(title: "Event Error", message: "Event title cannot be empty.")
             return
         }
-
+        
         let eventDate = date ?? Date()
-
+        
         var finalCategoryId: UUID? = nil
         
-        // FIXED: Only auto-assign category if one was explicitly provided by NLP engine
         if let catName = categoryName, let foundCategory = eventViewModel.categories.first(where: { $0.name.lowercased() == catName.lowercased() }) {
             finalCategoryId = foundCategory.id
         } else if categoryName != nil {
-            // If NLP engine provided a category name but we can't find it, show error
             showSimpleAlert(title: "Category Not Found", message: "The category '\(categoryName!)' was not found. Please add this category first or choose from existing categories.")
             return
         }
-        // FIXED: Don't auto-assign first category - this should have been handled by NLP engine asking for category
-
+        
         guard let categoryId = finalCategoryId else {
             showSimpleAlert(title: "Event Error", message: "No category was specified. The NLP engine should have asked for this information.")
             return
         }
-
+        
         let newEvent = Event(date: eventDate, title: title, categoryId: categoryId, reminderTime: reminderTime ?? .none)
         Task {
             await eventViewModel.addEvent(newEvent)
             dismiss()
         }
     }
-
+    
     private func handleAddScheduleItem(title: String, days: Set<DayOfWeek>, startTimeComponents: DateComponents?, endTimeComponents: DateComponents?, duration: TimeInterval?, reminderTime: ReminderTime?, colorHex: String?) {
         guard !title.isEmpty else {
             showSimpleAlert(title: "Schedule Item Error", message: "Please provide a title for the schedule item (e.g., 'Math class').")
             return
         }
-
+        
         guard !days.isEmpty else {
             showSimpleAlert(title: "Schedule Item Error", message: "Please specify the days for '\(title)' (e.g., 'every Monday', 'MWF').")
             return
         }
-
+        
         guard let startComps = startTimeComponents, let startHour = startComps.hour, let startMinute = startComps.minute else {
             showSimpleAlert(title: "Schedule Item Error", message: "Please specify a start time for '\(title)' (e.g., 'at 9am', 'from 10:30').")
             return
         }
-
+        
         var finalEndTimeComponents: DateComponents? = endTimeComponents
         if finalEndTimeComponents == nil, let dur = duration, dur > 0 {
             let calendar = Calendar.current
@@ -476,7 +619,7 @@ struct NaturalLanguageInputView: View {
                 finalEndTimeComponents = calendar.dateComponents([.hour, .minute], from: endDateFromDuration)
             }
         }
-
+        
         guard let endComps = finalEndTimeComponents, let endHour = endComps.hour, let endMinute = endComps.minute else {
             showSimpleAlert(title: "Schedule Item Error", message: "Please specify an end time or duration for '\(title)' (e.g., 'to 11am', 'for 1 hour').")
             return
@@ -489,19 +632,18 @@ struct NaturalLanguageInputView: View {
             showSimpleAlert(title: "Schedule Item Error", message: "The end time for '\(title)' must be after the start time.")
             return
         }
-
+        
         let calendar = Calendar.current
         let startTimeDate = calendar.date(bySettingHour: startHour, minute: startMinute, second: 0, of: Date()) ?? Date()
         let endTimeDate = calendar.date(bySettingHour: endHour, minute: endMinute, second: 0, of: Date()) ?? Date()
         
-        // Use provided color or default to theme color
         let itemColor: Color
         if let hexColor = colorHex {
             itemColor = Color(hex: hexColor) ?? themeManager.currentTheme.secondaryColor
         } else {
             itemColor = themeManager.currentTheme.secondaryColor
         }
-
+        
         let newScheduleItem = ScheduleItem(
             title: title,
             startTime: startTimeDate,
@@ -511,21 +653,21 @@ struct NaturalLanguageInputView: View {
             reminderTime: reminderTime ?? .none,
             isLiveActivityEnabled: true
         )
-
+        
         eventViewModel.addScheduleItem(newScheduleItem, themeManager: themeManager)
         dismiss()
     }
-
+    
     private func handleAddGrade(courseName: String, assignmentName: String, grade: String, weight: String?) {
-        print("🔍 =================================")
-        print("🔍 SAVE Debug - Course: '\(courseName)'")
-        print("🔍 SAVE Debug - Assignment: '\(assignmentName)'")
-        print("🔍 SAVE Debug - Grade: '\(grade)'")
-        print("🔍 SAVE Debug - Weight: '\(weight ?? "nil")'")
-        print("🔍 =================================")
+        print("==================================")
+        print("SAVE Debug - Course: '\(courseName)'")
+        print("SAVE Debug - Assignment: '\(assignmentName)'")
+        print("SAVE Debug - Grade: '\(grade)'")
+        print("SAVE Debug - Weight: '\(weight ?? "nil")'")
+        print("==================================")
         
         guard let courseIndex = existingCourses.firstIndex(where: { $0.name.lowercased() == courseName.lowercased() }) else {
-            showSimpleAlert(title: "Grade Error", message: "Course '\(courseName)' not found.")
+            print("Course '\(courseName)' not found in existing courses, but popup should have handled this")
             return
         }
         
@@ -533,25 +675,24 @@ struct NaturalLanguageInputView: View {
         let normalizedGrade = normalizeGradeForStorage(grade)
         let normalizedWeight = weight != nil ? normalizeWeightForStorage(weight!) : ""
         
-        print("🔍 SAVE Debug - Normalized grade: '\(normalizedGrade)'")
-        print("🔍 SAVE Debug - Normalized weight: '\(normalizedWeight)'")
-
+        print("SAVE Debug - Normalized grade: '\(normalizedGrade)'")
+        print("SAVE Debug - Normalized weight: '\(normalizedWeight)'")
+        
         let existingAssignment = courseToUpdate.assignments.first(where: { $0.name.lowercased() == assignmentName.lowercased() })
         
         var finalAssignmentName = assignmentName
         if existingAssignment != nil {
-            // Find a unique name by adding a number
             var counter = 2
             while courseToUpdate.assignments.contains(where: { $0.name.lowercased() == "\(assignmentName) \(counter)".lowercased() }) {
                 counter += 1
             }
             finalAssignmentName = "\(assignmentName) \(counter)"
-            print("🔍 SAVE Debug - Duplicate name detected, using: '\(finalAssignmentName)'")
+            print("Duplicate name detected, using: '\(finalAssignmentName)'")
         }
         
-        print("🔍 SAVE Debug - Creating new assignment")
+        print("Creating new assignment")
         let newAssignment = Assignment(name: finalAssignmentName, grade: normalizedGrade, weight: normalizedWeight)
-        print("🔍 SAVE Debug - New assignment created: name='\(newAssignment.name)', grade='\(newAssignment.grade)', weight='\(newAssignment.weight)'")
+        print("New assignment created: name='\(newAssignment.name)', grade='\(newAssignment.grade)', weight='\(newAssignment.weight)'")
         courseToUpdate.assignments.append(newAssignment)
         
         var totalWeight = 0.0
@@ -563,21 +704,20 @@ struct NaturalLanguageInputView: View {
         
         existingCourses[courseIndex] = courseToUpdate
         
-        print("🔍 SAVE Debug - About to save using CourseStorage...")
+        print("About to save using CourseStorage...")
         CourseStorage.save(existingCourses)
-        print("🔍 SAVE Debug - Successfully saved using CourseStorage")
+        print("Successfully saved using CourseStorage")
         
         let displayGrade = grade.hasSuffix("%") ? grade : "\(grade)%"
         var successMessage = "Added \(displayGrade) for \(finalAssignmentName) in \(courseName)"
         
-        // Add duplicate name notification
         if existingAssignment != nil {
-            successMessage += "\n\n📝 Note: '\(assignmentName)' already exists, so this was saved as '\(finalAssignmentName)'"
+            successMessage += "\n\n Note: '\(assignmentName)' already exists, so this was saved as '\(finalAssignmentName)'"
         }
         
         if totalWeight > 100.0 {
             let excess = totalWeight - 100.0
-            successMessage += "\n\n⚠️ Warning: Assignment weights now exceed 100% by \(String(format: "%.1f", excess))%. You may want to adjust the weights."
+            successMessage += "\n\n Warning: Assignment weights now exceed 100% by \(String(format: "%.1f", excess))%. You may want to adjust the weights."
         }
         
         showSimpleAlert(title: "Grade Added", message: successMessage)
@@ -587,92 +727,199 @@ struct NaturalLanguageInputView: View {
     private func normalizeGradeForStorage(_ grade: String) -> String {
         var normalized = grade.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        print("🔍 NORMALIZE Grade - Input: '\(grade)' -> After trim: '\(normalized)'")
+        print("NORMALIZE Grade - Input: '\(grade)' -> After trim: '\(normalized)'")
         
-        // For percentage grades, remove the % sign for storage so calculations work
         if normalized.hasSuffix("%") {
             normalized = String(normalized.dropLast())
-            print("🔍 NORMALIZE Grade - Removed % sign: '\(normalized)'")
+            print("NORMALIZE Grade - Removed % sign: '\(normalized)'")
         }
         
-        print("🔍 NORMALIZE Grade - Final result: '\(normalized)'")
+        print("NORMALIZE Grade - Final result: '\(normalized)'")
         return normalized
     }
     
     private func normalizeWeightForStorage(_ weight: String) -> String {
         var normalized = weight.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        print("🔍 NORMALIZE Weight - Input: '\(weight)' -> After trim: '\(normalized)'")
+        print("NORMALIZE Weight - Input: '\(weight)' -> After trim: '\(normalized)'")
         
-        // Remove % sign from weight for storage
         if normalized.hasSuffix("%") {
             normalized = String(normalized.dropLast())
-            print("🔍 NORMALIZE Weight - Removed % sign: '\(normalized)'")
+            print("NORMALIZE Weight - Removed % sign: '\(normalized)'")
         }
         
-        print("🔍 NORMALIZE Weight - Final result: '\(normalized)'")
+        print("NORMALIZE Weight - Final result: '\(normalized)'")
         return normalized
     }
-
-    func processUserInput(_ text: String) {
-        let result = nlpEngine.parse(inputText: text,
-                                    availableCategories: eventViewModel.categories,
-                                    existingCourses: existingCourses)
+    
+    private func handleGradeIntent(entities: [String: String]) {
+        print("Grade entities: \(entities)")
         
-        switch result {
-        case .parsedGrade(let courseName, let assignmentName, let grade, let weight):
-            handleAddGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: weight)
-        case .parsedEvent(let title, let date, let categoryName, let reminderTime):
-            handleAddEvent(title: title, date: date, categoryName: categoryName, reminderTime: reminderTime)
-        case .parsedScheduleItem(let title, let days, let startTimeComponents, let endTimeComponents, let duration, let reminderTime, let colorHex):
-            handleAddScheduleItem(title: title, days: days, startTimeComponents: startTimeComponents, endTimeComponents: endTimeComponents, duration: duration, reminderTime: reminderTime, colorHex: colorHex)
-        case .needsMoreInfo(let prompt, _, let context, let conversationId):
-            handleFollowUpQuestion(prompt: prompt, context: context, conversationId: conversationId)
-        case .unrecognized(_):
-            showSimpleAlert(title: "Input Not Understood", message: "Sorry, I couldn't understand that. Please try rephrasing. Examples:\n'Meeting tomorrow at 2pm about project'\n'Math class every Monday 9am'\n'Got 95% on CS101 midterm'")
-        case .notAttempted:
-            handleGenericResult(result)
+        guard let course = entities["COURSE_NAME"] ?? entities["COURSE_CODE"] ?? entities["COURSE_ALIAS"],
+              let assignment = entities["ASSIGNMENT"],
+              let score = entities["SCORE_VALUE"] ?? entities["LETTER_GRADE"] else {
+            
+            let missing = [
+                entities["COURSE_NAME"] == nil && entities["COURSE_CODE"] == nil && entities["COURSE_ALIAS"] == nil ? "course" : nil,
+                entities["ASSIGNMENT"] == nil ? "assignment" : nil,
+                entities["SCORE_VALUE"] == nil && entities["LETTER_GRADE"] == nil ? "score" : nil
+            ].compactMap { $0 }
+            
+            if let missingField = missing.first {
+                handleFollowUpQuestion(prompt: "What's the \(missingField)?", context: .grade, conversationId: nil)
+            } else {
+                showSimpleAlert(title: "Input Error", message: "Missing required grade information")
+            }
+            return
         }
-    }
-
-    private func handleGradeUpdate(_ courseName: String, _ assignmentName: String, _ grade: String, _ weight: String?) {
-        handleAddGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: weight)
+        let weight = entities["WEIGHT_PERCENT"] ?? entities["WEIGHT"]
+        handleAddGrade(courseName: course, assignmentName: assignment, grade: score, weight: weight)
     }
     
-    private func showAlert(title: String, message: String) {
-        showSimpleAlert(title: title, message: message)
-    }
-    
-    private func fallbackToLegacyProcessing(_ text: String) {
-        let result = nlpEngine.parse(inputText: text,
-                                    availableCategories: eventViewModel.categories,
-                                    existingCourses: existingCourses)
-        
-        switch result {
-        case .parsedEvent(let title, let date, let categoryName, let reminderTime):
-            handleAddEvent(title: title, date: date, categoryName: categoryName, reminderTime: reminderTime)
-        case .parsedScheduleItem(let title, let days, let startTimeComponents, let endTimeComponents, let duration, let reminderTime, let colorHex):
-            handleAddScheduleItem(title: title, days: days, startTimeComponents: startTimeComponents, endTimeComponents: endTimeComponents, duration: duration, reminderTime: reminderTime, colorHex: colorHex)
-        case .needsMoreInfo(let prompt, _, let context, let conversationId):
-            handleFollowUpQuestion(prompt: prompt, context: context, conversationId: conversationId)
-        case .unrecognized(_):
-            showSimpleAlert(title: "Input Not Understood", message: "Sorry, I couldn't understand that. Please try rephrasing. Examples:\n'Meeting tomorrow at 2pm about project'\n'Math class every Monday 9am'\n'Got 95% on CS101 midterm'")
-        case .notAttempted:
-            handleGenericResult(result)
-        case .parsedGrade(let courseName, let assignmentName, let grade, let weight):
-            handleAddGrade(courseName: courseName, assignmentName: assignmentName, grade: grade, weight: weight)
+    private func handleEventIntent(entities: [String: String]) {
+        print("Event entities: \(entities)")
+        guard let event = entities["EVENT"], let time = entities["TIME"] else {
+            let missing = [
+                entities["EVENT"] == nil ? "event name" : nil,
+                entities["TIME"] == nil ? "time" : nil
+            ].compactMap { $0 }
+            if let missingField = missing.first {
+                handleFollowUpQuestion(prompt: "What's the \(missingField)?", context: .event, conversationId: nil)
+            } else {
+                showSimpleAlert(title: "Input Error", message: "Missing required event information")
+            }
+            return
+        }
+        let date = entities["DATE_ABS"] ?? entities["DATE_REL"] ?? "today"
+        let category = entities["CATEGORY"]
+        if currentIntent == "scheduled_event" {
+            handleScheduledEvent(event: event, time: time, date: date, entities: entities)
+        } else {
+            handleSingleEvent(event: event, time: time, date: date, category: category)
         }
     }
-
-    private func handleGenericResult(_ result: NLPResult) {
-        switch result {
-        case .notAttempted:
-            dismiss()
-        default:
-            showSimpleAlert(title: "Unexpected Result", message: "An unexpected result was received.")
+    private func handleScheduledEvent(event: String, time: String, date: String, entities: [String: String]) {
+        let days = entities["DAY_OF_WEEK"] ?? "Monday"
+        let recurrence = entities["REC_FREQ"] ?? "weekly"
+        print("Creating recurring schedule: \(event) on \(days) at \(time)")
+    }
+    private func handleSingleEvent(event: String, time: String, date: String, category: String?) {
+        handleAddEvent(title: event, date: parseDateFromEntities(date: date, time: time), categoryName: category, reminderTime: .thirtyMinutes)
+    }
+    private func handleFollowUpQuestion(prompt: String, context: ParseContext?, conversationId: UUID?) {
+        withAnimation(.easeInOut) {
+            conversationHistory.append("You: \(inputText)")
+            conversationHistory.append("Assistant: \(prompt)")
+            isInFollowUpMode = true
+            followUpContext = context
+            inputText = ""
+            isTextFieldFocused = true
         }
     }
-
+    private func parseDateFromEntities(date: String, time: String) -> Date? {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "h:mm a"
+        guard let timeDate = dateFormatter.date(from: time) else { return nil }
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.hour, .minute], from: timeDate)
+        if date == "today" {
+            return calendar.date(bySettingHour: components.hour!, minute: components.minute!, second: 0, of: Date())
+        } else {
+            return Date()
+        }
+    }
+    private func resetConversationState() {
+        conversationContext = [:]
+        pendingIntent = ""
+        isAwaitingFollowUp = false
+        isInFollowUpMode = false
+        followUpContext = nil
+    }
+    private func handleCompleteGrade(entities: [String: String]) {
+        print("COMPLETE GRADE: Starting with entities: \(entities)")
+        guard let course = entities["COURSE_NAME"], let assignment = entities["ASSIGNMENT"], let score = entities["SCORE_VALUE"], !course.isEmpty, !assignment.isEmpty, !score.isEmpty else {
+            print("CRITICAL: Missing or empty required grade information")
+            print("Course: '\(entities["COURSE_NAME"] ?? "MISSING")'")
+            print("Assignment: '\(entities["ASSIGNMENT"] ?? "MISSING")'")
+            print("Score: '\(entities["SCORE_VALUE"] ?? "MISSING")'")
+            showSimpleAlert(title: "Error", message: "Missing required grade information")
+            return
+        }
+        print("Grade validation passed")
+        print("Creating grade with: Course='\(course)', Assignment='\(assignment)', Score='\(score)'")
+        let weight = entities["WEIGHT_PERCENT"] ?? entities["WEIGHT"]
+        if isInFollowUpMode {
+            conversationHistory.append("Grade added: \(score) in \(course) \(assignment)")
+        }
+        handleAddGrade(courseName: course, assignmentName: assignment, grade: score, weight: weight)
+    }
+    private func handleCompleteEvent(entities: [String: String]) {
+        guard let event = entities["EVENT"] else {
+            showSimpleAlert(title: "Error", message: "Missing event name")
+            return
+        }
+        let date = entities["DATE_ABS"] ?? entities["DATE_REL"] ?? "today"
+        let time = entities["TIME"] ?? "9:00 AM"
+        let category = entities["CATEGORY"]
+        handleAddEvent(title: event, date: parseDateFromEntities(date: date, time: time), categoryName: category, reminderTime: .thirtyMinutes)
+        conversationHistory.append("Event added: \(event)")
+    }
+    private func handleCourseSelection(course: Course) {
+        print("Course selected: \(course.name)")
+        var updatedContext = pendingCourseSelectionContext
+        updatedContext["COURSE_NAME"] = course.name
+        if isInFollowUpMode {
+            conversationContext = updatedContext
+            let missingFields = smartEngine.getMissingFields(for: pendingIntent, from: updatedContext)
+            if missingFields.isEmpty {
+                print("All fields complete after course selection! Creating item...")
+                switch pendingIntent {
+                case "grade_tracking":
+                    handleCompleteGrade(entities: updatedContext)
+                case "scheduled_event", "event_reminder":
+                    handleCompleteEvent(entities: updatedContext)
+                default:
+                    showSimpleAlert(title: "Error", message: "Unknown intent: \(pendingIntent)")
+                }
+                resetConversationState()
+                resetCourseSelectionState()
+            } else {
+                let question = smartEngine.generateFollowUpQuestion(for: missingFields.first!, intent: pendingIntent)
+                let context: ParseContext = pendingIntent == "grade_tracking" ? .grade : .event
+                resetCourseSelectionState()
+                handleFollowUpQuestion(prompt: question, context: context, conversationId: nil)
+            }
+        } else {
+            conversationContext = updatedContext
+            pendingIntent = currentIntent
+            let missingFields = smartEngine.getMissingFields(for: currentIntent, from: updatedContext)
+            if missingFields.isEmpty {
+                switch currentIntent {
+                case "grade_tracking":
+                    handleCompleteGrade(entities: updatedContext)
+                case "scheduled_event", "event_reminder":
+                    handleCompleteEvent(entities: updatedContext)
+                default:
+                    showSimpleAlert(title: "Error", message: "Unknown intent: \(currentIntent)")
+                }
+                resetCourseSelectionState()
+            } else {
+                if let missingField = missingFields.first {
+                    print("Starting follow-up for missing field after course selection: \(missingField)")
+                    conversationContext = updatedContext
+                    isAwaitingFollowUp = true
+                    let question = smartEngine.generateFollowUpQuestion(for: missingField, intent: currentIntent)
+                    let context: ParseContext = currentIntent == "grade_tracking" ? .grade : .event
+                    resetCourseSelectionState()
+                    handleFollowUpQuestion(prompt: question, context: context, conversationId: nil)
+                }
+            }
+        }
+    }
+    private func resetCourseSelectionState() {
+        pendingCourseSelectionInput = ""
+        pendingCourseSelectionContext = [:]
+    }
     struct QuickActionButton: View {
         let emoji: String
         let title: String
@@ -732,24 +979,22 @@ struct NaturalLanguageInputView: View {
             }
         }
     }
-
-}
-
 #if DEBUG
-class PreviewThemeManager: ObservableObject {
-    struct Theme {
-        var primaryColor: Color = .blue
-        var secondaryColor: Color = .green
-        var tertiaryColor: Color = .orange
+    class PreviewThemeManager: ObservableObject {
+        struct Theme {
+            var primaryColor: Color = .blue
+            var secondaryColor: Color = .green
+            var tertiaryColor: Color = .orange
+        }
+        @Published var currentTheme: Theme = Theme()
     }
-    @Published var currentTheme: Theme = Theme()
-}
-
-struct NaturalLanguageInputView_Previews: PreviewProvider {
-    static var previews: some View {
-        NaturalLanguageInputView()
-            .environmentObject(PreviewThemeManager())
-            .environmentObject(EventViewModel())
+    
+    struct NaturalLanguageInputView_Previews: PreviewProvider {
+        static var previews: some View {
+            NaturalLanguageInputView()
+                .environmentObject(PreviewThemeManager())
+                .environmentObject(EventViewModel())
+        }
     }
-}
 #endif
+}

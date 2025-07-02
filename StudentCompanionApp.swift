@@ -5,10 +5,11 @@ import GoogleSignIn
 struct StudentCompanionApp: App {
     @StateObject private var eventViewModel: EventViewModel
     @StateObject private var themeManager = ThemeManager()
-    @StateObject private var notificationManager = NotificationManager.shared
     @StateObject private var googleCalendarManager = GoogleCalendarManager() // We should review if this is still needed later
-    
     @StateObject private var calendarSyncManager: CalendarSyncManager
+    
+    // Use ObservedObject for singleton, not StateObject
+    @ObservedObject private var notificationManager = NotificationManager.shared
     
     init() {
         let syncManager = CalendarSyncManager()

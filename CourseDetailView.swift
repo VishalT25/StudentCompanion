@@ -75,10 +75,6 @@ struct CourseDetailView: View {
             autoFillCalculatorValues()
             requestSave()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .courseDataDidChange)) { notification in
-            print("🔍 UI Debug - Received courseDataDidChange notification: \(notification)")
-            reloadCourseData()
-        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             print("🔍 UI Debug - App became active, checking for course updates")
             reloadCourseData()
@@ -609,8 +605,4 @@ struct CalculatorInputRow: View {
         }
     }
     return PreviewWrapper()
-}
-
-extension Notification.Name {
-    static let courseDataDidChange = Notification.Name("courseDataDidChange")
 }

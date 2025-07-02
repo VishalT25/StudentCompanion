@@ -66,12 +66,6 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         }
     }
     
-    private func postDataChangeNotification() {
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .courseDataDidChange, object: nil)
-        }
-    }
-    
     func refreshObservationsAndSignalChange() {
         setupAssignmentsObservation()
         triggerGradeUpdate()

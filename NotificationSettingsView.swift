@@ -1,310 +1,78 @@
 import SwiftUI
-import UserNotifications
 
 struct NotificationSettingsView: View {
     @EnvironmentObject var notificationManager: NotificationManager
-    @EnvironmentObject var viewModel: EventViewModel
-    @EnvironmentObject var themeManager: ThemeManager
-    @State private var showingSystemSettings = false
-    @State private var pendingNotifications: [UNNotificationRequest] = []
+    @State private var pendingNotificationsCount = 0
     
     var body: some View {
         NavigationView {
             List {
-                // Authorization status section
-                Section {
+                Section("Notification Status") {
                     HStack {
-                        Image(systemName: notificationManager.isAuthorized ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundColor(notificationManager.isAuthorized ? .green : .red)
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Notification Status")
-                                .font(.headline)
-                            Text(notificationManager.isAuthorized ? "Notifications enabled" : "Notifications disabled")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        
+                        Text("Status")
                         Spacer()
-                        
-                        if !notificationManager.isAuthorized {
-                            Button("Enable") {
-                                Task {
-                                    let granted = await notificationManager.requestAuthorization()
-                                    if !granted {
-                                        showingSystemSettings = true
-                                    }
-                                }
-                            }
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
-                        }
+                        Text(notificationManager.authorizationStatusText)
+                            .foregroundColor(notificationManager.isAuthorized ? .green : .red)
                     }
-                } footer: {
+                    
                     if !notificationManager.isAuthorized {
-                        Text("Enable notifications to get reminders for your events and classes.")
+                        Button("Enable Notifications") {
+                            notificationManager.openNotificationSettings()
+                        }
+                        .foregroundColor(.blue)
                     }
                 }
                 
-                if notificationManager.isAuthorized {
-                    // Event reminders section
-                    Section {
-                        ForEach(viewModel.events) { event in
-                            EventReminderRow(event: event)
-                                .environmentObject(viewModel)
-                                .environmentObject(notificationManager)
-                                .environmentObject(themeManager)
-                        }
-                    } header: {
-                        HStack {
-                            Text("Event Reminders")
-                            Spacer()
-                            Text("\(viewModel.events.count)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+                Section("Notification Settings") {
+                    HStack {
+                        Text("Notifications Enabled")
+                        Spacer()
+                        // FIXED: Use the property directly, not as a binding for display
+                        Text(notificationManager.isAuthorized ? "Yes" : "No")
+                            .foregroundColor(notificationManager.isAuthorized ? .green : .red)
                     }
                     
-                    // Schedule reminders section
-                    Section {
-                        ForEach(viewModel.scheduleItems) { item in
-                            ScheduleReminderRow(scheduleItem: item)
-                                .environmentObject(viewModel)
-                                .environmentObject(notificationManager)
-                                .environmentObject(themeManager)
-                        }
-                    } header: {
-                        HStack {
-                            Text("Class Reminders")
-                            Spacer()
-                            Text("\(viewModel.scheduleItems.count)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    // Debug section
-                    Section {
+                    if notificationManager.isAuthorized {
                         HStack {
                             Text("Pending Notifications")
                             Spacer()
-                            Text("\(pendingNotifications.count)")
-                                .font(.caption)
+                            Text("\(pendingNotificationsCount)")
                                 .foregroundColor(.secondary)
                         }
                         
-                        Button("Refresh Count") {
+                        Button("Refresh Pending Count") {
                             Task {
-                                pendingNotifications = await notificationManager.getPendingNotifications()
+                                pendingNotificationsCount = await notificationManager.getPendingNotificationsCount()
                             }
                         }
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
                         
-                        Button("Print Debug Info") {
-                            notificationManager.printPendingNotifications()
+                        Button("Clear All Notifications") {
+                            notificationManager.cancelAllNotifications()
+                            pendingNotificationsCount = 0
                         }
-                        .foregroundColor(.secondary)
-                    } header: {
-                        Text("Debug")
+                        .foregroundColor(.red)
+                    }
+                }
+                
+                Section("Debug") {
+                    Button("Check Authorization Status") {
+                        notificationManager.checkAuthorizationStatus()
+                    }
+                    
+                    Button("Request Authorization") {
+                        Task {
+                            await notificationManager.requestAuthorization()
+                        }
                     }
                 }
             }
             .navigationTitle("Notifications")
-            .navigationBarTitleDisplayMode(.large)
             .onAppear {
+                notificationManager.checkAuthorizationStatus()
                 Task {
-                    pendingNotifications = await notificationManager.getPendingNotifications()
+                    pendingNotificationsCount = await notificationManager.getPendingNotificationsCount()
                 }
-            }
-            .alert("Enable Notifications", isPresented: $showingSystemSettings) {
-                Button("Open Settings") {
-                    if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(settingsUrl)
-                    }
-                }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text("To receive notifications, please enable them in Settings > Notifications > Student Companion")
             }
         }
-    }
-}
-
-// MARK: - Event Reminder Row
-struct EventReminderRow: View {
-    @EnvironmentObject var viewModel: EventViewModel
-    @EnvironmentObject var notificationManager: NotificationManager
-    @EnvironmentObject var themeManager: ThemeManager
-    let event: Event
-    @State private var showingReminderPicker = false
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            // Event indicator
-            VStack(spacing: 2) {
-                Text("\(Calendar.current.component(.day, from: event.date))")
-                    .font(.caption.weight(.bold))
-                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                Text(monthShort(from: event.date))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-            .frame(width: 35)
-            .padding(.vertical, 4)
-            .background(themeManager.currentTheme.primaryColor.opacity(0.1))
-            .cornerRadius(6)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(event.title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(.primary)
-                
-                Text(event.date, style: .time)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-            
-            // Reminder button with custom picker
-            Button(action: {
-                showingReminderPicker = true
-            }) {
-                HStack(spacing: 4) {
-                    Text(event.reminderTime.shortDisplayName)
-                        .font(.caption)
-                        .foregroundColor(.primary)
-                    
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color(.systemGray6))
-                .cornerRadius(6)
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-        .padding(.vertical, 2)
-        .sheet(isPresented: $showingReminderPicker) {
-            CustomReminderPickerView(selectedReminder: reminderBinding)
-        }
-    }
-    
-    private var reminderBinding: Binding<ReminderTime> {
-        Binding(
-            get: { event.reminderTime },
-            set: { newValue in
-                var updatedEvent = event
-                updatedEvent.reminderTime = newValue
-                Task {
-                    await viewModel.updateEvent(updatedEvent)
-                }
-            }
-        )
-    }
-    
-    private func monthShort(from date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM"
-        return formatter.string(from: date)
-    }
-}
-
-// MARK: - Schedule Reminder Row
-struct ScheduleReminderRow: View {
-    @EnvironmentObject var viewModel: EventViewModel
-    @EnvironmentObject var notificationManager: NotificationManager
-    @EnvironmentObject var themeManager: ThemeManager
-    let scheduleItem: ScheduleItem
-    @State private var showingReminderPicker = false
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            // Color indicator
-            RoundedRectangle(cornerRadius: 4)
-                .fill(scheduleItem.color)
-                .frame(width: 4, height: 35)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(scheduleItem.title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(.primary)
-                
-                HStack(spacing: 8) {
-                    Text(timeString(from: scheduleItem.startTime))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Text("•")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Text(daysString(from: scheduleItem.daysOfWeek))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            
-            Spacer()
-            
-            // Reminder button with custom picker
-            Button(action: {
-                showingReminderPicker = true
-            }) {
-                HStack(spacing: 4) {
-                    Text(scheduleItem.reminderTime.shortDisplayName)
-                        .font(.caption)
-                        .foregroundColor(.primary)
-                    
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color(.systemGray6))
-                .cornerRadius(6)
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-        .padding(.vertical, 2)
-        .sheet(isPresented: $showingReminderPicker) {
-            CustomReminderPickerView(selectedReminder: reminderBinding)
-        }
-    }
-    
-    private var reminderBinding: Binding<ReminderTime> {
-        Binding(
-            get: { scheduleItem.reminderTime },
-            set: { newValue in
-                var updatedItem = scheduleItem
-                updatedItem.reminderTime = newValue
-                Task {
-                    await viewModel.updateScheduleItem(updatedItem)
-                }
-            }
-        )
-    }
-    
-    private func timeString(from date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-    
-    private func daysString(from days: Set<DayOfWeek>) -> String {
-        let sortedDays = days.sorted { $0.rawValue < $1.rawValue }
-        return sortedDays.map(\.shortName).joined(separator: ", ")
-    }
-}
-
-// MARK: - Previews
-struct NotificationSettingsView_Previews: PreviewProvider {
-    static var previews: some View {
-        NotificationSettingsView()
-            .environmentObject(NotificationManager.shared)
-            .environmentObject(EventViewModel())
-            .environmentObject(ThemeManager())
     }
 }
