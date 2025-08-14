@@ -190,7 +190,8 @@ enum DayOfWeek: Int, Codable, CaseIterable {
 class EventViewModel: ObservableObject {
     @Published var categories: [Category] = []
     @Published var events: [Event] = []
-    @Published var scheduleItems: [ScheduleItem] = []
+    @Published var schedules: [ScheduleItem] = [] // Deprecated - kept for backward compatibility
+    @Published var scheduleItems: [ScheduleItem] = [] // Deprecated - use ScheduleManager instead
     @Published var isRefreshing: Bool = false
     @Published var lastRefreshTime: Date?
     private var isUpdatingCoursesFromNotification = false
@@ -599,11 +600,10 @@ class EventViewModel: ObservableObject {
         }.sorted { $0.date < $1.date }
     }
     
+    // MARK: - Deprecated schedule methods - use ScheduleManager instead
     func todaysSchedule() -> [ScheduleItem] {
-        guard let todayDOW = dayOfWeek(for: Date()) else { return [] }
-        return scheduleItems
-            .filter { $0.daysOfWeek.contains(todayDOW) }
-            .sorted { $0.startTime < $1.startTime }
+        // Return empty array - schedules are now managed by ScheduleManager
+        return []
     }
     
     func upcomingEvents() -> [Event] {
