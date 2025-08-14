@@ -3,10 +3,13 @@ import Combine
 
 struct CourseDetailView: View {
     @ObservedObject var course: Course
+    var courseManager: CourseOperationsManager?
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject private var themeManager: ThemeManager
+    @StateObject private var bulkSelectionManager = BulkCourseSelectionManager()
     @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
+    @State private var showBulkDeleteAlert = false
     
     @State private var currentGradeInput: String = ""
     @State private var desiredGradeInput: String = ""
@@ -66,6 +69,32 @@ struct CourseDetailView: View {
         .navigationTitle(course.name)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
+        .toolbar {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if bulkSelectionManager.isSelecting {
+                    Button(selectionAllButtonTitle()) {
+                        toggleSelectAll()
+                    }
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                    
+                    Button(role: .destructive) {
+                        showBulkDeleteAlert = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .disabled(bulkSelectionManager.selectedCount() == 0)
+                    .foregroundColor(bulkSelectionManager.selectedCount() == 0 ? .secondary : .red)
+                }
+            }
+            ToolbarItemGroup(placement: .navigationBarLeading) {
+                if bulkSelectionManager.isSelecting {
+                    Button("Cancel") {
+                        bulkSelectionManager.endSelection()
+                    }
+                    .foregroundColor(.secondary)
+                }
+            }
+        }
         .onAppear {
             print("🔍 UI Debug - CourseDetailView appeared")
             autoFillCalculatorValues()
@@ -78,6 +107,14 @@ struct CourseDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             print("🔍 UI Debug - App became active, checking for course updates")
             reloadCourseData()
+        }
+        .alert("Delete Selected Assignments?", isPresented: $showBulkDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                bulkDeleteAssignments()
+            }
+        } message: {
+            Text("This will permanently delete \(bulkSelectionManager.selectedCount()) assignment(s).")
         }
     }
     
@@ -125,13 +162,19 @@ struct CourseDetailView: View {
                 Text("Assignments & Exams")
                     .font(.title3.bold())
                 Spacer()
-                Button(action: {
-                    course.assignments.append(Assignment())
-                    requestSave()
-                }) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(course.color)
+                if bulkSelectionManager.isSelecting {
+                    Text("\(bulkSelectionManager.selectedCount()) selected")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(.secondary)
+                } else {
+                    Button(action: {
+                        course.assignments.append(Assignment())
+                        requestSave()
+                    }) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(course.color)
+                    }
                 }
             }
             
@@ -192,16 +235,46 @@ struct CourseDetailView: View {
             } else {
                 LazyVStack(spacing: 8) {
                     ForEach(course.assignments) { assignment in
-                        AssignmentRow(
-                            assignment: assignment,
-                            courseColor: course.color,
-                            onEdit: {
-                                requestSave()
-                            },
-                            onDelete: {
-                                deleteAssignment(assignment)
+                        if bulkSelectionManager.selectionContext == .assignments(courseID: course.id) {
+                            HStack {
+                                AssignmentRow(
+                                    assignment: assignment,
+                                    courseColor: course.color,
+                                    onEdit: { requestSave() },
+                                    onDelete: { deleteAssignment(assignment) },
+                                    isSelectionMode: true
+                                )
+                                selectionIndicator(isSelected: bulkSelectionManager.isSelected(assignment.id))
                             }
-                        )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                bulkSelectionManager.toggleSelection(assignment.id)
+                            }
+                        } else {
+                            AssignmentRow(
+                                assignment: assignment,
+                                courseColor: course.color,
+                                onEdit: { requestSave() },
+                                onDelete: { deleteAssignment(assignment) },
+                                isSelectionMode: false
+                            )
+                            .contextMenu {
+                                Button("Select Multiple", systemImage: "checkmark.circle") {
+                                    bulkSelectionManager.startSelection(.assignments(courseID: course.id), initialID: assignment.id)
+                                }
+                                Button("Delete Assignment", systemImage: "trash", role: .destructive) {
+                                    deleteAssignment(assignment)
+                                }
+                            }
+                            .simultaneousGesture(
+                                LongPressGesture(minimumDuration: 0.6)
+                                    .onEnded { _ in
+                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                        impactFeedback.impactOccurred()
+                                        bulkSelectionManager.startSelection(.assignments(courseID: course.id), initialID: assignment.id)
+                                    }
+                            )
+                        }
                     }
                 }
             }
@@ -209,6 +282,37 @@ struct CourseDetailView: View {
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(16)
+    }
+    
+    private func selectionIndicator(isSelected: Bool) -> some View {
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(.title3)
+            .foregroundColor(isSelected ? themeManager.currentTheme.primaryColor : .secondary)
+            .animation(.easeInOut(duration: 0.2), value: isSelected)
+    }
+    
+    private func selectionAllButtonTitle() -> String {
+        let total = course.assignments.count
+        let selected = bulkSelectionManager.selectedCount()
+        return selected == total && total > 0 ? "Deselect All" : "Select All"
+    }
+    
+    private func toggleSelectAll() {
+        let total = course.assignments.count
+        let selected = bulkSelectionManager.selectedCount()
+        
+        if selected == total && total > 0 {
+            bulkSelectionManager.deselectAll()
+        } else {
+            bulkSelectionManager.selectAll(items: course.assignments)
+        }
+    }
+    
+    private func bulkDeleteAssignments() {
+        let assignmentIDsToDelete = bulkSelectionManager.selectedAssignmentIDs
+        course.assignments.removeAll { assignmentIDsToDelete.contains($0.id) }
+        requestSave()
+        bulkSelectionManager.endSelection()
     }
     
     private var finalGradeCalculatorSection: some View {
@@ -458,6 +562,7 @@ struct AssignmentRow: View {
     let courseColor: Color
     let onEdit: () -> Void
     let onDelete: () -> Void
+    let isSelectionMode: Bool
     
     @FocusState private var isNameFocused: Bool
     @FocusState private var isGradeFocused: Bool
@@ -469,7 +574,6 @@ struct AssignmentRow: View {
             if assignment.grade.isEmpty {
                 return ""
             }
-            // If grade already has %, return as is, otherwise add %
             if assignment.grade.hasSuffix("%") {
                 return assignment.grade
             } else {
@@ -477,7 +581,6 @@ struct AssignmentRow: View {
             }
         }
         set {
-            // Remove % when setting the value for storage
             assignment.grade = newValue.replacingOccurrences(of: "%", with: "")
         }
     }
@@ -490,58 +593,68 @@ struct AssignmentRow: View {
                     .focused($isNameFocused)
                     .textFieldStyle(.plain)
                     .onChange(of: assignment.name) { _, _ in onEdit() }
+                    .disabled(isSelectionMode)
                 
                 Spacer()
                 
-                HStack(spacing: 4) {
-                    TextField("Grade", text: Binding(
-                        get: { displayGrade },
-                        set: { newValue in
-                            // Store without % sign
-                            assignment.grade = newValue.replacingOccurrences(of: "%", with: "")
-                            onEdit()
-                        }
-                    ))
-                        .font(.subheadline.weight(.medium))
-                        .focused($isGradeFocused)
-                        .keyboardType(.decimalPad)
-                        .textFieldStyle(.plain)
-                        .frame(width: 60)
-                        .multilineTextAlignment(.trailing)
-                    
-                    Text("•")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    TextField("Weight", text: $assignment.weight)
-                        .font(.subheadline.weight(.medium))
-                        .focused($isWeightFocused)
-                        .keyboardType(.decimalPad)
-                        .textFieldStyle(.plain)
-                        .frame(width: 50)
-                        .multilineTextAlignment(.trailing)
-                        .onChange(of: assignment.weight) { _, _ in onEdit() }
-                    
-                    Text("%")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                if !isSelectionMode {
+                    HStack(spacing: 4) {
+                        TextField("Grade", text: Binding(
+                            get: { displayGrade },
+                            set: { newValue in
+                                assignment.grade = newValue.replacingOccurrences(of: "%", with: "")
+                                onEdit()
+                            }
+                        ))
+                            .font(.subheadline.weight(.medium))
+                            .focused($isGradeFocused)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(.plain)
+                            .frame(width: 60)
+                            .multilineTextAlignment(.trailing)
+                        
+                        Text("•")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        TextField("Weight", text: $assignment.weight)
+                            .font(.subheadline.weight(.medium))
+                            .focused($isWeightFocused)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(.plain)
+                            .frame(width: 50)
+                            .multilineTextAlignment(.trailing)
+                            .onChange(of: assignment.weight) { _, _ in onEdit() }
+                        
+                        Text("%")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("Grade: \(displayGrade.isEmpty ? "—" : displayGrade)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Weight: \(assignment.weight.isEmpty ? "—" : assignment.weight)%")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
-            Divider()
+            if !isSelectionMode {
+                Divider()
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(.systemGray6).opacity(0.5))
+        .background(Color(.systemGray6).opacity(isSelectionMode ? 0.3 : 0.5))
         .cornerRadius(8)
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button("Delete") {
-                showDeleteConfirmation = true
-            }
-            .tint(.red)
-        }
+        .opacity(isSelectionMode ? 0.8 : 1.0)
         .contextMenu {
-            Button("Delete Assignment", role: .destructive) {
-                showDeleteConfirmation = true
+            if !isSelectionMode {
+                Button("Delete Assignment", role: .destructive) {
+                    showDeleteConfirmation = true
+                }
             }
         }
         .alert("Delete Assignment", isPresented: $showDeleteConfirmation) {

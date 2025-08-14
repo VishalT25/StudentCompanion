@@ -17,7 +17,7 @@ struct SplashScreenView: View {
                     .foregroundColor(.white) // White icon and text should look good on theme colors
                     .scaleEffect(scale)
                 
-                Text("Student Companion")
+                Text("StuCo")
                     .font(.title.bold())
                     .foregroundColor(.white)
             }

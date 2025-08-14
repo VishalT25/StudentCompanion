@@ -2,86 +2,182 @@ import SwiftUI
 
 struct GPAView: View {
     @EnvironmentObject private var themeManager: ThemeManager
-    @State private var courses: [Course] = [] // Array of Course class instances
+    @StateObject private var courseManager = CourseOperationsManager()
+    @StateObject private var bulkSelectionManager = BulkCourseSelectionManager()
     @State private var showingAddCourseSheet = false
     @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
     @AppStorage("lastGradeUpdate") private var lastGradeUpdate: Double = 0
+    @State private var showBulkDeleteAlert = false
 
     var body: some View {
-        List {
-            ForEach(courses) { course in // Iterate directly over class instances
-                NavigationLink(destination: CourseDetailView(course: course)) { // Pass the course instance
-                    CourseWidgetView(course: course, showGrade: showCurrentGPA, usePercentage: usePercentageGrades)
-                }
+        VStack(spacing: 0) {
+            if bulkSelectionManager.isSelecting {
+                selectionToolbar
             }
-            .onDelete(perform: deleteCourse)
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
+            
+            List {
+                ForEach(courseManager.courses) { course in
+                    if bulkSelectionManager.selectionContext == .courses {
+                        HStack {
+                            CourseWidgetView(course: course, showGrade: showCurrentGPA, usePercentage: usePercentageGrades)
+                            Spacer()
+                            selectionIndicator(isSelected: bulkSelectionManager.isSelected(course.id))
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            bulkSelectionManager.toggleSelection(course.id)
+                        }
+                    } else {
+                        NavigationLink(destination: CourseDetailView(course: course, courseManager: courseManager)) {
+                            CourseWidgetView(course: course, showGrade: showCurrentGPA, usePercentage: usePercentageGrades)
+                        }
+                        .contextMenu {
+                            Button("Select Multiple", systemImage: "checkmark.circle") {
+                                bulkSelectionManager.startSelection(.courses, initialID: course.id)
+                            }
+                            Button("Delete Course", systemImage: "trash", role: .destructive) {
+                                courseToDelete = course
+                                showDeleteCourseAlert = true
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(
+                            LongPressGesture(minimumDuration: 0.6)
+                                .onEnded { _ in
+                                    let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                    impactFeedback.impactOccurred()
+                                    bulkSelectionManager.startSelection(.courses, initialID: course.id)
+                                }
+                        )
+                    }
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+            .listStyle(.plain)
+            .environment(\.editMode, bulkSelectionManager.isSelecting ? .constant(.active) : .constant(.inactive))
         }
-        .listStyle(.plain)
-        .navigationTitle("Courses")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbar(content: {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showingAddCourseSheet = true
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .font(.title2)
-                }
-            }
-        })
         .sheet(isPresented: $showingAddCourseSheet) {
-            AddCourseView(courses: $courses)
+            AddCourseView(courses: $courseManager.courses)
                 .environmentObject(themeManager)
         }
         .onAppear {
-            loadCourses()
-        }
-        .onDisappear {
-            // Removed notification observer removal
+            courseManager.loadCourses()
         }
         .refreshable {
-            loadCourses()
+            courseManager.loadCourses()
         }
-        // This onChange will now primarily handle add/delete of courses
-        // or if the entire course array is replaced.
-        // It won't automatically detect deep changes within Course objects themselves.
-        .onChange(of: courses) { oldValue, newValue in
-             saveCourses()
+        .onChange(of: courseManager.courses) { _, _ in
+            courseManager.saveCourses()
         }
-    }
-
-    private func deleteCourse(offsets: IndexSet) {
-        courses.remove(atOffsets: offsets)
-        // saveCourses() will be called by onChange
-    }
-
-    private let coursesUserDefaultsKey = "gpaCourses"
-
-    private func saveCourses() {
-        if let encoded = try? JSONEncoder().encode(courses) {
-            UserDefaults.standard.set(encoded, forKey: coursesUserDefaultsKey)
-            lastGradeUpdate = Date().timeIntervalSince1970
-        }
-    }
-
-    private func loadCourses() {
-        if let savedCoursesData = UserDefaults.standard.data(forKey: coursesUserDefaultsKey) {
-            if let decodedCourses = try? JSONDecoder().decode([Course].self, from: savedCoursesData) {
-                self.courses = decodedCourses
-                return
+        .overlay(alignment: .bottomTrailing) {
+            if !bulkSelectionManager.isSelecting {
+                Button(action: { showingAddCourseSheet = true }) {
+                    Image(systemName: "plus")
+                        .font(.title2.bold())
+                        .foregroundColor(.white)
+                        .padding(20)
+                        .background(Circle().fill(themeManager.currentTheme.primaryColor))
+                        .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                }
+                .buttonStyle(SpringButtonStyle())
+                .padding(.trailing, 20)
+                .padding(.bottom, 20)
             }
         }
-        let defaultCourses: [Course] = [ // Create instances of the Course class
-            Course(name: "Calculus I", iconName: "function", colorHex: "FF0000"),
-            Course(name: "Intro to Physics", iconName: "atom", colorHex: "0000FF"),
-            Course(name: "Organic Chem", iconName: "testtube.2", colorHex: "00FF00")
-        ]
-        self.courses = defaultCourses
-        // saveCourses() // Save defaults if loaded for the first time
+        .toolbar {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if bulkSelectionManager.isSelecting && bulkSelectionManager.selectionContext == .courses {
+                    Button(selectionAllButtonTitle()) {
+                        toggleSelectAll()
+                    }
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                    
+                    Button(role: .destructive) {
+                        showBulkDeleteAlert = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .disabled(bulkSelectionManager.selectedCount() == 0)
+                    .foregroundColor(bulkSelectionManager.selectedCount() == 0 ? .secondary : .red)
+                }
+            }
+            ToolbarItemGroup(placement: .navigationBarLeading) {
+                if bulkSelectionManager.isSelecting {
+                    Button("Cancel") {
+                        bulkSelectionManager.endSelection()
+                    }
+                    .foregroundColor(.secondary)
+                }
+            }
+        }
+        .alert("Delete Course?", isPresented: $showDeleteCourseAlert) {
+            Button("Cancel", role: .cancel) { courseToDelete = nil }
+            Button("Delete", role: .destructive) {
+                if let course = courseToDelete {
+                    courseManager.deleteCourse(course.id)
+                }
+                courseToDelete = nil
+            }
+        } message: {
+            Text("This will remove the course and its assignments.")
+        }
+        .alert("Delete Selected Courses?", isPresented: $showBulkDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                courseManager.bulkDeleteCourses(bulkSelectionManager.selectedCourseIDs)
+                bulkSelectionManager.endSelection()
+            }
+        } message: {
+            Text("This will permanently delete \(bulkSelectionManager.selectedCount()) course(s) and all their assignments.")
+        }
+    }
+
+    @State private var showDeleteCourseAlert = false
+    @State private var courseToDelete: Course?
+    
+    private var selectionToolbar: some View {
+        HStack {
+            Text("\(bulkSelectionManager.selectedCount()) selected")
+                .font(.subheadline.weight(.medium))
+                .foregroundColor(.secondary)
+            
+            Spacer()
+            
+            if bulkSelectionManager.selectedCount() > 0 {
+                Text("Tap to delete selected items")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color(.systemGray6))
+    }
+    
+    private func selectionIndicator(isSelected: Bool) -> some View {
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(.title3)
+            .foregroundColor(isSelected ? themeManager.currentTheme.primaryColor : .secondary)
+            .animation(.easeInOut(duration: 0.2), value: isSelected)
+    }
+    
+    private func selectionAllButtonTitle() -> String {
+        let total = courseManager.courses.count
+        let selected = bulkSelectionManager.selectedCount()
+        return selected == total && total > 0 ? "Deselect All" : "Select All"
+    }
+    
+    private func toggleSelectAll() {
+        let total = courseManager.courses.count
+        let selected = bulkSelectionManager.selectedCount()
+        
+        if selected == total && total > 0 {
+            bulkSelectionManager.deselectAll()
+        } else {
+            bulkSelectionManager.selectAll(items: courseManager.courses)
+        }
     }
 }
 
@@ -90,7 +186,6 @@ struct CourseWidgetView: View {
     let showGrade: Bool
     let usePercentage: Bool
     
-    // Determine foreground color based on the course's background color
     private var foregroundColor: Color {
         course.color.isDark ? .white : .black
     }
@@ -108,7 +203,6 @@ struct CourseWidgetView: View {
         if usePercentage {
             return "\(grade)%"
         } else {
-            // Convert percentage to GPA (simple 4.0 scale)
             if let gradeValue = Double(grade) {
                 let gpa = (gradeValue / 100.0) * 4.0
                 return String(format: "%.2f", gpa)
@@ -121,7 +215,6 @@ struct CourseWidgetView: View {
         var totalWeightedGrade = 0.0
         var totalWeight = 0.0
         
-        // Access assignments through the ObservedObject
         for assignment in course.assignments {
             if let grade = assignment.gradeValue, let weight = assignment.weightValue {
                 totalWeightedGrade += grade * weight
@@ -139,14 +232,13 @@ struct CourseWidgetView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Left side: Icon and Course Name
             HStack(spacing: 10) {
-                Image(systemName: course.iconName) // Access properties from ObservedObject
+                Image(systemName: course.iconName)
                     .font(.title2)
                     .foregroundColor(foregroundColor)
                     .frame(width: 30, alignment: .center)
 
-                Text(course.name) // Access properties from ObservedObject
+                Text(course.name)
                     .font(.headline)
                     .foregroundColor(foregroundColor)
                     .lineLimit(2)
@@ -154,7 +246,6 @@ struct CourseWidgetView: View {
 
             Spacer()
 
-            // Right side: Course Grade
             if showGrade && !currentGrade.isEmpty {
                 Text(currentGrade)
                     .font(.headline.bold())
@@ -166,13 +257,21 @@ struct CourseWidgetView: View {
         .frame(minHeight: 80)
         .background(
             LinearGradient(
-                // Access course.color from ObservedObject
                 gradient: Gradient(colors: [course.color.lighter(by: 0.2), course.color]),
                 startPoint: .leading,
                 endPoint: .trailing
             )
         )
         .cornerRadius(12)
+    }
+}
+
+// MARK: - Button Style
+struct SpringButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 

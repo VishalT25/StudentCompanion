@@ -19,21 +19,21 @@ struct ScheduleView: View {
             .padding(.top, 10)
         }
         .background(Color(.systemGroupedBackground))
-        .navigationTitle("Schedule")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showingAddSchedule = true
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .font(.title2)
-                }
-            }
-        }
         .sheet(isPresented: $showingAddSchedule) {
             ScheduleEditView(schedule: nil)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            Button(action: { showingAddSchedule = true }) {
+                Image(systemName: "plus")
+                    .font(.title2.bold())
+                    .foregroundColor(.white)
+                    .padding(20)
+                    .background(Circle().fill(themeManager.currentTheme.primaryColor))
+                    .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.3), radius: 8, x: 0, y: 4)
+            }
+            .buttonStyle(SpringButtonStyle())
+            .padding(.trailing, 20)
+            .padding(.bottom, 20)
         }
     }
     

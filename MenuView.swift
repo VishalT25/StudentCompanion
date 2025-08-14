@@ -35,7 +35,7 @@ struct MenuContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             menuItem(.schedule, icon: "calendar", title: "Schedule")
-            menuItem(.events, icon: "list.bullet.clipboard", title: "Events")
+            menuItem(.events, icon: "star.fill", title: "Reminders")
             menuItem(.gpa, icon: "graduationcap", title: "Courses")
             menuItem(.resources, icon: "book.fill", title: "Resources")
             menuItem(.settings, icon: "gear", title: "Settings")

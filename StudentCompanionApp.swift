@@ -2,7 +2,7 @@ import SwiftUI
 import GoogleSignIn
 
 @main
-struct StudentCompanionApp: App {
+struct StuCoApp: App {
     @StateObject private var eventViewModel: EventViewModel
     @StateObject private var themeManager = ThemeManager()
     @StateObject private var googleCalendarManager = GoogleCalendarManager() // We should review if this is still needed later

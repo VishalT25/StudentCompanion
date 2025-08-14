@@ -26,7 +26,6 @@ struct MainContentView: View {
 
     @State private var showingWeatherPopover = false
     @AppStorage("lastGradeUpdate") private var lastGradeUpdate: Double = 0
-    @State private var showingNaturalLanguageInput = false
     
     var body: some View {
         NavigationStack(path: $path) {
@@ -61,35 +60,7 @@ struct MainContentView: View {
                 await viewModel.refreshLiveData()
             }
             .navigationDestination(for: AppRoute.self) { route in
-                switch route {
-                case .schedule:
-                    ScheduleView()
-                        .environmentObject(viewModel)
-                        .environmentObject(themeManager)
-                        .background(Color.white)
-                case .events:
-                    EventsListView()
-                        .environmentObject(viewModel)
-                        .environmentObject(themeManager)
-                        .background(Color.white)
-                case .gpa:
-                    GPAView()
-                        .environmentObject(themeManager)
-                        .background(Color.white)
-                case .settings:
-                    SettingsView()
-                        .environmentObject(themeManager)
-                        .environmentObject(calendarSyncManager)
-                        .environmentObject(weatherService)
-                        .background(Color.white)
-                case .resources:
-                    ResourcesView()
-                        .environmentObject(themeManager)
-                        .background(Color.white)
-                case .islandSmasherGame:
-                    IslandSmasherGameView()
-                        .background(Color.white)
-                }
+                destinationView(for: route)
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -150,26 +121,8 @@ struct MainContentView: View {
                     }
                 }
             }
-            .overlay(alignment: .bottomTrailing) {
-                Button {
-                    showingNaturalLanguageInput = true
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .resizable()
-                        .frame(width: 56, height: 56)
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .background(Color.white.opacity(0.7))
-                        .clipShape(Circle())
-                        .shadow(radius: 5)
-                        .padding()
-                }
-            }
         }
         .background(Color.white)
-        .sheet(isPresented: $showingNaturalLanguageInput) {
-            NaturalLanguageInputView()
-                .environmentObject(themeManager)
-        }
         .overlay {
             // Menu overlay with proper animation
             if showMenu {
@@ -225,6 +178,8 @@ struct MainContentView: View {
         }
         .onChange(of: selectedRoute) { newRoute in
             if let route = newRoute {
+                // Navigate directly without animation from menu
+                path.removeLast(path.count) // Clear the path completely
                 path.append(route)
                 selectedRoute = nil
             }
@@ -242,6 +197,40 @@ struct MainContentView: View {
             Task { @MainActor in
                 viewModel.manageLiveActivities(themeManager: themeManager)
             }
+        }
+    }
+    
+    @ViewBuilder
+    private func destinationView(for route: AppRoute) -> some View {
+        switch route {
+        case .schedule:
+            ScheduleView()
+                .environmentObject(viewModel)
+                .environmentObject(themeManager)
+                .background(Color.white)
+        case .events:
+            EventsListView()
+                .environmentObject(viewModel)
+                .environmentObject(themeManager)
+                .background(Color.white)
+        case .gpa:
+            GPAView()
+                .environmentObject(themeManager)
+                .background(Color.white)
+        case .settings:
+            SettingsView()
+                .environmentObject(themeManager)
+                .environmentObject(calendarSyncManager)
+                .environmentObject(weatherService)
+                .background(Color.white)
+                .navigationBarBackButtonHidden(false)
+        case .resources:
+            ResourcesView()
+                .environmentObject(themeManager)
+                .background(Color.white)
+        case .islandSmasherGame:
+            IslandSmasherGameView()
+                .background(Color.white)
         }
     }
     

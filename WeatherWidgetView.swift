@@ -544,7 +544,7 @@ struct CityCard: View {
 
 #Preview {
     let previewWeatherService = WeatherService()
-    return WeatherWidgetView(weatherService: previewWeatherService, isPresented: .constant(true))
+    WeatherWidgetView(weatherService: previewWeatherService, isPresented: .constant(true))
         .environmentObject(ThemeManager())
         .background(Color.blue.opacity(0.3))
 }

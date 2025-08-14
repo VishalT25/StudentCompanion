@@ -4,7 +4,7 @@ import EventKit
 
 struct SettingsView: View {
     @EnvironmentObject private var themeManager: ThemeManager
-    @EnvironmentObject private var notificationManager: StudentCompanion.NotificationManager
+    @EnvironmentObject private var notificationManager: NotificationManager
     @EnvironmentObject private var calendarSyncManager: CalendarSyncManager
     @AppStorage("liveActivitiesEnabled") private var liveActivitiesEnabled: Bool = true
     @EnvironmentObject private var eventViewModel: EventViewModel
@@ -597,7 +597,7 @@ struct SettingsView_Previews: PreviewProvider {
         return NavigationView {
             SettingsView()
                 .environmentObject(ThemeManager())
-                .environmentObject(StudentCompanion.NotificationManager.shared)
+                .environmentObject(NotificationManager.shared)
                 .environmentObject(previewEventViewModel)
                 .environmentObject(previewCalendarSyncManager)
         }

@@ -10,7 +10,7 @@
 import Foundation
 
 struct EventStore {
-    static func setGoogleId(_ id: String, forLocalId localId: UUID,
+    @MainActor static func setGoogleId(_ id: String, forLocalId localId: UUID,
                             in viewModel: EventViewModel) {
         if let idx = viewModel.events.firstIndex(where: { $0.id == localId }) {
             viewModel.events[idx].googleCalendarIdentifier = id
