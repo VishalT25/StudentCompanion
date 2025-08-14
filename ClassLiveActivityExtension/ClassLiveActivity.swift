@@ -117,7 +117,7 @@ struct ClassLiveActivity: Widget {
                     .padding(5)
                     .background(Circle().fill(context.state.themePrimaryColor().opacity(0.2)))
             }
-            .widgetURL(URL(string: "studentcompanion://openevent/\(context.state.eventName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"))
+            .widgetURL(URL(string: "stuco://openevent/\(context.state.eventName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"))
             .keylineTint(context.state.eventColor())
         }
     }

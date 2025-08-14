@@ -31,8 +31,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "ABA4EE802DD8389E0068853B"
-               BuildableName = "StudentCompanion.app"
-               BlueprintName = "StudentCompanion"
+               BuildableName = "StuCo.app"
+               BlueprintName = "StuCo"
                ReferencedContainer = "container:StudentCompanion.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -72,8 +72,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "ABA4EE802DD8389E0068853B"
-            BuildableName = "StudentCompanion.app"
-            BlueprintName = "StudentCompanion"
+            BuildableName = "StuCo.app"
+            BlueprintName = "StuCo"
             ReferencedContainer = "container:StudentCompanion.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -108,8 +108,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "ABA4EE802DD8389E0068853B"
-            BuildableName = "StudentCompanion.app"
-            BlueprintName = "StudentCompanion"
+            BuildableName = "StuCo.app"
+            BlueprintName = "StuCo"
             ReferencedContainer = "container:StudentCompanion.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

@@ -1,13 +1,11 @@
 //
-//  StudentCompanionUITestsLaunchTests.swift
-//  StudentCompanionUITests
-//
-//  Created by Vishal Thamaraimanalan on 2025-05-16.
+//  StuCoUITestsLaunchTests.swift
+//  StuCoUITests
 //
 
 import XCTest
 
-final class StudentCompanionUITestsLaunchTests: XCTestCase {
+final class StuCoUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true
@@ -17,7 +15,6 @@ final class StudentCompanionUITestsLaunchTests: XCTestCase {
         continueAfterFailure = false
     }
 
-    @MainActor
     func testLaunch() throws {
         let app = XCUIApplication()
         app.launch()

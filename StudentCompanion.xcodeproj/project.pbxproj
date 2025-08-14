@@ -10,6 +10,8 @@
 		AB0FB5472DF8DD0D0037ADA2 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AB0FB5462DF8DD0D0037ADA2 /* WidgetKit.framework */; };
 		AB0FB5492DF8DD0D0037ADA2 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AB0FB5482DF8DD0D0037ADA2 /* SwiftUI.framework */; };
 		AB0FB5582DF8DD0F0037ADA2 /* ClassLiveActivityExtensionExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AB0FB5442DF8DD0D0037ADA2 /* ClassLiveActivityExtensionExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		ABC382302E15983400E4B1CD /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = ABC3822F2E15983400E4B1CD /* GoogleSignIn */; };
+		ABC382332E15985600E4B1CD /* GoogleAPIClientForREST_Calendar in Frameworks */ = {isa = PBXBuildFile; productRef = ABC382322E15985600E4B1CD /* GoogleAPIClientForREST_Calendar */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -54,7 +56,7 @@
 		AB0FB5442DF8DD0D0037ADA2 /* ClassLiveActivityExtensionExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClassLiveActivityExtensionExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB0FB5462DF8DD0D0037ADA2 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		AB0FB5482DF8DD0D0037ADA2 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
-		ABA4EE812DD8389E0068853B /* StudentCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StudentCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		ABA4EE812DD8389E0068853B /* StuCo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StuCo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ABA4EE912DD838A20068853B /* StudentCompanionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StudentCompanionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		ABA4EE9B2DD838A20068853B /* StudentCompanionUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StudentCompanionUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -67,20 +69,20 @@
 			);
 			target = AB0FB5432DF8DD0D0037ADA2 /* ClassLiveActivityExtensionExtension */;
 		};
-		AB0FB55E2DF8DD410037ADA2 /* Exceptions for "ClassLiveActivityExtension" folder in "StudentCompanion" target */ = {
+		AB0FB55E2DF8DD410037ADA2 /* Exceptions for "ClassLiveActivityExtension" folder in "StuCo" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				ClassActivityAttributes.swift,
 			);
-			target = ABA4EE802DD8389E0068853B /* StudentCompanion */;
+			target = ABA4EE802DD8389E0068853B /* StuCo */;
 		};
-		AB0FB5622DF8E1E00037ADA2 /* Exceptions for "StudentCompanion" folder in "StudentCompanion" target */ = {
+		AB0FB5622DF8E1E00037ADA2 /* Exceptions for "StudentCompanion" folder in "StuCo" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				AlternateAppIcons.xcassets,
 				Info.plist,
 			);
-			target = ABA4EE802DD8389E0068853B /* StudentCompanion */;
+			target = ABA4EE802DD8389E0068853B /* StuCo */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -88,7 +90,7 @@
 		AB0FB54A2DF8DD0D0037ADA2 /* ClassLiveActivityExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				AB0FB55E2DF8DD410037ADA2 /* Exceptions for "ClassLiveActivityExtension" folder in "StudentCompanion" target */,
+				AB0FB55E2DF8DD410037ADA2 /* Exceptions for "ClassLiveActivityExtension" folder in "StuCo" target */,
 				AB0FB5592DF8DD0F0037ADA2 /* Exceptions for "ClassLiveActivityExtension" folder in "ClassLiveActivityExtensionExtension" target */,
 			);
 			path = ClassLiveActivityExtension;
@@ -97,7 +99,7 @@
 		ABA4EE832DD8389E0068853B /* StudentCompanion */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				AB0FB5622DF8E1E00037ADA2 /* Exceptions for "StudentCompanion" folder in "StudentCompanion" target */,
+				AB0FB5622DF8E1E00037ADA2 /* Exceptions for "StudentCompanion" folder in "StuCo" target */,
 			);
 			path = StudentCompanion;
 			sourceTree = "<group>";
@@ -128,6 +130,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				ABC382302E15983400E4B1CD /* GoogleSignIn in Frameworks */,
+				ABC382332E15985600E4B1CD /* GoogleAPIClientForREST_Calendar in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -172,7 +176,7 @@
 		ABA4EE822DD8389E0068853B /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				ABA4EE812DD8389E0068853B /* StudentCompanion.app */,
+				ABA4EE812DD8389E0068853B /* StuCo.app */,
 				ABA4EE912DD838A20068853B /* StudentCompanionTests.xctest */,
 				ABA4EE9B2DD838A20068853B /* StudentCompanionUITests.xctest */,
 				AB0FB5442DF8DD0D0037ADA2 /* ClassLiveActivityExtensionExtension.appex */,
@@ -205,9 +209,9 @@
 			productReference = AB0FB5442DF8DD0D0037ADA2 /* ClassLiveActivityExtensionExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
-		ABA4EE802DD8389E0068853B /* StudentCompanion */ = {
+		ABA4EE802DD8389E0068853B /* StuCo */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = ABA4EEA52DD838A20068853B /* Build configuration list for PBXNativeTarget "StudentCompanion" */;
+			buildConfigurationList = ABA4EEA52DD838A20068853B /* Build configuration list for PBXNativeTarget "StuCo" */;
 			buildPhases = (
 				ABA4EE7D2DD8389E0068853B /* Sources */,
 				ABA4EE7E2DD8389E0068853B /* Frameworks */,
@@ -222,11 +226,13 @@
 			fileSystemSynchronizedGroups = (
 				ABA4EE832DD8389E0068853B /* StudentCompanion */,
 			);
-			name = StudentCompanion;
+			name = StuCo;
 			packageProductDependencies = (
+				ABC3822F2E15983400E4B1CD /* GoogleSignIn */,
+				ABC382322E15985600E4B1CD /* GoogleAPIClientForREST_Calendar */,
 			);
 			productName = StudentCompanion;
-			productReference = ABA4EE812DD8389E0068853B /* StudentCompanion.app */;
+			productReference = ABA4EE812DD8389E0068853B /* StuCo.app */;
 			productType = "com.apple.product-type.application";
 		};
 		ABA4EE902DD838A20068853B /* StudentCompanionTests */ = {
@@ -310,12 +316,16 @@
 			);
 			mainGroup = ABA4EE782DD8389E0068853B;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				ABC3822E2E15983400E4B1CD /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				ABC382312E15985600E4B1CD /* XCRemoteSwiftPackageReference "google-api-objectivec-client-for-rest" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = ABA4EE822DD8389E0068853B /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				ABA4EE802DD8389E0068853B /* StudentCompanion */,
+				ABA4EE802DD8389E0068853B /* StuCo */,
 				ABA4EE902DD838A20068853B /* StudentCompanionTests */,
 				ABA4EE9A2DD838A20068853B /* StudentCompanionUITests */,
 				AB0FB5432DF8DD0D0037ADA2 /* ClassLiveActivityExtensionExtension */,
@@ -393,12 +403,12 @@
 		};
 		ABA4EE932DD838A20068853B /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = ABA4EE802DD8389E0068853B /* StudentCompanion */;
+			target = ABA4EE802DD8389E0068853B /* StuCo */;
 			targetProxy = ABA4EE922DD838A20068853B /* PBXContainerItemProxy */;
 		};
 		ABA4EE9D2DD838A20068853B /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = ABA4EE802DD8389E0068853B /* StudentCompanion */;
+			target = ABA4EE802DD8389E0068853B /* StuCo */;
 			targetProxy = ABA4EE9C2DD838A20068853B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -589,11 +599,13 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = /Users/vtham/Desktop/StudentCompanion/StudentCompanion/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = StuCo;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -619,11 +631,13 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = /Users/vtham/Desktop/StudentCompanion/StudentCompanion/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = StuCo;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -730,7 +744,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		ABA4EEA52DD838A20068853B /* Build configuration list for PBXNativeTarget "StudentCompanion" */ = {
+		ABA4EEA52DD838A20068853B /* Build configuration list for PBXNativeTarget "StuCo" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				ABA4EEA62DD838A20068853B /* Debug */,
@@ -758,6 +772,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		ABC3822E2E15983400E4B1CD /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.0.0;
+			};
+		};
+		ABC382312E15985600E4B1CD /* XCRemoteSwiftPackageReference "google-api-objectivec-client-for-rest" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/google-api-objectivec-client-for-rest";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		ABC3822F2E15983400E4B1CD /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABC3822E2E15983400E4B1CD /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+		ABC382322E15985600E4B1CD /* GoogleAPIClientForREST_Calendar */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABC382312E15985600E4B1CD /* XCRemoteSwiftPackageReference "google-api-objectivec-client-for-rest" */;
+			productName = GoogleAPIClientForREST_Calendar;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = ABA4EE792DD8389E0068853B /* Project object */;
 }
