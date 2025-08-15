@@ -45,6 +45,7 @@ struct SwipePageView: View {
     @State private var showingSettings = false
     @State private var showingResources = false
     @State private var showingGame = false
+    @State private var showingNotificationCenter = false
     
     init(navigateToPage: Binding<PageType?> = .constant(nil)) {
         self._navigateToPage = navigateToPage
@@ -183,6 +184,12 @@ struct SwipePageView: View {
                     }
             }
         }
+        .fullScreenCover(isPresented: $showingNotificationCenter) {
+            NotificationCenterView()
+                .environmentObject(themeManager)
+                .environmentObject(viewModel)
+                .environmentObject(NotificationManager.shared)
+        }
         .onChange(of: selectedRoute) { newRoute in
             if let route = newRoute {
                 switch route {
@@ -268,7 +275,7 @@ struct SwipePageView: View {
                     }
                     
                     VStack(alignment: .trailing, spacing: 0) {
-                        Text(Date(), style: .date)
+                        Text(Date(), format: Date.FormatStyle().weekday(.wide).day().month())
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                     }
@@ -306,7 +313,7 @@ struct SwipePageView: View {
                 
                 Button {
                     withAnimation(.spring()) {
-                        showMenu.toggle()
+                        showingNotificationCenter = true
                     }
                 } label: {
                     Image(systemName: "bell.fill")
@@ -319,8 +326,8 @@ struct SwipePageView: View {
                                 .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.15), radius: 2, x: 0, y: 1)
                         )
                 }
-                .scaleEffect(showMenu ? 0.95 : 1.0)
-                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: showMenu)
+                .scaleEffect(showingNotificationCenter ? 0.95 : 1.0)
+                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: showingNotificationCenter)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 12)

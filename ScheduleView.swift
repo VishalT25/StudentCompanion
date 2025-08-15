@@ -3,13 +3,11 @@ import SwiftUI
 enum ScheduleViewType: String, CaseIterable {
     case cards = "Cards"
     case timeline = "Timeline"
-    case overview = "Overview"
     
     var icon: String {
         switch self {
         case .cards: return "rectangle.stack"
         case .timeline: return "timeline.selection"
-        case .overview: return "calendar"
         }
     }
 }
@@ -25,62 +23,137 @@ struct ScheduleView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 24) {
-                    headerView
-                    
-                    if let activeSchedule = scheduleManager.activeSchedule {
-                        switch viewType {
-                        case .cards:
-                            scheduleOverviewCard(activeSchedule)
-                            dayScheduleView(activeSchedule)
-                        case .timeline:
-                            timelineView(activeSchedule)
-                        case .overview:
-                            fullWeekOverviewView(activeSchedule)
+            ZStack {
+                // Main scrollable content
+                ScrollView {
+                    VStack(spacing: 24) {
+                        headerView
+                        
+                        if let activeSchedule = scheduleManager.activeSchedule {
+                            switch viewType {
+                            case .cards:
+                                scheduleOverviewCard(activeSchedule)
+                                dayScheduleView(activeSchedule)
+                            case .timeline:
+                                VStack(spacing: 20) {
+                                    // Day selector (temporary simplified version)
+                                    VStack(spacing: 16) {
+                                        HStack {
+                                            Text("Daily Timeline")
+                                                .font(.headline.weight(.semibold))
+                                                .foregroundColor(.primary)
+                                            
+                                            Spacer()
+                                            
+                                            let dayClasses = activeSchedule.scheduleItems.filter { $0.daysOfWeek.contains(selectedDay) }
+                                            if !dayClasses.isEmpty {
+                                                Text("\(dayClasses.count) items")
+                                                    .font(.caption.weight(.semibold))
+                                                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                                                    .padding(.horizontal, 10)
+                                                    .padding(.vertical, 6)
+                                                    .background(
+                                                        RoundedRectangle(cornerRadius: 8)
+                                                            .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+                                                    )
+                                            }
+                                        }
+                                        
+                                        // Day selector buttons
+                                        HStack(spacing: 8) {
+                                            ForEach(DayOfWeek.allCases, id: \.self) { day in
+                                                let dayClasses = activeSchedule.scheduleItems.filter { $0.daysOfWeek.contains(day) }
+                                                let isSelected = selectedDay == day
+                                                
+                                                Button(action: {
+                                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                                        selectedDay = day
+                                                    }
+                                                }) {
+                                                    VStack(spacing: 4) {
+                                                        Text(day.shortName)
+                                                            .font(.caption.weight(.semibold))
+                                                            .foregroundColor(isSelected ? .white : .primary)
+                                                        
+                                                        Text("\(dayClasses.count)")
+                                                            .font(.caption2.weight(.bold))
+                                                            .foregroundColor(isSelected ? .white : themeManager.currentTheme.primaryColor)
+                                                    }
+                                                    .frame(maxWidth: .infinity)
+                                                    .padding(.vertical, 8)
+                                                    .background(
+                                                        RoundedRectangle(cornerRadius: 8)
+                                                            .fill(isSelected ? themeManager.currentTheme.primaryColor : Color(.systemGray6))
+                                                    )
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                    }
+                                    .padding(16)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .fill(Color(.systemBackground))
+                                            .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+                                    )
+                                    
+                                    // Timeline view
+                                    TimelineView(schedule: activeSchedule, selectedDay: selectedDay)
+                                        .environmentObject(scheduleManager)
+                                        .environmentObject(themeManager)
+                                }
+                            }
+                        } else {
+                            emptyStateView
                         }
-                    } else {
-                        emptyStateView
+                        
+                        Spacer(minLength: 100)
                     }
-                    
-                    Spacer(minLength: 100)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 10)
-            }
-            .background(Color(.systemGroupedBackground))
-            .refreshable {
-                // Refresh live activities or other schedule-related data
+                .background(Color(.systemGroupedBackground))
+                .refreshable {
+                    // Refresh live activities or other schedule-related data
+                }
+                
+                // Fixed floating action buttons
+                VStack {
+                    Spacer()
+                    
+                    HStack {
+                        Spacer()
+                        
+                        VStack(spacing: 12) {
+                            // Schedule Manager Button
+                            Button(action: { showingScheduleManager = true }) {
+                                Image(systemName: "calendar.badge.clock")
+                                    .font(.headline.bold())
+                                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                                    .padding(14)
+                                    .background(Circle().fill(themeManager.currentTheme.secondaryColor.opacity(0.2)))
+                                    .overlay(Circle().stroke(themeManager.currentTheme.secondaryColor.opacity(0.4), lineWidth: 1))
+                                    .shadow(color: themeManager.currentTheme.secondaryColor.opacity(0.2), radius: 6, x: 0, y: 3)
+                            }
+                            
+                            // Add Class Button
+                            Button(action: { showingAddClass = true }) {
+                                Image(systemName: "plus")
+                                    .font(.title2.bold())
+                                    .foregroundColor(.white)
+                                    .padding(20)
+                                    .background(Circle().fill(themeManager.currentTheme.primaryColor))
+                                    .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                            }
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 20)
+                    }
+                }
             }
             .navigationBarHidden(true)
         }
         .navigationViewStyle(StackNavigationViewStyle())
-        .overlay(alignment: .bottomTrailing) {
-            VStack(spacing: 12) {
-                // Schedule Manager Button
-                Button(action: { showingScheduleManager = true }) {
-                    Image(systemName: "calendar.badge.clock")
-                        .font(.headline.bold())
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .padding(14)
-                        .background(Circle().fill(themeManager.currentTheme.secondaryColor.opacity(0.2)))
-                        .overlay(Circle().stroke(themeManager.currentTheme.secondaryColor.opacity(0.4), lineWidth: 1))
-                        .shadow(color: themeManager.currentTheme.secondaryColor.opacity(0.2), radius: 6, x: 0, y: 3)
-                }
-                
-                // Add Class Button
-                Button(action: { showingAddClass = true }) {
-                    Image(systemName: "plus")
-                        .font(.title2.bold())
-                        .foregroundColor(.white)
-                        .padding(20)
-                        .background(Circle().fill(themeManager.currentTheme.primaryColor))
-                        .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.3), radius: 8, x: 0, y: 4)
-                }
-            }
-            .padding(.trailing, 20)
-            .padding(.bottom, 20)
-        }
         .sheet(isPresented: $showingScheduleManager) {
             ScheduleManagerView()
                 .environmentObject(scheduleManager)
@@ -120,111 +193,32 @@ struct ScheduleView: View {
                 }
                 
                 Spacer()
-            }
-            
-            // View Type Selector
-            HStack(spacing: 8) {
-                ForEach(ScheduleViewType.allCases, id: \.self) { type in
-                    Button(action: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                            viewType = type
-                        }
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: type.icon)
-                                .font(.caption.weight(.semibold))
-                            Text(type.rawValue)
-                                .font(.caption.weight(.semibold))
-                        }
-                        .foregroundColor(viewType == type ? .white : themeManager.currentTheme.primaryColor)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(viewType == type ? themeManager.currentTheme.primaryColor : themeManager.currentTheme.primaryColor.opacity(0.1))
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
                 
-                Spacer()
-            }
-        }
-    }
-    
-    // MARK: - Timeline View
-    private func timelineView(_ schedule: ScheduleCollection) -> some View {
-        VStack(spacing: 16) {
-            // Day selector for timeline view
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(DayOfWeek.allCases, id: \.self) { day in
-                        let dayClasses = schedule.scheduleItems.filter { $0.daysOfWeek.contains(day) }
-                        
+                // View Type Selector - icons only
+                HStack(spacing: 6) {
+                    ForEach(ScheduleViewType.allCases, id: \.self) { type in
                         Button(action: {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                selectedDay = day
+                                viewType = type
                             }
                         }) {
-                            VStack(spacing: 4) {
-                                Text(day.shortName)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundColor(selectedDay == day ? .white : .primary)
-                                
-                                Text("\(dayClasses.count)")
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundColor(selectedDay == day ? .white : themeManager.currentTheme.primaryColor)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(selectedDay == day ? themeManager.currentTheme.primaryColor : Color(.systemGray6))
-                            )
+                            Image(systemName: type.icon)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(viewType == type ? .white : themeManager.currentTheme.primaryColor)
+                                .padding(8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(viewType == type ? themeManager.currentTheme.primaryColor : themeManager.currentTheme.primaryColor.opacity(0.1))
+                                )
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 20)
             }
             
-            // Timeline for selected day
-            TimelineScheduleView(schedule: schedule, selectedDay: selectedDay)
-                .environmentObject(scheduleManager)
-                .environmentObject(themeManager)
         }
     }
     
-    // MARK: - Full Week Overview
-    private func fullWeekOverviewView(_ schedule: ScheduleCollection) -> some View {
-        VStack(spacing: 16) {
-            HStack {
-                Text("Week Overview")
-                    .font(.title2.bold())
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                Text("Fall Session")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(themeManager.currentTheme.tertiaryColor.opacity(0.5))
-                    .cornerRadius(8)
-            }
-            
-            WeeklyCalendarView(schedule: schedule)
-                .environmentObject(scheduleManager)
-                .environmentObject(themeManager)
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
-        )
-    }
     
     private func scheduleOverviewCard(_ schedule: ScheduleCollection) -> some View {
         VStack(spacing: 16) {
@@ -250,7 +244,6 @@ struct ScheduleView: View {
                 }
             }
             
-            // Week overview
             weekOverviewGrid(schedule)
         }
         .padding(20)
@@ -386,413 +379,6 @@ struct ScheduleView: View {
     }
 }
 
-// MARK: - Timeline Schedule View
-struct TimelineScheduleView: View {
-    @EnvironmentObject var scheduleManager: ScheduleManager
-    @EnvironmentObject var themeManager: ThemeManager
-    let schedule: ScheduleCollection
-    let selectedDay: DayOfWeek
-    
-    private let timeSlots: [String] = {
-        var slots: [String] = []
-        for hour in 7...22 {
-            let time = String(format: "%02d:00", hour)
-            slots.append(time)
-        }
-        return slots
-    }()
-    
-    var body: some View {
-        let dayClasses = schedule.scheduleItems
-            .filter { $0.daysOfWeek.contains(selectedDay) }
-            .sorted { $0.startTime < $1.startTime }
-        
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("\(selectedDay.displayName) Timeline")
-                    .font(.headline.weight(.semibold))
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                if !dayClasses.isEmpty {
-                    Text("\(dayClasses.count) class\(dayClasses.count == 1 ? "" : "es")")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
-            
-            if dayClasses.isEmpty {
-                EmptyDayView(day: selectedDay.shortName)
-                    .environmentObject(themeManager)
-                    .padding(.horizontal, 20)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(timeSlots, id: \.self) { timeSlot in
-                            TimeSlotRow(
-                                timeSlot: timeSlot,
-                                classes: dayClasses,
-                                scheduleID: schedule.id,
-                                selectedDay: selectedDay
-                            )
-                            .environmentObject(scheduleManager)
-                            .environmentObject(themeManager)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                }
-                .frame(maxHeight: 600)
-            }
-        }
-        .padding(.vertical, 20)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
-        )
-    }
-}
-
-// MARK: - Time Slot Row
-struct TimeSlotRow: View {
-    @EnvironmentObject var scheduleManager: ScheduleManager
-    @EnvironmentObject var themeManager: ThemeManager
-    let timeSlot: String
-    let classes: [ScheduleItem]
-    let scheduleID: UUID
-    let selectedDay: DayOfWeek
-    
-    private let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.timeStyle = .short
-        return f
-    }()
-    
-    private var hour: Int {
-        Int(timeSlot.prefix(2)) ?? 0
-    }
-    
-    private var classesInThisHour: [ScheduleItem] {
-        classes.filter { item in
-            let startHour = Calendar.current.component(.hour, from: item.startTime)
-            let endHour = Calendar.current.component(.hour, from: item.endTime)
-            return hour >= startHour && hour < endHour
-        }
-    }
-    
-    var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            // Time label
-            VStack(spacing: 2) {
-                Text(timeSlot)
-                    .font(.caption.weight(.medium))
-                    .foregroundColor(.secondary)
-                    .frame(width: 40, alignment: .trailing)
-                
-                if hour < 22 {
-                    Rectangle()
-                        .fill(Color(.systemGray5))
-                        .frame(width: 1, height: 40)
-                }
-            }
-            
-            // Classes content
-            VStack(spacing: 8) {
-                if classesInThisHour.isEmpty {
-                    Rectangle()
-                        .fill(Color.clear)
-                        .frame(height: 40)
-                } else {
-                    ForEach(classesInThisHour) { item in
-                        TimelineClassCard(
-                            item: item,
-                            scheduleID: scheduleID,
-                            selectedDay: selectedDay
-                        )
-                        .environmentObject(scheduleManager)
-                        .environmentObject(themeManager)
-                    }
-                }
-                
-                if hour < 22 {
-                    Divider()
-                        .padding(.top, 8)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-// MARK: - Timeline Class Card
-struct TimelineClassCard: View {
-    @EnvironmentObject var scheduleManager: ScheduleManager
-    @EnvironmentObject var themeManager: ThemeManager
-    let item: ScheduleItem
-    let scheduleID: UUID
-    let selectedDay: DayOfWeek
-    @State private var showingEditSheet = false
-    
-    private let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.timeStyle = .short
-        return f
-    }()
-    
-    private var instanceDateForSelectedDay: Date {
-        let calendar = Calendar.current
-        let today = Date()
-        
-        if selectedDay.rawValue == Calendar.current.component(.weekday, from: Date()) {
-            return Calendar.current.startOfDay(for: Date())
-        }
-        var components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: today)
-        components.weekday = selectedDay.rawValue
-        return calendar.date(from: components) ?? today
-    }
-    
-    private var isSkipped: Bool {
-        item.isSkipped(onDate: instanceDateForSelectedDay)
-    }
-    
-    private var timeRange: String {
-        let startTime = timeFormatter.string(from: item.startTime)
-        let endTime = timeFormatter.string(from: item.endTime)
-        return "\(startTime) - \(endTime)"
-    }
-    
-    var body: some View {
-        Button(action: { showingEditSheet = true }) {
-            HStack(spacing: 12) {
-                // Color bar
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(isSkipped ? Color.secondary.opacity(0.4) : item.color)
-                    .frame(width: 4)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(item.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(isSkipped ? .secondary : .primary)
-                            .lineLimit(1)
-                        
-                        Spacer()
-                        
-                        if isSkipped {
-                            Text("SKIPPED")
-                                .font(.caption2.weight(.bold))
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Color.orange.opacity(0.2))
-                                .foregroundColor(.orange)
-                                .cornerRadius(3)
-                        }
-                    }
-                    
-                    Text(timeRange)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        scheduleManager.toggleSkip(forItem: item, onDate: instanceDateForSelectedDay, in: scheduleID)
-                    }
-                }) {
-                    Image(systemName: isSkipped ? "arrow.clockwise" : "xmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundColor(isSkipped ? .green : .orange)
-                        .padding(8)
-                        .background(
-                            Circle()
-                                .fill((isSkipped ? Color.green : Color.orange).opacity(0.15))
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isSkipped ? Color(.systemGray6).opacity(0.5) : item.color.opacity(0.1))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke((isSkipped ? Color.secondary : item.color).opacity(0.3), lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .sheet(isPresented: $showingEditSheet) {
-            EnhancedScheduleEditView(scheduleItem: item, scheduleID: scheduleID)
-                .environmentObject(scheduleManager)
-                .environmentObject(themeManager)
-        }
-    }
-}
-
-// MARK: - Weekly Calendar View
-struct WeeklyCalendarView: View {
-    @EnvironmentObject var scheduleManager: ScheduleManager
-    @EnvironmentObject var themeManager: ThemeManager
-    let schedule: ScheduleCollection
-    
-    private let timeSlots: [String] = {
-        var slots: [String] = []
-        for hour in 7...22 {
-            slots.append(String(format: "%d:00 %@", hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour), hour >= 12 ? "PM" : "AM"))
-        }
-        return slots
-    }()
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header with days
-            HStack(spacing: 0) {
-                Text("Time")
-                    .font(.caption.weight(.medium))
-                    .foregroundColor(.secondary)
-                    .frame(width: 60, alignment: .leading)
-                
-                ForEach(DayOfWeek.weekdays, id: \.self) { day in
-                    Text(day.shortName)
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.primary)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(.vertical, 8)
-            .background(Color(.systemGray6))
-            
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(timeSlots.enumerated()), id: \.offset) { index, timeSlot in
-                        CalendarTimeRow(
-                            timeSlot: timeSlot,
-                            hour: index + 7,
-                            schedule: schedule
-                        )
-                        .environmentObject(scheduleManager)
-                        .environmentObject(themeManager)
-                    }
-                }
-            }
-            .frame(maxHeight: 500)
-        }
-        .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(.systemGray4), lineWidth: 0.5)
-        )
-    }
-}
-
-// MARK: - Calendar Time Row
-struct CalendarTimeRow: View {
-    @EnvironmentObject var scheduleManager: ScheduleManager
-    @EnvironmentObject var themeManager: ThemeManager
-    let timeSlot: String
-    let hour: Int
-    let schedule: ScheduleCollection
-    
-    var body: some View {
-        HStack(spacing: 0) {
-            // Time label
-            Text(timeSlot)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .frame(width: 60, alignment: .leading)
-            
-            // Days
-            ForEach(DayOfWeek.weekdays, id: \.self) { day in
-                let classesInThisSlot = schedule.scheduleItems.filter { item in
-                    item.daysOfWeek.contains(day) &&
-                    Calendar.current.component(.hour, from: item.startTime) <= hour &&
-                    Calendar.current.component(.hour, from: item.endTime) > hour
-                }
-                
-                VStack(spacing: 2) {
-                    if classesInThisSlot.isEmpty {
-                        Rectangle()
-                            .fill(Color.clear)
-                            .frame(height: 30)
-                    } else {
-                        ForEach(classesInThisSlot.prefix(1)) { item in
-                            CalendarClassBlock(item: item, scheduleID: schedule.id)
-                                .environmentObject(scheduleManager)
-                                .environmentObject(themeManager)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .overlay(
-                    Rectangle()
-                        .stroke(Color(.systemGray5), lineWidth: 0.5)
-                )
-            }
-        }
-        .frame(height: 30)
-    }
-}
-
-// MARK: - Calendar Class Block
-struct CalendarClassBlock: View {
-    @EnvironmentObject var scheduleManager: ScheduleManager
-    @EnvironmentObject var themeManager: ThemeManager
-    let item: ScheduleItem
-    let scheduleID: UUID
-    @State private var showingEditSheet = false
-    
-    var body: some View {
-        Button(action: { showingEditSheet = true }) {
-            VStack(spacing: 1) {
-                Text(item.title)
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                
-                Text("LEC 001")
-                    .font(.system(size: 7, weight: .medium))
-                    .foregroundColor(.white.opacity(0.8))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(item.color)
-            )
-        }
-        .buttonStyle(.plain)
-        .sheet(isPresented: $showingEditSheet) {
-            EnhancedScheduleEditView(scheduleItem: item, scheduleID: scheduleID)
-                .environmentObject(scheduleManager)
-                .environmentObject(themeManager)
-        }
-    }
-}
-
-// MARK: - Extensions
-extension DayOfWeek {
-    static let weekdays: [DayOfWeek] = [.monday, .tuesday, .wednesday, .thursday, .friday]
-    
-    var displayName: String {
-        switch self {
-        case .sunday: return "Sunday"
-        case .monday: return "Monday"
-        case .tuesday: return "Tuesday"
-        case .wednesday: return "Wednesday"
-        case .thursday: return "Thursday"
-        case .friday: return "Friday"
-        case .saturday: return "Saturday"
-        }
-    }
-}
-
 struct BeautifulScheduleRow: View {
     @EnvironmentObject var scheduleManager: ScheduleManager
     @EnvironmentObject var themeManager: ThemeManager
@@ -825,8 +411,9 @@ struct BeautifulScheduleRow: View {
     
     private var duration: String {
         let interval = item.endTime.timeIntervalSince(item.startTime)
-        let hours = Int(interval) / 3600
-        let minutes = Int(interval.truncatingRemainder(dividingBy: 3600)) / 60
+        let totalMinutes = Int(interval) / 60
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
         
         if hours > 0 {
             return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h"
@@ -844,14 +431,11 @@ struct BeautifulScheduleRow: View {
     var body: some View {
         Button(action: { showingEditSheet = true }) {
             HStack(spacing: 16) {
-                // Color indicator bar
                 RoundedRectangle(cornerRadius: 3)
                     .fill(isSkipped ? Color.secondary.opacity(0.4) : item.color)
                     .frame(width: 4, height: 50)
                 
-                // Main content
                 VStack(alignment: .leading, spacing: 6) {
-                    // Title and skip indicator
                     HStack {
                         Text(item.title)
                             .font(.headline.weight(.semibold))
@@ -871,7 +455,6 @@ struct BeautifulScheduleRow: View {
                         }
                     }
                     
-                    // Time and duration info
                     HStack(spacing: 16) {
                         HStack(spacing: 4) {
                             Image(systemName: "clock")
@@ -893,7 +476,6 @@ struct BeautifulScheduleRow: View {
                         
                         Spacer()
                         
-                        // Days indicator
                         Text(daysText)
                             .font(.caption.weight(.medium))
                             .padding(.horizontal, 8)
@@ -904,7 +486,6 @@ struct BeautifulScheduleRow: View {
                     }
                 }
                 
-                // Action button
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         scheduleManager.toggleSkip(forItem: item, onDate: instanceDateForSelectedDay, in: scheduleID)
@@ -973,14 +554,14 @@ struct EmptyDayView: View {
         VStack(spacing: 16) {
             Image(systemName: "moon.zzz")
                 .font(.system(size: 40))
-                .foregroundColor(themeManager.currentTheme.primaryColor.opacity(0.6))
+                .foregroundColor(themeManager.currentTheme.primaryColor.opacity(0.6));
             
             VStack(spacing: 8) {
                 Text("Free Day!")
                     .font(.headline.weight(.semibold))
                     .foregroundColor(.primary)
                 
-                Text("No classes scheduled for \(day)")
+                Text("No items scheduled for \(day)")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -995,64 +576,498 @@ struct EmptyDayView: View {
     }
 }
 
-struct DayButton: View {
-    let day: DayOfWeek
-    let isSelected: Bool
-    let themeColor: Color
-    let action: () -> Void
+// MARK: - Timeline View
+struct TimelineView: View {
+    @EnvironmentObject var scheduleManager: ScheduleManager
+    @EnvironmentObject var themeManager: ThemeManager
+    let schedule: ScheduleCollection
+    let selectedDay: DayOfWeek
+    
+    private var dayClasses: [ScheduleItem] {
+        schedule.scheduleItems
+            .filter { $0.daysOfWeek.contains(selectedDay) }
+            .sorted { $0.startTime < $1.startTime }
+    }
+    
+    private let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        return f
+    }()
+    
+    // Calculate the time range for the timeline
+    private var timeRange: (start: Date, end: Date) {
+        guard !dayClasses.isEmpty else {
+            // Default range: 8 AM to 6 PM
+            let calendar = Calendar.current
+            let now = Date()
+            let start = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: now) ?? now
+            let end = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: now) ?? now
+            return (start, end)
+        }
+        
+        let firstClass = dayClasses.first!
+        let lastClass = dayClasses.last!
+        
+        let calendar = Calendar.current
+        
+        // Start one hour before first class, rounded down to nearest hour
+        let startHour = calendar.component(.hour, from: firstClass.startTime)
+        let startMinute = calendar.component(.minute, from: firstClass.startTime)
+        
+        // Go back 1 hour and round down to the nearest hour
+        let paddedStartHour = startHour - 1
+        let start = calendar.date(bySettingHour: paddedStartHour, minute: 0, second: 0, of: firstClass.startTime) ?? firstClass.startTime
+        
+        // End one hour after last class, rounded up to nearest hour
+        let endHour = calendar.component(.hour, from: lastClass.endTime)
+        let endMinute = calendar.component(.minute, from: lastClass.endTime)
+        
+        // Go forward 1-2 hours and round up to the nearest hour
+        let paddedEndHour = endHour + (endMinute > 0 ? 2 : 1)
+        let end = calendar.date(bySettingHour: paddedEndHour, minute: 0, second: 0, of: lastClass.endTime) ?? lastClass.endTime
+        
+        return (start, end)
+    }
+    
+    // Generate time slots (30-minute intervals)
+    private var timeSlots: [Date] {
+        let calendar = Calendar.current
+        var slots: [Date] = []
+        var current = timeRange.start
+        
+        while current <= timeRange.end {
+            slots.append(current)
+            current = calendar.date(byAdding: .minute, value: 30, to: current) ?? current
+        }
+        
+        return slots
+    }
+    
+    // Height per 30-minute slot
+    private let slotHeight: CGFloat = 40
+    
+    // Convert time to Y position
+    private func yPosition(for date: Date) -> CGFloat {
+        let timeInterval = date.timeIntervalSince(timeRange.start)
+        let thirtyMinuteSlots = timeInterval / (30 * 60)
+        return CGFloat(thirtyMinuteSlots) * slotHeight
+    }
+    
+    // Calculate height for a class duration
+    private func height(for item: ScheduleItem) -> CGFloat {
+        let duration = item.endTime.timeIntervalSince(item.startTime)
+        let thirtyMinuteSlots = duration / (30 * 60)
+        return CGFloat(thirtyMinuteSlots) * slotHeight
+    }
     
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                // Day abbreviation with better styling
-                Text(day.shortName)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundColor(isSelected ? .white : .primary)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("\(selectedDay.displayName)")
+                    .font(.title2.weight(.semibold))
+                    .foregroundColor(.primary)
                 
-                // Active indicator with animation
-                Circle()
-                    .fill(isSelected ? Color.white.opacity(0.9) : themeColor.opacity(0.4))
-                    .frame(width: 5, height: 5)
-                    .scaleEffect(isSelected ? 1.2 : 0.8)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isSelected)
+                Spacer()
+                
+                if !dayClasses.isEmpty {
+                    let firstClass = dayClasses.first!
+                    let lastClass = dayClasses.last!
+                    
+                    Text("\(timeFormatter.string(from: firstClass.startTime)) - \(timeFormatter.string(from: lastClass.endTime))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(themeManager.currentTheme.tertiaryColor.opacity(0.5))
+                        .cornerRadius(8)
+                }
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 56)
+            
+            if dayClasses.isEmpty {
+                EmptyDayView(day: selectedDay.shortName)
+                    .environmentObject(themeManager)
+            } else {
+                // Single unified timeline view - no inner ScrollView
+                ZStack(alignment: .topLeading) {
+                    // Time axis background
+                    VStack(spacing: 0) {
+                        ForEach(Array(timeSlots.enumerated()), id: \.offset) { index, timeSlot in
+                            HStack {
+                                // Time label
+                                Text(timeFormatter.string(from: timeSlot))
+                                    .font(.caption.weight(.medium))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 60, alignment: .trailing)
+                                
+                                // Grid line
+                                Rectangle()
+                                    .fill(Color.secondary.opacity(index % 2 == 0 ? 0.2 : 0.1))
+                                    .frame(height: 1)
+                            }
+                            .frame(height: slotHeight)
+                        }
+                    }
+                    
+                    // Class blocks and gaps overlay
+                    HStack(alignment: .top, spacing: 0) {
+                        // Time column spacer
+                        Spacer()
+                            .frame(width: 76)
+                        
+                        // Content area
+                        ZStack(alignment: .topLeading) {
+                            // Background for content area
+                            Rectangle()
+                                .fill(Color.clear)
+                                .frame(height: CGFloat(timeSlots.count) * slotHeight)
+                            
+                            // Class blocks
+                            ForEach(dayClasses) { item in
+                                TimelineClassBlock(
+                                    item: item,
+                                    scheduleID: schedule.id,
+                                    selectedDay: selectedDay,
+                                    yOffset: yPosition(for: item.startTime),
+                                    blockHeight: height(for: item)
+                                )
+                                .environmentObject(scheduleManager)
+                                .environmentObject(themeManager)
+                            }
+                            
+                            // Gap indicators
+                            ForEach(Array(gapElements.enumerated()), id: \.offset) { _, gap in
+                                TimelineGapIndicator(
+                                    startTime: gap.startTime,
+                                    endTime: gap.endTime,
+                                    duration: gap.duration,
+                                    yOffset: yPosition(for: gap.startTime),
+                                    gapHeight: yPosition(for: gap.endTime) - yPosition(for: gap.startTime)
+                                )
+                                .environmentObject(themeManager)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.systemBackground))
+                .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
+        )
+    }
+    
+    // Calculate gaps between classes
+    private var gapElements: [(startTime: Date, endTime: Date, duration: TimeInterval)] {
+        var gaps: [(startTime: Date, endTime: Date, duration: TimeInterval)] = []
+        
+        for i in 0..<(dayClasses.count - 1) {
+            let currentClass = dayClasses[i]
+            let nextClass = dayClasses[i + 1]
+            let gapDuration = nextClass.startTime.timeIntervalSince(currentClass.endTime)
+            
+            if gapDuration > 0 {
+                gaps.append((
+                    startTime: currentClass.endTime,
+                    endTime: nextClass.startTime,
+                    duration: gapDuration
+                ))
+            }
+        }
+        
+        return gaps
+    }
+}
+
+// MARK: - Timeline Class Block
+struct TimelineClassBlock: View {
+    @EnvironmentObject var scheduleManager: ScheduleManager
+    @EnvironmentObject var themeManager: ThemeManager
+    let item: ScheduleItem
+    let scheduleID: UUID
+    let selectedDay: DayOfWeek
+    let yOffset: CGFloat
+    let blockHeight: CGFloat
+    @State private var showingEditSheet = false
+    
+    private let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        return f
+    }()
+    
+    private var instanceDateForSelectedDay: Date {
+        let calendar = Calendar.current
+        let today = Date()
+        
+        if selectedDay.rawValue == Calendar.current.component(.weekday, from: Date()) {
+            return Calendar.current.startOfDay(for: Date())
+        }
+        var components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: today)
+        components.weekday = selectedDay.rawValue
+        return calendar.date(from: components) ?? today
+    }
+    
+    private var isSkipped: Bool {
+        item.isSkipped(onDate: instanceDateForSelectedDay)
+    }
+    
+    private var duration: String {
+        let interval = item.endTime.timeIntervalSince(item.startTime)
+        let totalMinutes = Int(interval) / 60
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        
+        if hours > 0 {
+            return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h"
+        } else {
+            return "\(minutes)m"
+        }
+    }
+    
+    var body: some View {
+        Button(action: { showingEditSheet = true }) {
+            HStack(spacing: 12) {
+                // Color indicator
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(isSkipped ? Color.secondary.opacity(0.4) : item.color)
+                    .frame(width: 4)
+                
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(item.title)
+                            .font(.headline.weight(.semibold))
+                            .foregroundColor(isSkipped ? .secondary : .primary)
+                            .lineLimit(1)
+                        
+                        Spacer()
+                        
+                        if isSkipped {
+                            Text("SKIPPED")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.orange.opacity(0.2))
+                                .foregroundColor(.orange)
+                                .cornerRadius(3)
+                        }
+                    }
+                    
+                    HStack {
+                        Text("\(timeFormatter.string(from: item.startTime)) - \(timeFormatter.string(from: item.endTime))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                        
+                        Text(duration)
+                            .font(.caption.weight(.medium))
+                            .foregroundColor(item.color)
+                    }
+                    
+                    if blockHeight > 80 {
+                        Spacer()
+                        
+                        HStack {
+                            Spacer()
+                            
+                            Button(action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    scheduleManager.toggleSkip(forItem: item, onDate: instanceDateForSelectedDay, in: scheduleID)
+                                }
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: isSkipped ? "arrow.clockwise" : "xmark")
+                                        .font(.caption.weight(.bold))
+                                    Text(isSkipped ? "Restore" : "Skip")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .foregroundColor(isSkipped ? .green : .orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill((isSkipped ? Color.green : Color.orange).opacity(0.15))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .stroke((isSkipped ? Color.green : Color.orange).opacity(0.3), lineWidth: 1)
+                                        )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: blockHeight)
             .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(isSelected ? 
-                          LinearGradient(
-                            colors: [themeColor, themeColor.opacity(0.8)],
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(
+                        isSkipped ?
+                        LinearGradient(
+                            colors: [Color(.systemGray6).opacity(0.5), Color(.systemGray6).opacity(0.3)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
-                          ) : 
-                          LinearGradient(
-                            colors: [Color(.systemGray6), Color(.systemGray5)],
+                        ) :
+                        LinearGradient(
+                            colors: [item.color.opacity(0.1), item.color.opacity(0.05)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
-                          )
+                        )
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16)
+                        RoundedRectangle(cornerRadius: 8)
                             .stroke(
-                                isSelected ? 
-                                themeColor.opacity(0.6) : 
-                                Color(.systemGray4).opacity(0.5), 
-                                lineWidth: isSelected ? 2 : 1
+                                (isSkipped ? Color.secondary : item.color).opacity(0.3),
+                                lineWidth: 1.5
                             )
                     )
-                    .shadow(
-                        color: isSelected ? 
-                        themeColor.opacity(0.3) : 
-                        Color.black.opacity(0.05),
-                        radius: isSelected ? 8 : 2,
-                        x: 0,
-                        y: isSelected ? 4 : 1
-                    )
             )
-            .scaleEffect(isSelected ? 1.05 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
+            .opacity(isSkipped ? 0.7 : 1.0)
         }
         .buttonStyle(.plain)
+        .offset(y: yOffset)
+        .sheet(isPresented: $showingEditSheet) {
+            EnhancedScheduleEditView(scheduleItem: item, scheduleID: scheduleID)
+                .environmentObject(scheduleManager)
+                .environmentObject(themeManager)
+        }
+    }
+}
+
+// MARK: - Timeline Gap Indicator
+struct TimelineGapIndicator: View {
+    @EnvironmentObject var themeManager: ThemeManager
+    let startTime: Date
+    let endTime: Date
+    let duration: TimeInterval
+    let yOffset: CGFloat
+    let gapHeight: CGFloat
+    
+    private var gapDurationText: String {
+        let totalMinutes = Int(duration) / 60
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        
+        if hours > 0 {
+            return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h"
+        } else {
+            return "\(minutes)m"
+        }
+    }
+    
+    // Dynamic layout based on available height
+    private var layoutStyle: GapLayoutStyle {
+        if gapHeight < 25 {
+            return .minimal
+        } else if gapHeight < 45 {
+            return .compact
+        } else {
+            return .full
+        }
+    }
+    
+    private enum GapLayoutStyle {
+        case minimal   // Just dots
+        case compact   // Duration only
+        case full      // Full layout with label
+    }
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            // Dotted line - always present
+            VStack(spacing: 3) {
+                ForEach(0..<Int(max(1, gapHeight / 8)), id: \.self) { _ in
+                    Circle()
+                        .fill(Color.secondary.opacity(0.3))
+                        .frame(width: 2, height: 2)
+                }
+            }
+            .frame(width: 4)
+            
+            // Dynamic content based on available space
+            Group {
+                switch layoutStyle {
+                case .minimal:
+                    // Just a thin indicator for very small gaps
+                    EmptyView()
+                    
+                case .compact:
+                    // Duration only for medium gaps
+                    Text(gapDurationText)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(themeManager.currentTheme.primaryColor.opacity(0.8))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+                        )
+                    
+                case .full:
+                    // Full layout for larger gaps
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock.badge")
+                                .font(.caption2)
+                                .foregroundColor(.secondary.opacity(0.7))
+                            
+                            Text("Break")
+                                .font(.caption2.weight(.medium))
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Text(gapDurationText)
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(themeManager.currentTheme.primaryColor.opacity(0.8))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+                            )
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(.systemGray6).opacity(0.5))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(
+                                        Color.secondary.opacity(0.2),
+                                        style: StrokeStyle(lineWidth: 1, dash: [3, 3])
+                                    )
+                            )
+                    )
+                }
+            }
+            
+            Spacer()
+        }
+        .frame(height: gapHeight)
+        .offset(y: yOffset)
+    }
+}
+
+extension DayOfWeek {
+    static let weekdays: [DayOfWeek] = [.monday, .tuesday, .wednesday, .thursday, .friday]
+    
+    var displayName: String {
+        switch self {
+        case .sunday: return "Sunday"
+        case .monday: return "Monday"
+        case .tuesday: return "Tuesday"
+        case .wednesday: return "Wednesday"
+        case .thursday: return "Thursday"
+        case .friday: return "Friday"
+        case .saturday: return "Saturday"
+        }
     }
 }

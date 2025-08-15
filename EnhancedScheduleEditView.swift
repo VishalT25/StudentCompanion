@@ -33,6 +33,18 @@ struct EnhancedScheduleEditView: View {
             _reminderTime = State(initialValue: item.reminderTime)
             _isLiveActivityEnabled = State(initialValue: item.isLiveActivityEnabled)
             _selectedDays = State(initialValue: item.daysOfWeek)
+        } else {
+            // Set reasonable default times for new schedule items
+            let calendar = Calendar.current
+            let now = Date()
+            
+            // Default start time: 9:00 AM
+            let defaultStartTime = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: now) ?? now
+            // Default end time: 10:00 AM
+            let defaultEndTime = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: now) ?? now.addingTimeInterval(3600)
+            
+            _startTime = State(initialValue: defaultStartTime)
+            _endTime = State(initialValue: defaultEndTime)
         }
     }
     
@@ -174,10 +186,14 @@ struct EnhancedScheduleEditView: View {
     }
     
     private func saveScheduleItem() {
+        // Normalize times to ensure they only contain time components, not date
+        let normalizedStartTime = normalizeTimeToToday(startTime)
+        let normalizedEndTime = normalizeTimeToToday(endTime)
+        
         let newItem = ScheduleItem(
             title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-            startTime: startTime,
-            endTime: endTime,
+            startTime: normalizedStartTime,
+            endTime: normalizedEndTime,
             daysOfWeek: selectedDays,
             color: selectedColor,
             reminderTime: reminderTime,
@@ -194,6 +210,18 @@ struct EnhancedScheduleEditView: View {
         }
         
         dismiss()
+    }
+    
+    // Helper function to normalize time to today's date with the selected time
+    private func normalizeTimeToToday(_ time: Date) -> Date {
+        let calendar = Calendar.current
+        let now = Date()
+        let timeComponents = calendar.dateComponents([.hour, .minute, .second], from: time)
+        
+        return calendar.date(bySettingHour: timeComponents.hour ?? 0, 
+                           minute: timeComponents.minute ?? 0, 
+                           second: timeComponents.second ?? 0, 
+                           of: now) ?? time
     }
 }
 

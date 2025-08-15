@@ -70,7 +70,7 @@ struct IslandSmasherGameView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                TimelineView(.animation) { timelineContext in
+                SwiftUI.TimelineView(.animation) { timelineContext in
                     VStack(spacing: 0) {
                         Canvas { context, size in
                             

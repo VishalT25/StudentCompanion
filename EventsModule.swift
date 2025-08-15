@@ -191,7 +191,7 @@ class EventViewModel: ObservableObject {
     @Published var categories: [Category] = []
     @Published var events: [Event] = []
     @Published var schedules: [ScheduleItem] = [] // Deprecated - kept for backward compatibility
-    @Published var scheduleItems: [ScheduleItem] = [] // Deprecated - use ScheduleManager instead
+    @Published var scheduleItems: [ScheduleItem] = [] // Removed default schedule items
     @Published var isRefreshing: Bool = false
     @Published var lastRefreshTime: Date?
     private var isUpdatingCoursesFromNotification = false
@@ -295,31 +295,8 @@ class EventViewModel: ObservableObject {
             Event(date: Calendar.current.date(byAdding: .day, value: 3, to: Date())!, title: "History essay draft", categoryId: defaultCatID)
         ]
         
-        let calendar = Calendar.current
-        var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date())
-        
-        components.hour = 9; components.minute = 0
-        let mathStart = calendar.date(from: components)!
-        components.hour = 10; components.minute = 15
-        let mathEnd = calendar.date(from: components)!
-        
-        components.hour = 14; components.minute = 0
-        let gymStart = calendar.date(from: components)!
-        components.hour = 15; components.minute = 30
-        let gymEnd = calendar.date(from: components)!
-        
-        scheduleItems = [
-            ScheduleItem(title: "Math 101",
-                         startTime: mathStart,
-                         endTime: mathEnd,
-                         daysOfWeek: [.monday, .wednesday, .friday],
-                         color: .blue),
-            ScheduleItem(title: "Gym",
-                         startTime: gymStart,
-                         endTime: gymEnd,
-                         daysOfWeek: [.tuesday, .thursday],
-                         color: .orange)
-        ]
+        // Default schedule items removed
+        scheduleItems = []
         
         saveData()
     }
@@ -371,19 +348,10 @@ class EventViewModel: ObservableObject {
         
         for item in itemsToDelete {
             notificationManager.removeAllScheduleItemNotifications(for: item)
-            Task { @MainActor in
-                LiveActivityManager.shared.endActivity(for: item.id.uuidString)
-            }
         }
         
         scheduleItems.removeAll { scheduleItemIDs.contains($0.id) }
         saveData()
-        
-        if let themeManager {
-            Task { @MainActor in
-                self.manageLiveActivities(themeManager: themeManager)
-            }
-        }
     }
     
     private func dayOfWeek(for date: Date) -> DayOfWeek? {
@@ -396,7 +364,6 @@ class EventViewModel: ObservableObject {
         if item.reminderTime != .none {
             notificationManager.scheduleScheduleItemNotifications(for: item, reminderTime: item.reminderTime)
         }
-        handleLiveActivityForItemIfNeeded(item, themeManager: themeManager)
         saveData()
     }
     
@@ -412,20 +379,13 @@ class EventViewModel: ObservableObject {
             notificationManager.scheduleScheduleItemNotifications(for: item, reminderTime: item.reminderTime)
         }
         
-        handleLiveActivityForItemIfNeeded(item, themeManager: themeManager)
         saveData()
     }
     
     func deleteScheduleItem(_ item: ScheduleItem, themeManager: ThemeManager) {
         notificationManager.removeAllScheduleItemNotifications(for: item)
-        Task { @MainActor in
-            LiveActivityManager.shared.endActivity(for: item.id.uuidString)
-        }
         scheduleItems.removeAll { $0.id == item.id }
         saveData()
-        Task { @MainActor in
-            self.manageLiveActivities(themeManager: themeManager)
-        }
     }
     
     func toggleSkip(forInstance item: ScheduleItem, onDate date: Date, themeManager: ThemeManager) {
@@ -438,51 +398,10 @@ class EventViewModel: ObservableObject {
             scheduleItems[idx].skippedInstanceIdentifiers.insert(identifier)
         }
         
-        // Live Activity management for today's instance
-        let isToday = Calendar.current.isDateInToday(date)
-        if isToday {
-            let now = Date()
-            let startToday = LiveActivityManager.shared.getAbsoluteTime(for: item.startTime, on: now)
-            let endToday = LiveActivityManager.shared.getAbsoluteTime(for: item.endTime, on: now)
-            let isSkippedNow = scheduleItems[idx].isSkipped(onDate: now)
-            
-            Task { @MainActor in
-                if isSkippedNow {
-                    LiveActivityManager.shared.endActivity(for: item.id.uuidString)
-                } else if now < endToday {
-                    LiveActivityManager.shared.startActivity(for: scheduleItems[idx], themeManager: themeManager)
-                }
-            }
-        }
-        
         saveData()
-        Task { @MainActor in
-            self.manageLiveActivities(themeManager: themeManager)
-        }
     }
     
-    private func handleLiveActivityForItemIfNeeded(_ item: ScheduleItem, themeManager: ThemeManager) {
-        let now = Date()
 
-        // End all existing activities first
-//        for item in scheduleItems {
-//            LiveActivityManager.shared.endActivity(for: item.id.uuidString)
-//        }
-
-        // Start Live Activities for relevant schedule items
-        for item in scheduleItems {
-            guard let todayDOW = dayOfWeek(for: now),
-                  item.daysOfWeek.contains(todayDOW),
-                  !item.isSkipped(onDate: now)
-            else { continue }
-
-            let endToday = LiveActivityManager.shared.getAbsoluteTime(for: item.endTime, on: now)
-            if now < endToday {
-                LiveActivityManager.shared.startActivity(for: item, themeManager: themeManager)
-            }
-        }
-
-    }
     
     // MARK: - Event Operations
     func addEvent(_ event: Event) {
@@ -737,27 +656,40 @@ class EventViewModel: ObservableObject {
         }
     }
     
-    func manageLiveActivities(themeManager: ThemeManager) {
-        let now = Date()
-
-        // End all existing activities first
-        for item in scheduleItems {
-            LiveActivityManager.shared.endActivity(for: item.id.uuidString)
-        }
-
-        // Start Live Activities for relevant schedule items
-        for item in scheduleItems {
-            guard let todayDOW = dayOfWeek(for: now),
-                  item.daysOfWeek.contains(todayDOW),
-                  !item.isSkipped(onDate: now)
-            else { continue }
-
-            let endToday = LiveActivityManager.shared.getAbsoluteTime(for: item.endTime, on: now)
-            if now < endToday {
-                LiveActivityManager.shared.startActivity(for: item, themeManager: themeManager)
+    // MARK: - Setup default integration toggles
+    private func registerDefaultIntegrationToggles() {
+        UserDefaults.standard.register(defaults: [
+            "appleCalendarIntegrationEnabled": true,
+            "appleRemindersIntegrationEnabled": true
+        ])
+    }
+    
+    // MARK: - Subscriptions to CalendarSyncManager updates
+    private func setupCalendarSyncSubscriptions() {
+        guard let calendarSyncManager = self.calendarSyncManager else { return }
+        
+        calendarSyncManager.$googleCalendarEvents
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task {
+                    await self?.processFetchedGoogleCalendarEvents()
+                }
             }
-        }
-
+            .store(in: &cancellables)
+        
+        calendarSyncManager.$appleCalendarEvents
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.processFetchedAppleCalendarEvents()
+            }
+            .store(in: &cancellables)
+        
+        calendarSyncManager.$appleReminders
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.processFetchedAppleReminders()
+            }
+            .store(in: &cancellables)
     }
     
     private func processFetchedAppleCalendarEvents() {
@@ -817,40 +749,59 @@ class EventViewModel: ObservableObject {
         }
     }
     
-    // MARK: - Setup default integration toggles
-    private func registerDefaultIntegrationToggles() {
-        UserDefaults.standard.register(defaults: [
-            "appleCalendarIntegrationEnabled": true,
-            "appleRemindersIntegrationEnabled": true
-        ])
-    }
-    
-    // MARK: - Subscriptions to CalendarSyncManager updates
-    private func setupCalendarSyncSubscriptions() {
-        guard let calendarSyncManager = self.calendarSyncManager else { return }
+    // MARK: - Live Activities Management
+    @MainActor
+    func manageLiveActivities(themeManager: ThemeManager) {
+        // Check if live activities are enabled
+        let liveActivitiesEnabled = UserDefaults.standard.bool(forKey: "liveActivitiesEnabled")
         
-        calendarSyncManager.$googleCalendarEvents
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task {
-                    await self?.processFetchedGoogleCalendarEvents()
-                }
-            }
-            .store(in: &cancellables)
+        guard liveActivitiesEnabled else {
+            // If disabled, end all activities
+            LiveActivityManager.shared.endAllActivities()
+            return
+        }
         
-        calendarSyncManager.$appleCalendarEvents
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.processFetchedAppleCalendarEvents()
-            }
-            .store(in: &cancellables)
+        // Get the current schedule manager to access schedule items
+        let scheduleManager = ScheduleManager()
         
-        calendarSyncManager.$appleReminders
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.processFetchedAppleReminders()
+        guard let activeSchedule = scheduleManager.activeSchedule else {
+            // No active schedule, end all activities
+            LiveActivityManager.shared.endAllActivities()
+            return
+        }
+        
+        let now = Date()
+        let calendar = Calendar.current
+        let currentWeekday = calendar.component(.weekday, from: now)
+        
+        guard let todayDayOfWeek = DayOfWeek(rawValue: currentWeekday) else {
+            return
+        }
+        
+        // Get today's schedule items
+        let todaysItems = activeSchedule.scheduleItems.filter { item in
+            item.daysOfWeek.contains(todayDayOfWeek) && item.isLiveActivityEnabled
+        }
+        
+        // Clean up ended activities first
+        LiveActivityManager.shared.cleanupEndedActivities(scheduleItems: todaysItems)
+        
+        // Find current or upcoming item
+        for item in todaysItems {
+            let itemStartTime = LiveActivityManager.shared.getAbsoluteTime(for: item.startTime, on: now)
+            let itemEndTime = LiveActivityManager.shared.getAbsoluteTime(for: item.endTime, on: now)
+            
+            // Check if item is currently active or starting soon (within 5 minutes)
+            let fiveMinutesFromNow = now.addingTimeInterval(5 * 60)
+            
+            if now >= itemStartTime && now < itemEndTime {
+                // Item is currently active - start live activity
+                LiveActivityManager.shared.startActivity(for: item, themeManager: themeManager)
+            } else if itemStartTime > now && itemStartTime <= fiveMinutesFromNow {
+                // Item is starting soon - start live activity
+                LiveActivityManager.shared.startActivity(for: item, themeManager: themeManager)
             }
-            .store(in: &cancellables)
+        }
     }
     
     // MARK: - EventsPreviewView
@@ -1927,7 +1878,6 @@ private struct CalendarMonthView: View {
                 Text(symbols[idx])
                     .font(.caption2.weight(.semibold))
                     .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity)
             }
         }
     }
