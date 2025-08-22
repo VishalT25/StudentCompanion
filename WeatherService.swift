@@ -73,7 +73,7 @@ struct DailyForecastInfo: Identifiable, Codable {
 }
 
 // MARK: - City Selection
-struct City: Identifiable, Codable {
+struct City: Identifiable, Codable, Hashable {
     let id = UUID()
     let name: String
     let country: String
@@ -82,6 +82,14 @@ struct City: Identifiable, Codable {
     
     var displayName: String {
         return "\(name), \(country)"
+    }
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: City, rhs: City) -> Bool {
+        return lhs.id == rhs.id
     }
 }
 

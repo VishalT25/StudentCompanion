@@ -6,6 +6,7 @@ struct AIScheduleImportView: View {
     @Environment(\.dismiss) private var dismiss
     
     let scheduleID: UUID
+    let onImportCompleted: (() -> Void)?
     @State private var importText = ""
     @State private var showingSuccessAlert = false
     @State private var showingErrorAlert = false
@@ -14,6 +15,14 @@ struct AIScheduleImportView: View {
     @State private var isProcessing = false
     @State private var customPrompt = ""
     @State private var showAdvancedOptions = false
+    
+    @State private var showingSetupWizard = false
+    @State private var importedScheduleItems: [ScheduleItem] = []
+
+    init(scheduleID: UUID, onImportCompleted: (() -> Void)? = nil) {
+        self.scheduleID = scheduleID
+        self.onImportCompleted = onImportCompleted
+    }
     
     private let defaultAIPrompt = """
 You are a schedule parsing assistant. I will provide you with an image of a class schedule. Please extract ALL classes and convert them into JSON format according to the following rules.
@@ -179,8 +188,8 @@ REMEMBER: Output only JSON. NO other text.
                                 }
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
                                 .background(themeManager.currentTheme.primaryColor)
                                 .cornerRadius(8)
                             }
@@ -219,6 +228,36 @@ REMEMBER: Output only JSON. NO other text.
                                         .stroke(themeManager.currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
                                 )
                             
+                            HStack(spacing: 12) {
+                                Button(action: pasteFromClipboard) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "doc.on.clipboard")
+                                        Text("Paste")
+                                    }
+                                    .font(.caption.weight(.medium))
+                                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(themeManager.currentTheme.primaryColor.opacity(0.1))
+                                    .cornerRadius(6)
+                                }
+                                
+                                Button(action: clearText) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "trash")
+                                        Text("Clear")
+                                    }
+                                    .font(.caption.weight(.medium))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color(.systemGray5))
+                                    .cornerRadius(6)
+                                }
+                                
+                                Spacer()
+                            }
+                            
                             if importText.isEmpty {
                                 Text("Paste your JSON here...")
                                     .font(.subheadline)
@@ -226,7 +265,7 @@ REMEMBER: Output only JSON. NO other text.
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .padding(.vertical, 40)
                                     .allowsHitTesting(false)
-                                    .offset(y: -90)
+                                    .offset(y: -120)
                             }
                         }
                     }
@@ -278,16 +317,29 @@ REMEMBER: Output only JSON. NO other text.
             }
         }
         .alert("Import Successful! 🎉", isPresented: $showingSuccessAlert) {
-            Button("Done") {
+            Button("OK") {
+                scheduleManager.setActiveSchedule(scheduleID)
+                onImportCompleted?()
                 dismiss()
             }
         } message: {
-            Text("Successfully imported \(importedItemsCount) class\(importedItemsCount == 1 ? "" : "es") to your schedule! Remember to double-check all details for accuracy.")
+            Text("Successfully imported \(importedItemsCount) class\(importedItemsCount == 1 ? "" : "es") to your schedule!")
         }
         .alert("Import Failed", isPresented: $showingErrorAlert) {
             Button("OK") { }
         } message: {
             Text(errorMessage)
+        }
+        .sheet(isPresented: $showingSetupWizard) {
+            if let schedule = scheduleManager.schedule(for: scheduleID) {
+                ProgressiveEnhancementView(scheduleID: schedule.id, importedItems: importedScheduleItems) {
+                    scheduleManager.setActiveSchedule(scheduleID)
+                    onImportCompleted?()
+                    dismiss()
+                }
+                .environmentObject(scheduleManager)
+                .environmentObject(themeManager)
+            }
         }
         .onAppear {
             customPrompt = defaultAIPrompt
@@ -296,6 +348,24 @@ REMEMBER: Output only JSON. NO other text.
     
     private func copyPrompt() {
         UIPasteboard.general.string = currentPrompt
+        
+        // Show brief haptic feedback
+        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+        impactFeedback.impactOccurred()
+    }
+    
+    private func pasteFromClipboard() {
+        if let clipboardString = UIPasteboard.general.string {
+            importText = clipboardString
+        }
+        
+        // Show brief haptic feedback
+        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+        impactFeedback.impactOccurred()
+    }
+    
+    private func clearText() {
+        importText = ""
         
         // Show brief haptic feedback
         let impactFeedback = UIImpactFeedbackGenerator(style: .light)
@@ -316,6 +386,7 @@ REMEMBER: Output only JSON. NO other text.
                     }
                     
                     importedItemsCount = scheduleItems.count
+                    importedScheduleItems = scheduleItems
                     isProcessing = false
                     showingSuccessAlert = true
                 }

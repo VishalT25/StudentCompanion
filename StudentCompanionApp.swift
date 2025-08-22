@@ -7,6 +7,7 @@ struct StuCoApp: App {
     @StateObject private var themeManager = ThemeManager()
     @StateObject private var googleCalendarManager = GoogleCalendarManager() // We should review if this is still needed later
     @StateObject private var calendarSyncManager: CalendarSyncManager
+    @StateObject private var academicCalendarManager = AcademicCalendarManager() // NEW
     
     // Use ObservedObject for singleton, not StateObject
     @ObservedObject private var notificationManager = NotificationManager.shared
@@ -33,6 +34,7 @@ struct StuCoApp: App {
                 .environmentObject(notificationManager)
                 .environmentObject(calendarSyncManager)
                 .environmentObject(googleCalendarManager)
+                .environmentObject(academicCalendarManager) // NEW
                 .preferredColorScheme(.light)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                     notificationManager.checkAuthorizationStatus()

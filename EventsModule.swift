@@ -173,7 +173,7 @@ struct Category: Identifiable, Hashable, Codable {
 enum DayOfWeek: Int, Codable, CaseIterable {
     case sunday = 1, monday, tuesday, wednesday, thursday, friday, saturday
     
-    var shortName: String {
+    var short: String {
         switch self {
         case .sunday: return "Sun"
         case .monday: return "Mon"
@@ -183,6 +183,22 @@ enum DayOfWeek: Int, Codable, CaseIterable {
         case .friday: return "Fri"
         case .saturday: return "Sat"
         }
+    }
+    
+    var full: String {
+        switch self {
+        case .sunday: return "Sunday"
+        case .monday: return "Monday"
+        case .tuesday: return "Tuesday"
+        case .wednesday: return "Wednesday"
+        case .thursday: return "Thursday"
+        case .friday: return "Friday"
+        case .saturday: return "Saturday"
+        }
+    }
+    
+    static func from(weekday: Int) -> DayOfWeek {
+        return DayOfWeek(rawValue: weekday) ?? .sunday
     }
 }
 
@@ -290,9 +306,9 @@ class EventViewModel: ObservableObject {
         }
         
         events = [
-            Event(date: Date(), title: "Math assignment due", categoryId: defaultCatID),
-            Event(date: Calendar.current.date(byAdding: .day, value: 1, to: Date())!, title: "Physics lab", categoryId: labCatID),
-            Event(date: Calendar.current.date(byAdding: .day, value: 3, to: Date())!, title: "History essay draft", categoryId: defaultCatID)
+            Event(title: "Math assignment due", date: Date(), categoryId: defaultCatID),
+            Event(title: "Physics lab", date: Calendar.current.date(byAdding: .day, value: 1, to: Date())!, categoryId: labCatID),
+            Event(title: "History essay draft", date: Calendar.current.date(byAdding: .day, value: 3, to: Date())!, categoryId: defaultCatID)
         ]
         
         // Default schedule items removed
@@ -350,7 +366,7 @@ class EventViewModel: ObservableObject {
             notificationManager.removeAllScheduleItemNotifications(for: item)
         }
         
-        scheduleItems.removeAll { scheduleItemIDs.contains($0.id) }
+        scheduleItems.removeAll(where: { scheduleItemIDs.contains($0.id) })
         saveData()
     }
     
@@ -639,8 +655,7 @@ class EventViewModel: ObservableObject {
             let startDate = gEvent.start?.dateTime?.date ?? gEvent.start?.date?.date ?? Date()
             let id = gEvent.identifier ?? UUID().uuidString
             let evt = Event(
-                date: startDate,
-                title: title,
+                title: title, date: startDate,
                 categoryId: importedCatId,
                 reminderTime: .none,
                 isCompleted: false,
@@ -704,8 +719,7 @@ class EventViewModel: ObservableObject {
             let title = ek.title ?? "Untitled"
             let externalId = ek.eventIdentifier ?? UUID().uuidString
             imported.append(Event(
-                date: start,
-                title: title,
+                title: title, date: start,
                 categoryId: importedCatId,
                 reminderTime: .none,
                 isCompleted: false,
@@ -733,8 +747,7 @@ class EventViewModel: ObservableObject {
             let title = reminder.title ?? "Reminder"
             let externalId = reminder.calendarItemIdentifier
             imported.append(Event(
-                date: date,
-                title: title,
+                title: title, date: date,
                 categoryId: importedCatId,
                 reminderTime: .none,
                 isCompleted: reminder.isCompleted,
@@ -1613,8 +1626,7 @@ class EventViewModel: ObservableObject {
                             guard let catId = (categoryId ?? viewModel.categories.first?.id),
                                   !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                             let newEvent = Event(
-                                date: date,
-                                title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+                                title: title.trimmingCharacters(in: .whitespacesAndNewlines), date: date,
                                 categoryId: catId,
                                 reminderTime: reminderTime,
                                 isCompleted: false,
@@ -1851,7 +1863,7 @@ private struct CalendarMonthView: View {
                     .foregroundColor(themeManager.currentTheme.primaryColor)
             }
 
-            Spacer()
+           Spacer()
 
             Text(monthTitle(for: currentMonthStart))
                 .font(.headline)

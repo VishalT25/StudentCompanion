@@ -3,6 +3,8 @@ import SwiftUI
 struct TodayScheduleView: View {
     @EnvironmentObject var viewModel: EventViewModel
     @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var academicCalendarManager: AcademicCalendarManager // NEW
+    @StateObject private var scheduleManager = ScheduleManager()
     @State private var showingAddSchedule = false
     @State private var selectedSchedule: ScheduleItem?
     
@@ -29,7 +31,7 @@ struct TodayScheduleView: View {
                 }
             }
             
-            let schedule = viewModel.todaysSchedule()
+            let schedule = todaysScheduleItems()
             let events = viewModel.todaysEvents()
             
             if schedule.isEmpty && events.isEmpty {
@@ -43,9 +45,9 @@ struct TodayScheduleView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if !schedule.isEmpty {
                         ForEach(schedule) { item in
-                            CompactScheduleItemView(item: item)
+                            CompactScheduleItemView(item: item, scheduleID: activeScheduleID())
                                 .environmentObject(themeManager)
-                                .environmentObject(viewModel)
+                                .environmentObject(scheduleManager)
                         }
                     }
                     
@@ -81,12 +83,27 @@ struct TodayScheduleView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
+    
+    // Helper method to get today's schedule items from ScheduleManager
+    private func todaysScheduleItems() -> [ScheduleItem] {
+        guard let activeSchedule = scheduleManager.activeSchedule else {
+            return []
+        }
+        let academicCalendar = scheduleManager.getAcademicCalendar(for: activeSchedule, from: academicCalendarManager) // NEW
+        return activeSchedule.getScheduleItems(for: Date(), usingCalendar: academicCalendar) // UPDATED
+    }
+    
+    // Helper method to get active schedule ID
+    private func activeScheduleID() -> UUID? {
+        return scheduleManager.activeScheduleID
+    }
 }
 
 struct CompactScheduleItemView: View {
-    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var scheduleManager: ScheduleManager
     @EnvironmentObject var themeManager: ThemeManager
     let item: ScheduleItem
+    let scheduleID: UUID?
     
     private let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -99,19 +116,21 @@ struct CompactScheduleItemView: View {
         let weekdays: Set<DayOfWeek> = [.monday, .tuesday, .wednesday, .thursday, .friday]
         let weekends: Set<DayOfWeek> = [.saturday, .sunday]
         
-        if item.daysOfWeek == allDays {
+        let daysSet = Set(item.daysOfWeek)
+        
+        if daysSet == allDays {
             return "Daily"
-        } else if item.daysOfWeek == weekdays {
+        } else if daysSet == weekdays {
             return "Weekdays"
-        } else if item.daysOfWeek == weekends {
+        } else if daysSet == weekends {
             return "Weekends"
-        } else if item.daysOfWeek.count > 4 {
-            return "\(item.daysOfWeek.count) days"
-        } else if item.daysOfWeek.count == 1 {
-            return Array(item.daysOfWeek).first?.shortName ?? ""
+        } else if daysSet.count > 4 {
+            return "\(daysSet.count) days"
+        } else if daysSet.count == 1 {
+            return Array(daysSet).first?.short ?? ""
         } else {
-            let sortedDays = Array(item.daysOfWeek).sorted(by: { $0.rawValue < $1.rawValue })
-            return sortedDays.map { $0.shortName }.joined(separator: ", ")
+            let sortedDays = Array(daysSet).sorted(by: { $0.rawValue < $1.rawValue })
+            return sortedDays.map { $0.short }.joined(separator: ", ")
         }
     }
     
@@ -161,7 +180,9 @@ struct CompactScheduleItemView: View {
         .opacity(item.isSkipped(onDate: Date()) ? 0.6 : 1.0)
         .contextMenu {
             Button {
-                viewModel.toggleSkip(forInstance: item, onDate: Date(), themeManager: themeManager)
+                if let scheduleID = scheduleID {
+                    scheduleManager.toggleSkip(forItem: item, onDate: Date(), in: scheduleID)
+                }
             } label: {
                 Label(item.isSkipped(onDate: Date()) ? "Unskip for Today" : "Skip for Today",
                       systemImage: item.isSkipped(onDate: Date()) ? "arrow.clockwise" : "xmark.circle.fill")
@@ -210,5 +231,22 @@ struct CompactEventItemView: View {
             .buttonStyle(.plain)
         }
         .padding(.vertical, 4)
+    }
+}
+
+extension ScheduleItem {
+    private func daysString(for item: ScheduleItem) -> String {
+        let sortedDays = Array(item.daysOfWeek).sorted { $0.rawValue < $1.rawValue }
+        
+        switch sortedDays.count {
+        case 0:
+            return "No days"
+        case 1:
+            return Array(item.daysOfWeek).first?.full ?? ""
+        case 2...4:
+            return sortedDays.map { $0.short }.joined(separator: ", ")
+        default:
+            return "Multiple days"
+        }
     }
 }

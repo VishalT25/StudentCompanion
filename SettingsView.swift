@@ -1,605 +1,320 @@
 import SwiftUI
-import Combine
-import EventKit
 
 struct SettingsView: View {
-    @EnvironmentObject private var themeManager: ThemeManager
-    @EnvironmentObject private var notificationManager: NotificationManager
-    @EnvironmentObject private var calendarSyncManager: CalendarSyncManager
-    @AppStorage("liveActivitiesEnabled") private var liveActivitiesEnabled: Bool = true
-    @EnvironmentObject private var eventViewModel: EventViewModel
-
-    @AppStorage("d2lLink") private var d2lLink: String = "https://d2l.youruniversity.edu"
-    @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
-    @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
+    @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var calendarSyncManager: CalendarSyncManager
+    @EnvironmentObject var weatherService: WeatherService
+    @StateObject private var scheduleManager = ScheduleManager()
+    @StateObject private var academicCalendarManager = AcademicCalendarManager()
+    
+    @State private var showingThemeSelector = false
     @State private var showingNotificationSettings = false
-
-    // State properties for authorization statuses
-    @State private var calendarAuthStatus: EKAuthorizationStatus = .notDetermined
-    @State private var remindersAuthStatus: EKAuthorizationStatus = .notDetermined
-
-    @AppStorage("appleCalendarIntegrationEnabled") private var appleCalendarIntegrationEnabled: Bool = true
-    @AppStorage("appleRemindersIntegrationEnabled") private var appleRemindersIntegrationEnabled: Bool = true
-    @AppStorage("googleCalendarIntegrationEnabled") private var googleCalendarIntegrationEnabled: Bool = true
-
-    @State private var showingRemoveCalendarDataAlert = false
-    @State private var showingRemoveRemindersDataAlert = false
-    @State private var showingRemoveGoogleDataAlert = false
+    @State private var showingGoogleCalendarSettings = false
+    @State private var showingAcademicCalendarManagement = false
+    
+    @AppStorage("isDarkMode") private var isDarkMode: Bool = false
+    @AppStorage("d2lLink") private var d2lLink: String = "https://d2l.youruniversity.edu"
+    @AppStorage("liveActivitiesEnabled") private var liveActivitiesEnabled: Bool = true
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                // Theme Selection
-                themeSelectionSection
-                
-                notificationSection
-
-                liveActivitySection
-                
-                calendarIntegrationSection
-
-                remindersIntegrationSection
-                
-                // Grade Display Settings
-                gradeDisplaySection
-                
-                // D2L Configuration
-                d2lConfigSection
-                
-                Spacer(minLength: 40)
+        NavigationView {
+            ScrollView {
+                LazyVStack(spacing: 24) {
+                    // Header
+                    VStack(spacing: 8) {
+                        Text("Settings")
+                            .font(.largeTitle.bold())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        Text("Customize your Student Companion experience")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    
+                    // Appearance Section
+                    SettingsSection(title: "Appearance", icon: "paintbrush.fill", color: .purple) {
+                        SettingsToggleRow(
+                            title: "Dark Mode",
+                            subtitle: "Switch between light and dark themes",
+                            icon: isDarkMode ? "moon.fill" : "sun.max.fill",
+                            isOn: $isDarkMode
+                        )
+                        
+                        SettingsNavigationRow(
+                            title: "App Theme",
+                            subtitle: "Choose your preferred color scheme",
+                            icon: "palette.fill",
+                            action: { showingThemeSelector = true }
+                        )
+                    }
+                    
+                    // Integrations Section
+                    SettingsSection(title: "Integrations", icon: "link", color: .blue) {
+                        SettingsNavigationRow(
+                            title: "Apple Calendar & Reminders",
+                            subtitle: "Sync your classes and assignments",
+                            icon: "calendar",
+                            destination: AnyView(
+                                AppleCalendarSettingsView()
+                                    .environmentObject(calendarSyncManager)
+                            )
+                        )
+                        
+                        SettingsNavigationRow(
+                            title: "Google Calendar",
+                            subtitle: "Connect your Google account",
+                            icon: "calendar.badge.plus",
+                            action: { showingGoogleCalendarSettings = true }
+                        )
+                        
+                        SettingsNavigationRow(
+                            title: "Weather",
+                            subtitle: "Location and weather preferences",
+                            icon: "cloud.sun.fill",
+                            destination: AnyView(
+                                WeatherSettingsView()
+                                    .environmentObject(weatherService)
+                            )
+                        )
+                    }
+                    
+                    // Academics Section
+                    SettingsSection(title: "Academics", icon: "graduationcap.fill", color: .green) {
+                        SettingsNavigationRow(
+                            title: "Academic Calendars",
+                            subtitle: "\(academicCalendarManager.academicCalendars.count) calendar\(academicCalendarManager.academicCalendars.count == 1 ? "" : "s") configured",
+                            icon: "calendar.badge.clock",
+                            action: { showingAcademicCalendarManagement = true }
+                        )
+                        
+                        SettingsTextFieldRow(
+                            title: "D2L Link",
+                            subtitle: "Your university's D2L portal URL",
+                            icon: "link.circle.fill",
+                            text: $d2lLink,
+                            placeholder: "https://d2l.youruniversity.edu"
+                        )
+                    }
+                    
+                    // Notifications Section
+                    SettingsSection(title: "Notifications", icon: "bell.fill", color: .orange) {
+                        SettingsToggleRow(
+                            title: "Live Activities",
+                            subtitle: "Show current class on lock screen",
+                            icon: "iphone",
+                            isOn: $liveActivitiesEnabled
+                        )
+                        
+                        SettingsNavigationRow(
+                            title: "Notification Settings",
+                            subtitle: "Manage reminders and alerts",
+                            icon: "bell.badge.fill",
+                            action: { showingNotificationSettings = true }
+                        )
+                    }
+                    
+                    // Footer
+                    VStack(spacing: 8) {
+                        Text("Student Companion")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.secondary)
+                        
+                        Text("Made with ❤️ for students")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.top, 32)
+                    .padding(.bottom, 20)
+                }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 10)
+            .background(Color(.systemGroupedBackground))
         }
-        .background(Color(.systemGroupedBackground))
-        .navigationTitle("Settings")
-        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingThemeSelector) {
+            ThemeSelectorView()
+                .environmentObject(themeManager)
+        }
         .sheet(isPresented: $showingNotificationSettings) {
             NotificationSettingsView()
-                .environmentObject(notificationManager)
         }
-        .onChange(of: liveActivitiesEnabled) { oldValue, newValue in
-            Task { @MainActor in
-                if !newValue {
-                    LiveActivityManager.shared.endAllActivities()
-                } else {
-                    eventViewModel.manageLiveActivities(themeManager: themeManager)
-                }
-            }
+        .sheet(isPresented: $showingGoogleCalendarSettings) {
+            GoogleCalendarSettingsView()
+                .environmentObject(calendarSyncManager)
         }
-        .alert("Remove Calendar Data?", isPresented: $showingRemoveCalendarDataAlert) {
-            Button("Remove Imported Data", role: .destructive) {
-                eventViewModel.removeImportedData(sourcePrefix: "Apple Calendar -")
-                calendarSyncManager.clearAppleCalendarEventsData() 
-                print("User opted to remove Apple Calendar data.")
-            }
-            Button("Keep Data", role: .cancel) {
-                 print("User opted to keep Apple Calendar data despite disabling sync.")
-            }
-        } message: {
-            Text("Disabling Apple Calendar sync. Would you also like to remove calendar events previously imported from Apple Calendar from this app?")
-        }
-        .alert("Remove Reminders Data?", isPresented: $showingRemoveRemindersDataAlert) {
-            Button("Remove Imported Data", role: .destructive) {
-                eventViewModel.removeImportedData(sourcePrefix: "Apple Reminders -")
-                calendarSyncManager.clearAppleRemindersData() 
-                print("User opted to remove Apple Reminders data.")
-            }
-            Button("Keep Data", role: .cancel) {
-                print("User opted to keep Apple Reminders data despite disabling sync.")
-            }
-        } message: {
-            Text("Disabling Apple Reminders sync. Would you also like to remove reminders previously imported from Apple Reminders from this app?")
-        }
-        .alert("Remove Google Calendar Data?", isPresented: $showingRemoveGoogleDataAlert) {
-            Button("Remove Imported Data", role: .destructive) {
-                eventViewModel.removeImportedData(sourcePrefix: "Google Calendar:") 
-                calendarSyncManager.googleCalendarEvents = []
-                print("User opted to remove Google Calendar data.")
-            }
-            Button("Keep Data", role: .cancel) {
-                 print("User opted to keep Google Calendar data despite disabling sync.")
-            }
-        } message: {
-            Text("Disabling Google Calendar sync. Would you also like to remove calendar events previously imported from Google Calendar from this app?")
-        }
-    }
-    
-    private var liveActivitySection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Live Activities")
-                .font(.title3.bold())
-                .foregroundColor(.primary)
-            
-            SettingToggleRow(
-                title: "Show Current Event",
-                subtitle: "Display ongoing schedule items in the Dynamic Island and on the Lock Screen.",
-                isOn: $liveActivitiesEnabled,
-                icon: "sparkles",
-                color: themeManager.currentTheme.secondaryColor
-            )
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
-    }
-
-    private var notificationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Notifications")
-                .font(.title3.bold())
-                .foregroundColor(.primary)
-            
-            VStack(spacing: 12) {
-                Button {
-                    showingNotificationSettings = true
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "bell.fill")
-                            .font(.title2)
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
-                            .frame(width: 30)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Manage Notifications")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundColor(.primary)
-                            
-                            Text(notificationManager.isAuthorized ? "Notifications enabled" : "Notifications disabled")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        Circle()
-                            .fill(notificationManager.isAuthorized ? .green : .red)
-                            .frame(width: 8, height: 8)
-                        
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(12)
-                    .background(Color(.systemGray6).opacity(0.5))
-                    .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
-    }
-    
-    private var themeSelectionSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Theme")
-                .font(.title3.bold())
-                .foregroundColor(.primary)
-            
-            VStack(spacing: 12) {
-                ForEach(AppTheme.allCases) { theme in
-                    ThemeSelectionRow(
-                        theme: theme,
-                        isSelected: themeManager.currentTheme == theme
-                    ) {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            themeManager.setTheme(theme)
-                        }
-                    }
-                }
-            }
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
-    }
-    
-    private var gradeDisplaySection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Grade Display")
-                .font(.title3.bold())
-                .foregroundColor(.primary)
-            
-            VStack(spacing: 12) {
-                SettingToggleRow(
-                    title: "Show Current Grade",
-                    subtitle: "Display your current grade on the Courses button",
-                    isOn: $showCurrentGPA,
-                    icon: "graduationcap.fill",
-                    color: themeManager.currentTheme.primaryColor
-                )
-                
-                if showCurrentGPA {
-                    SettingToggleRow(
-                        title: "Use Percentage Grades",
-                        subtitle: "Show percentages instead of GPA scale",
-                        isOn: $usePercentageGrades,
-                        icon: "percent",
-                        color: themeManager.currentTheme.secondaryColor
-                    )
-                }
-            }
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
-    }
-    
-    private var d2lConfigSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("D2L Configuration")
-                .font(.title3.bold())
-                .foregroundColor(.primary)
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("D2L Portal URL")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(.primary)
-                
-                TextField("Enter D2L URL", text: $d2lLink)
-                    .textFieldStyle(.plain)
-                    .padding(12)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(8)
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
-                    .keyboardType(.URL)
-                
-                Text("Ensure the URL starts with 'https://' or 'http://'")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
-    }
-
-    private var calendarIntegrationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Calendar Integrations")
-                .font(.title3.bold())
-                .foregroundColor(.primary)
-
-            // --- Apple Calendar Section ---
-            VStack(spacing: 12) {
-                SettingToggleRow(
-                    title: "Sync Apple Calendar",
-                    subtitle: appleCalendarIntegrationEnabled ? (calendarSyncManager.isCalendarAccessGranted ? "Syncing enabled" : "Tap to grant access") : "Sync disabled",
-                    isOn: $appleCalendarIntegrationEnabled,
-                    icon: "calendar",
-                    color: appleCalendarIntegrationEnabled && calendarSyncManager.isCalendarAccessGranted ? .green : themeManager.currentTheme.primaryColor
-                )
-                .onChange(of: appleCalendarIntegrationEnabled) { oldValue, newValue in
-                    if newValue {
-                        // Turning ON
-                        Task {
-                            if !calendarSyncManager.isCalendarAccessGranted {
-                                await calendarSyncManager.requestCalendarAccess() 
-                            } else {
-                                // Already has permission, trigger a fetch manually
-                                await calendarSyncManager.fetchEventsAndUpdatePublishedProperty()
-                            }
-                            // Update local auth status for UI
-                            self.calendarAuthStatus = calendarSyncManager.checkCalendarAuthorizationStatus()
-                        }
-                    } else {
-                        // Turning OFF - Ask to remove data
-                        showingRemoveCalendarDataAlert = true
-                    }
-                }
-
-                // Display system permission status if toggle is on but access is denied
-                if appleCalendarIntegrationEnabled && (calendarAuthStatus == .denied || calendarAuthStatus == .restricted) {
-                     Text("Calendar access was denied at the system level. Please enable it in the Settings app.")
-                        .font(.caption)
-                        .foregroundColor(.red)
-                        .padding(.leading, 42) 
-                }
-                
-                // Keep the text for fetched events for now, or remove if too cluttered
-                if appleCalendarIntegrationEnabled && calendarSyncManager.isCalendarAccessGranted && !calendarSyncManager.appleCalendarEvents.isEmpty {
-                    Text("Last sync: \(calendarSyncManager.appleCalendarEvents.count) calendar events.")
-                        .font(.caption)
-                        .foregroundColor(.green)
-                        .padding(.leading, 42)
-                } else if appleCalendarIntegrationEnabled && calendarSyncManager.isCalendarAccessGranted && calendarSyncManager.appleCalendarEvents.isEmpty && calendarAuthStatus != .notDetermined {
-                    Text("No calendar events found in the selected range or an error occurred.")
-                         .font(.caption)
-                         .foregroundColor(.orange)
-                         .padding(.leading, 42)
-                }
-
-                // --- Google Calendar Section ---
-                Divider().padding(.vertical, 8)
-
-                NavigationLink(destination: GoogleCalendarSettingsView()
-                                               .environmentObject(calendarSyncManager)
-                                               .environmentObject(themeManager)
-                ) {
-                    HStack(spacing: 12) {
-                        Image(systemName: calendarSyncManager.isGoogleCalendarAccessGranted ? "checkmark.circle.fill" : "g.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(calendarSyncManager.isGoogleCalendarAccessGranted ? .green : Color(red: 66/255, green: 133/255, blue: 244/255))
-                            .frame(width: 30)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Google Calendar")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundColor(.primary)
-                            
-                            if calendarSyncManager.isGoogleCalendarAccessGranted {
-                                if !calendarSyncManager.selectedGoogleCalendarIDs.isEmpty {
-                                    Text("\(calendarSyncManager.selectedGoogleCalendarIDs.count) calendars selected")
-                                        .font(.caption)
-                                        .foregroundColor(.green)
-                                } else {
-                                    Text("Connected • No calendars selected")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            } else {
-                                Text("Not connected")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        
-                        Spacer()
-                        
-                        if calendarSyncManager.isGoogleCalendarAccessGranted && !calendarSyncManager.selectedGoogleCalendarIDs.isEmpty {
-                            Circle()
-                                .fill(.green)
-                                .frame(width: 8, height: 8)
-                        }
-                        
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(12)
-                    .background(Color(.systemGray6).opacity(0.5))
-                    .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
-        .onAppear {
-            self.calendarAuthStatus = calendarSyncManager.checkCalendarAuthorizationStatus()
-        }
-    }
-
-    private func getRootViewController() -> UIViewController? {
-        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let rootViewController = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
-            print("Could not find key window or root view controller.")
-            return nil
-        }
-        return rootViewController.presentedViewController ?? rootViewController 
-    }
-    
-    private var remindersIntegrationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Reminders Integration")
-                .font(.title3.bold())
-                .foregroundColor(.primary)
-
-            SettingToggleRow(
-                title: "Sync Apple Reminders",
-                subtitle: appleRemindersIntegrationEnabled ? (calendarSyncManager.isRemindersAccessGranted ? "Syncing enabled" : "Tap to grant access") : "Sync disabled",
-                isOn: $appleRemindersIntegrationEnabled,
-                icon: "list.bullet.clipboard",
-                color: appleRemindersIntegrationEnabled && calendarSyncManager.isRemindersAccessGranted ? .green : themeManager.currentTheme.secondaryColor
-            )
-            .onChange(of: appleRemindersIntegrationEnabled) { oldValue, newValue in
-                if newValue {
-                    // Turning ON
-                    Task {
-                        if !calendarSyncManager.isRemindersAccessGranted {
-                            await calendarSyncManager.requestRemindersAccess()
-                        } else {
-                            await calendarSyncManager.fetchRemindersAndUpdatePublishedProperty()
-                        }
-                        self.remindersAuthStatus = calendarSyncManager.checkRemindersAuthorizationStatus()
-                    }
-                } else {
-                    // Turning OFF
-                    showingRemoveRemindersDataAlert = true
-                }
-            }
-            
-            if appleRemindersIntegrationEnabled && (remindersAuthStatus == .denied || remindersAuthStatus == .restricted) {
-                 Text("Reminders access was denied at the system level. Please enable it in the Settings app.")
-                    .font(.caption)
-                    .foregroundColor(.red)
-                    .padding(.leading, 42)
-            }
-
-            if appleRemindersIntegrationEnabled && calendarSyncManager.isRemindersAccessGranted && !calendarSyncManager.appleReminders.isEmpty {
-                Text("Last sync: \(calendarSyncManager.appleReminders.count) reminders.")
-                    .font(.caption)
-                    .foregroundColor(.green)
-                    .padding(.leading, 42)
-            } else if appleRemindersIntegrationEnabled && calendarSyncManager.isRemindersAccessGranted && calendarSyncManager.appleReminders.isEmpty && remindersAuthStatus != .notDetermined {
-                 Text("No incomplete reminders found or an error occurred.")
-                     .font(.caption)
-                     .foregroundColor(.orange)
-                     .padding(.leading, 42)
-            }
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
-        .onAppear {
-            self.remindersAuthStatus = calendarSyncManager.checkRemindersAuthorizationStatus()
+        .sheet(isPresented: $showingAcademicCalendarManagement) {
+            AcademicCalendarManagementView()
+                .environmentObject(academicCalendarManager)
+                .environmentObject(themeManager)
+                .environmentObject(scheduleManager)
         }
     }
 }
 
-struct ThemeSelectionRow: View {
-    let theme: AppTheme
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 16) {
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(theme.primaryColor)
-                        .frame(width: 16, height: 16)
-                    Circle()
-                        .fill(theme.secondaryColor)
-                        .frame(width: 16, height: 16)
-                    Circle()
-                        .fill(theme.tertiaryColor)
-                        .frame(width: 16, height: 16)
-                }
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(theme.displayName)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundColor(.primary)
-                    
-                    Text(themeDescription(for: theme))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(theme.primaryColor)
-                        .font(.title3)
-                }
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? theme.primaryColor.opacity(0.1) : Color(.systemGray6).opacity(0.5))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? theme.primaryColor : Color.clear, lineWidth: 2)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-    
-    private func themeDescription(for theme: AppTheme) -> String {
-        switch theme {
-        case .forest:
-            return "Calming green tones inspired by nature"
-        case .ice:
-            return "Cool blue tones for a crisp, clean feel"
-        case .fire:
-            return "Warm red tones for energy and passion"
-        }
-    }
-}
+// MARK: - Settings Components
 
-struct SettingToggleRow: View {
+struct SettingsSection<Content: View>: View {
     let title: String
-    let subtitle: String
-    @Binding var isOn: Bool
     let icon: String
     let color: Color
+    @ViewBuilder let content: Content
     
     var body: some View {
-        HStack(spacing: 12) {
+        VStack(spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.title3.weight(.semibold))
+                    .foregroundColor(color)
+                    .frame(width: 24, height: 24)
+                
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            
+            VStack(spacing: 0) {
+                content
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+            )
+            .padding(.horizontal, 20)
+        }
+    }
+}
+
+struct SettingsNavigationRow: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    var destination: AnyView?
+    var action: (() -> Void)?
+    
+    @EnvironmentObject var themeManager: ThemeManager
+    
+    var body: some View {
+        Group {
+            if let destination = destination {
+                NavigationLink(destination: destination) {
+                    rowContent
+                }
+            } else {
+                Button(action: action ?? {}) {
+                    rowContent
+                }
+            }
+        }
+    }
+    
+    private var rowContent: some View {
+        HStack(spacing: 16) {
             Image(systemName: icon)
-                .font(.title2)
-                .foregroundColor(color)
-                .frame(width: 30)
+                .font(.title3)
+                .foregroundColor(themeManager.currentTheme.primaryColor)
+                .frame(width: 28, height: 28)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.subheadline.weight(.medium))
+                    .font(.body.weight(.medium))
                     .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 
                 Text(subtitle)
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             
-            Spacer()
-            
-            Toggle("", isOn: $isOn)
-                .toggleStyle(SwitchToggleStyle(tint: color))
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(Color.secondary)
         }
-        .padding(12)
-        .background(Color(.systemGray6).opacity(0.5))
-        .cornerRadius(8)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .contentShape(Rectangle())
     }
 }
 
-struct SettingButtonRow: View {
+struct SettingsToggleRow: View {
     let title: String
-    let subtitle: String?
+    let subtitle: String
     let icon: String
-    let color: Color
-    let action: () -> Void
-
-    init(title: String, subtitle: String? = nil, icon: String, color: Color, action: @escaping () -> Void) {
-        self.title = title
-        self.subtitle = subtitle
-        self.icon = icon
-        self.color = color
-        self.action = action
-    }
-
+    @Binding var isOn: Bool
+    
+    @EnvironmentObject var themeManager: ThemeManager
+    
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.title2)
-                    .foregroundColor(color)
-                    .frame(width: 30)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundColor(.primary)
-
-                    
-                    if let subtitle {
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
+        HStack(spacing: 16) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundColor(themeManager.currentTheme.primaryColor)
+                .frame(width: 28, height: 28)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body.weight(.medium))
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 
-                Spacer()
-                
-                Image(systemName: "chevron.right")
+                Text(subtitle)
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(12)
-            .background(Color(.systemGray6).opacity(0.5))
-            .cornerRadius(8)
+            
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
     }
 }
 
-struct SettingsView_Previews: PreviewProvider {
-    static var previews: some View {
-        let previewCalendarSyncManager = CalendarSyncManager()
-        let previewEventViewModel = EventViewModel()
-
-        return NavigationView {
-            SettingsView()
-                .environmentObject(ThemeManager())
-                .environmentObject(NotificationManager.shared)
-                .environmentObject(previewEventViewModel)
-                .environmentObject(previewCalendarSyncManager)
+struct SettingsTextFieldRow: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    @Binding var text: String
+    let placeholder: String
+    
+    @EnvironmentObject var themeManager: ThemeManager
+    @FocusState private var isFocused: Bool
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 16) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                    .frame(width: 28, height: 28)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.body.weight(.medium))
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            
+            TextField(placeholder, text: $text)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+                .focused($isFocused)
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                .padding(.horizontal, 44) // Align with text above
         }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
     }
 }

@@ -167,17 +167,19 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
     }
     
     // MARK: - Grade Notifications
-    func scheduleGradeNotification(for grade: Grade) {
+    func scheduleGradeNotification(for grade: Grade, assignment: String, courseName: String) {
         let center = UNUserNotificationCenter.current()
         let content = UNMutableNotificationContent()
         content.title = "New Grade Added"
-        content.body = "Grade: \(grade.grade) for \(grade.assignmentName) in \(grade.courseName)"
+        let percentage = (grade.score / grade.total) * 100
+        content.body = "Grade: \(String(format: "%.1f", percentage))% (\(grade.score)/\(grade.total)) for \(assignment) in \(courseName)"
         content.sound = .default
         
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         
+        let identifier = "grade-\(assignment)-\(Date().timeIntervalSince1970)"
         let request = UNNotificationRequest(
-            identifier: "grade-\(grade.id.uuidString)",
+            identifier: identifier,
             content: content,
             trigger: trigger
         )

@@ -1,231 +1,6 @@
 import SwiftUI
 import Foundation
 
-// MARK: - Schedule Import Models
-struct ScheduleImportData: Codable {
-    let version: Int
-    let timezone: String?
-    let items: [ScheduleImportItem]
-}
-
-struct ScheduleImportItem: Codable {
-    let title: String
-    let start: String // "HH:mm" format
-    let end: String   // "HH:mm" format
-    let days: [String] // ["Mon", "Tue", etc.]
-    let color: String?
-    let reminder: String?
-    let liveActivity: Bool?
-    let dayIndices: [Int]? // Optional 1-7 mapping
-}
-
-// MARK: - Schedule Import Parser
-class ScheduleImportParser {
-    static func parseScheduleJSON(_ jsonString: String) throws -> [ScheduleItem] {
-        // Clean the JSON string (remove any markdown formatting or extra text)
-        let cleanedJson = cleanJsonString(jsonString)
-        
-        guard let jsonData = cleanedJson.data(using: .utf8) else {
-            throw ImportError.invalidJSON
-        }
-        
-        let importData = try JSONDecoder().decode(ScheduleImportData.self, from: jsonData)
-        
-        guard importData.version == 1 else {
-            throw ImportError.unsupportedVersion
-        }
-        
-        var scheduleItems: [ScheduleItem] = []
-        
-        for item in importData.items {
-            guard let scheduleItem = try convertImportItem(item) else {
-                continue // Skip invalid items
-            }
-            scheduleItems.append(scheduleItem)
-        }
-        
-        return scheduleItems
-    }
-    
-    private static func cleanJsonString(_ input: String) -> String {
-        var cleaned = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Remove markdown code blocks if present
-        if cleaned.hasPrefix("```json") {
-            cleaned = String(cleaned.dropFirst(7))
-        }
-        if cleaned.hasPrefix("```") {
-            cleaned = String(cleaned.dropFirst(3))
-        }
-        if cleaned.hasSuffix("```") {
-            cleaned = String(cleaned.dropLast(3))
-        }
-        
-        // Find the JSON object (starts with { and ends with })
-        if let startIndex = cleaned.firstIndex(of: "{"),
-           let endIndex = cleaned.lastIndex(of: "}") {
-            cleaned = String(cleaned[startIndex...endIndex])
-        }
-        
-        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    
-    private static func convertImportItem(_ item: ScheduleImportItem) throws -> ScheduleItem? {
-        // Parse times
-        guard let startTime = parseTime(item.start),
-              let endTime = parseTime(item.end) else {
-            throw ImportError.invalidTimeFormat
-        }
-        
-        // Parse days
-        let daysOfWeek = try parseDays(item.days)
-        
-        // Parse color
-        let color = parseColor(item.color) ?? .blue
-        
-        // Parse reminder
-        let reminderTime = parseReminder(item.reminder) ?? .none
-        
-        // Create schedule item
-        return ScheduleItem(
-            title: item.title,
-            startTime: startTime,
-            endTime: endTime,
-            daysOfWeek: daysOfWeek,
-            color: color,
-            reminderTime: reminderTime,
-            isLiveActivityEnabled: item.liveActivity ?? true
-        )
-    }
-    
-    private static func parseTime(_ timeString: String) -> Date? {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.date(from: timeString)
-    }
-    
-    private static func parseDays(_ dayStrings: [String]) throws -> Set<DayOfWeek> {
-        var days: Set<DayOfWeek> = []
-        
-        for dayString in dayStrings {
-            switch dayString.lowercased() {
-            case "sun", "sunday":
-                days.insert(.sunday)
-            case "mon", "monday":
-                days.insert(.monday)
-            case "tue", "tuesday":
-                days.insert(.tuesday)
-            case "wed", "wednesday":
-                days.insert(.wednesday)
-            case "thu", "thursday":
-                days.insert(.thursday)
-            case "fri", "friday":
-                days.insert(.friday)
-            case "sat", "saturday":
-                days.insert(.saturday)
-            default:
-                throw ImportError.invalidDayFormat
-            }
-        }
-        
-        return days
-    }
-    
-    private static func parseColor(_ colorString: String?) -> Color? {
-        guard let colorString = colorString else { return nil }
-        
-        // Handle hex colors
-        if colorString.hasPrefix("#") {
-            return Color(hex: colorString)
-        }
-        
-        // Handle named colors
-        switch colorString.lowercased() {
-        case "blue": return .blue
-        case "orange": return .orange
-        case "red": return .red
-        case "purple": return .purple
-        case "green": return .green
-        case "gray", "grey": return .gray
-        case "yellow": return .yellow
-        case "pink": return .pink
-        case "cyan": return .cyan
-        case "mint": return .mint
-        case "teal": return .teal
-        case "indigo": return .indigo
-        default: return .blue
-        }
-    }
-    
-    private static func parseReminder(_ reminderString: String?) -> ReminderTime? {
-        guard let reminderString = reminderString else { return nil }
-        
-        switch reminderString.lowercased() {
-        case "none": return .none
-        case "atstart": return .atTime
-        case "5m": return .fiveMinutes
-        case "10m": return .tenMinutes
-        case "15m": return .fifteenMinutes
-        case "30m": return .thirtyMinutes
-        case "1h": return .oneHour
-        case "2h": return .twoHours
-        default: return .tenMinutes
-        }
-    }
-}
-
-// MARK: - Import Errors
-enum ImportError: LocalizedError {
-    case invalidJSON
-    case unsupportedVersion
-    case invalidTimeFormat
-    case invalidDayFormat
-    case parsingFailed
-    
-    var errorDescription: String? {
-        switch self {
-        case .invalidJSON:
-            return "Invalid JSON format"
-        case .unsupportedVersion:
-            return "Unsupported import version"
-        case .invalidTimeFormat:
-            return "Invalid time format"
-        case .invalidDayFormat:
-            return "Invalid day format"
-        case .parsingFailed:
-            return "Failed to parse schedule data"
-        }
-    }
-}
-
-// MARK: - Color Extension for Hex Support
-extension Color {
-    init?(hex: String) {
-        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: hex).scanHexInt64(&int)
-        let a, r, g, b: UInt64
-        switch hex.count {
-        case 3: // RGB (12-bit)
-            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
-        case 6: // RGB (24-bit)
-            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8: // ARGB (32-bit)
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
-        default:
-            return nil
-        }
-        
-        self.init(
-            .sRGB,
-            red: Double(r) / 255,
-            green: Double(g) / 255,
-            blue:  Double(b) / 255,
-            opacity: Double(a) / 255
-        )
-    }
-}
-
 // MARK: - AI Import Tutorial View
 struct AIImportTutorialView: View {
     @EnvironmentObject var scheduleManager: ScheduleManager
@@ -233,8 +8,14 @@ struct AIImportTutorialView: View {
     @Environment(\.dismiss) private var dismiss
     
     let scheduleID: UUID
+    let onImportCompleted: (() -> Void)?
     @State private var currentStep = 0
     @State private var showingImportView = false
+    
+    init(scheduleID: UUID, onImportCompleted: (() -> Void)? = nil) {
+        self.scheduleID = scheduleID
+        self.onImportCompleted = onImportCompleted
+    }
     
     private let steps = [
         TutorialStep(
@@ -334,9 +115,12 @@ struct AIImportTutorialView: View {
             }
         }
         .sheet(isPresented: $showingImportView) {
-            AIScheduleImportView(scheduleID: scheduleID)
-                .environmentObject(scheduleManager)
-                .environmentObject(themeManager)
+            AIScheduleImportView(scheduleID: scheduleID) {
+                // Callback when import is completed
+                onImportCompleted?()
+            }
+            .environmentObject(scheduleManager)
+            .environmentObject(themeManager)
         }
     }
 }

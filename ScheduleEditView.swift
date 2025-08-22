@@ -50,15 +50,15 @@ struct ScheduleEditView: View {
         }
     }
     
-    private var selectedDays: Set<DayOfWeek> {
-        var days: Set<DayOfWeek> = []
-        if sunday { days.insert(.sunday) }
-        if monday { days.insert(.monday) }
-        if tuesday { days.insert(.tuesday) }
-        if wednesday { days.insert(.wednesday) }
-        if thursday { days.insert(.thursday) }
-        if friday { days.insert(.friday) }
-        if saturday { days.insert(.saturday) }
+    private var selectedDays: [DayOfWeek] {
+        var days: [DayOfWeek] = []
+        if sunday { days.append(.sunday) }
+        if monday { days.append(.monday) }
+        if tuesday { days.append(.tuesday) }
+        if wednesday { days.append(.wednesday) }
+        if thursday { days.append(.thursday) }
+        if friday { days.append(.friday) }
+        if saturday { days.append(.saturday) }
         return days
     }
     
@@ -143,9 +143,12 @@ struct ScheduleEditView: View {
                                 startTime: startTime,
                                 endTime: endTime,
                                 daysOfWeek: selectedDays,
+                                location: "",
+                                instructor: "",
                                 color: selectedColor,
-                                reminderTime: reminderTime,
-                                isLiveActivityEnabled: isLiveActivityEnabled
+                                skippedInstanceIdentifiers: [],
+                                isLiveActivityEnabled: isLiveActivityEnabled,
+                                reminderTime: reminderTime
                             )
                             if schedule == nil {
                                 viewModel.addScheduleItem(item, themeManager: themeManager)
@@ -261,7 +264,7 @@ struct SkipControlsView: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
                         ForEach(thisWeekSkippedDays, id: \.self) { day in
                             HStack(spacing: 4) {
-                                Text(day.shortName)
+                                Text(day.short)
                                     .font(.caption2.weight(.medium))
                                     .foregroundColor(.orange)
                                 

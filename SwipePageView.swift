@@ -28,6 +28,7 @@ enum PageType: Int, CaseIterable {
 struct SwipePageView: View {
     @EnvironmentObject private var viewModel: EventViewModel
     @EnvironmentObject private var themeManager: ThemeManager
+    @EnvironmentObject private var academicCalendarManager: AcademicCalendarManager // NEW
     @StateObject private var weatherService = WeatherService()
     @StateObject private var calendarSyncManager = CalendarSyncManager()
     
@@ -68,12 +69,14 @@ struct SwipePageView: View {
                         .environmentObject(themeManager)
                         .environmentObject(weatherService)
                         .environmentObject(calendarSyncManager)
+                        .environmentObject(academicCalendarManager) // NEW
                         .background(Color(.systemGroupedBackground))
                         .tag(PageType.home)
                     
                     ScheduleView()
                         .environmentObject(viewModel)
                         .environmentObject(themeManager)
+                        .environmentObject(academicCalendarManager) // NEW
                         .background(Color(.systemGroupedBackground))
                         .tag(PageType.schedule)
                     
@@ -401,6 +404,7 @@ struct HomePageView: View {
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var weatherService: WeatherService
     @EnvironmentObject private var calendarSyncManager: CalendarSyncManager
+    @EnvironmentObject private var academicCalendarManager: AcademicCalendarManager // NEW
     
     @Binding var navigateToPage: PageType?
     @State private var selectedRoute: AppRoute?
