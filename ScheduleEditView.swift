@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ScheduleEditView: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var scheduleManager: ScheduleManager
     @EnvironmentObject var themeManager: ThemeManager
     @State private var title = ""
     @State private var startTime = Date()
@@ -11,7 +11,6 @@ struct ScheduleEditView: View {
     @State private var showingDeleteAlert = false
     @State private var isLiveActivityEnabled: Bool = true
     @State private var reminderTime: ReminderTime = .none
-    @State private var showingSkipOptions = false
     @State private var showingReminderPicker = false
     
     // Individual state for each day - simpler for compiler
@@ -24,29 +23,32 @@ struct ScheduleEditView: View {
     @State private var saturday = false
     
     let schedule: ScheduleItem?
+    let scheduleID: UUID
     let onDelete: (() -> Void)?
-    let onToggleSkip: (() -> Void)?
     
-    init(schedule: ScheduleItem? = nil, onDelete: (() -> Void)? = nil, onToggleSkip: (() -> Void)? = nil) {
+    init(schedule: ScheduleItem? = nil, scheduleID: UUID, onDelete: (() -> Void)? = nil) {
         self.schedule = schedule
+        self.scheduleID = scheduleID
         self.onDelete = onDelete
-        self.onToggleSkip = onToggleSkip
+        
+        // Initialize state values conditionally
         if let schedule = schedule {
-            _title = State(initialValue: schedule.title)
-            _startTime = State(initialValue: schedule.startTime)
-            _endTime = State(initialValue: schedule.endTime)
-            _selectedColor = State(initialValue: schedule.color)
-            _isLiveActivityEnabled = State(initialValue: schedule.isLiveActivityEnabled)
-            _reminderTime = State(initialValue: schedule.reminderTime)
+            self._title = State(initialValue: schedule.title)
+            self._startTime = State(initialValue: schedule.startTime)
+            self._endTime = State(initialValue: schedule.endTime)
+            self._selectedColor = State(initialValue: schedule.color)
+            self._isLiveActivityEnabled = State(initialValue: schedule.isLiveActivityEnabled)
+            self._reminderTime = State(initialValue: schedule.reminderTime)
             
             // Set individual day states
-            _sunday = State(initialValue: schedule.daysOfWeek.contains(.sunday))
-            _monday = State(initialValue: schedule.daysOfWeek.contains(.monday))
-            _tuesday = State(initialValue: schedule.daysOfWeek.contains(.tuesday))
-            _wednesday = State(initialValue: schedule.daysOfWeek.contains(.wednesday))
-            _thursday = State(initialValue: schedule.daysOfWeek.contains(.thursday))
-            _friday = State(initialValue: schedule.daysOfWeek.contains(.friday))
-            _saturday = State(initialValue: schedule.daysOfWeek.contains(.saturday))
+            let daysOfWeek = schedule.daysOfWeek
+            self._sunday = State(initialValue: daysOfWeek.contains(.sunday))
+            self._monday = State(initialValue: daysOfWeek.contains(.monday))
+            self._tuesday = State(initialValue: daysOfWeek.contains(.tuesday))
+            self._wednesday = State(initialValue: daysOfWeek.contains(.wednesday))
+            self._thursday = State(initialValue: daysOfWeek.contains(.thursday))
+            self._friday = State(initialValue: daysOfWeek.contains(.friday))
+            self._saturday = State(initialValue: daysOfWeek.contains(.saturday))
         }
     }
     
@@ -109,8 +111,8 @@ struct ScheduleEditView: View {
                 
                 if let schedule = schedule {
                     Section("Skip Options") {
-                        SkipControlsView(schedule: schedule)
-                            .environmentObject(viewModel)
+                        SkipControlsView(schedule: schedule, scheduleID: scheduleID)
+                            .environmentObject(scheduleManager)
                             .environmentObject(themeManager)
                     }
                 }
@@ -137,29 +139,27 @@ struct ScheduleEditView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(schedule == nil ? "Add" : "Save") {
-                        Task {
-                            let item = ScheduleItem(
-                                title: title,
-                                startTime: startTime,
-                                endTime: endTime,
-                                daysOfWeek: selectedDays,
-                                location: "",
-                                instructor: "",
-                                color: selectedColor,
-                                skippedInstanceIdentifiers: [],
-                                isLiveActivityEnabled: isLiveActivityEnabled,
-                                reminderTime: reminderTime
-                            )
-                            if schedule == nil {
-                                viewModel.addScheduleItem(item, themeManager: themeManager)
-                            } else {
-                                var updatedItem = item
-                                updatedItem.id = schedule?.id ?? item.id
-                                updatedItem.skippedInstanceIdentifiers = schedule?.skippedInstanceIdentifiers ?? []
-                                await viewModel.updateScheduleItem(updatedItem, themeManager: themeManager)
-                            }
-                            dismiss()
+                        let item = ScheduleItem(
+                            title: title,
+                            startTime: startTime,
+                            endTime: endTime,
+                            daysOfWeek: selectedDays,
+                            location: "",
+                            instructor: "",
+                            color: selectedColor,
+                            skippedInstanceIdentifiers: [],
+                            isLiveActivityEnabled: isLiveActivityEnabled,
+                            reminderTime: reminderTime
+                        )
+                        if schedule == nil {
+                            scheduleManager.addScheduleItem(item, to: scheduleID)
+                        } else {
+                            var updatedItem = item
+                            updatedItem.id = schedule?.id ?? item.id
+                            updatedItem.skippedInstanceIdentifiers = schedule?.skippedInstanceIdentifiers ?? []
+                            scheduleManager.updateScheduleItem(updatedItem, in: scheduleID)
                         }
+                        dismiss()
                     }
                     .disabled(title.isEmpty || selectedDays.isEmpty || endTime <= startTime)
                 }
@@ -181,9 +181,10 @@ struct ScheduleEditView: View {
 }
 
 struct SkipControlsView: View {
-    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var scheduleManager: ScheduleManager
     @EnvironmentObject var themeManager: ThemeManager
     let schedule: ScheduleItem
+    let scheduleID: UUID
     @State private var showingSkipOptions = false
     
     private var todaysSkipStatus: Bool {
@@ -230,7 +231,7 @@ struct SkipControlsView: View {
                 
                 Button {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        viewModel.toggleSkip(forInstance: schedule, onDate: Date(), themeManager: themeManager)
+                        scheduleManager.toggleSkip(forItem: schedule, onDate: Date(), in: scheduleID)
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -275,7 +276,7 @@ struct SkipControlsView: View {
                                           let dayDate = calendar.date(byAdding: .day, value: day.rawValue - 1, to: startOfWeek) else { return }
                                     
                                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                        viewModel.toggleSkip(forInstance: schedule, onDate: dayDate, themeManager: themeManager)
+                                        scheduleManager.toggleSkip(forItem: schedule, onDate: dayDate, in: scheduleID)
                                     }
                                 } label: {
                                     Image(systemName: "xmark.circle.fill")
@@ -346,7 +347,7 @@ struct SkipControlsView: View {
                 if let dayDate = calendar.date(byAdding: .day, value: dayOfWeek.rawValue - 1, to: startOfWeek) {
                     if !schedule.isSkipped(onDate: dayDate) {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            viewModel.toggleSkip(forInstance: schedule, onDate: dayDate, themeManager: themeManager)
+                            scheduleManager.toggleSkip(forItem: schedule, onDate: dayDate, in: scheduleID)
                         }
                     }
                 }
@@ -364,7 +365,7 @@ struct SkipControlsView: View {
             if let dayDate = calendar.date(byAdding: .day, value: dayOfWeek.rawValue - 1, to: startOfWeek) {
                 if !schedule.isSkipped(onDate: dayDate) {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        viewModel.toggleSkip(forInstance: schedule, onDate: dayDate, themeManager: themeManager)
+                        scheduleManager.toggleSkip(forItem: schedule, onDate: dayDate, in: scheduleID)
                     }
                 }
             }
@@ -381,7 +382,7 @@ struct SkipControlsView: View {
             if let dayDate = calendar.date(byAdding: .day, value: dayOfWeek.rawValue - 1, to: startOfWeek) {
                 if schedule.isSkipped(onDate: dayDate) {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        viewModel.toggleSkip(forInstance: schedule, onDate: dayDate, themeManager: themeManager)
+                        scheduleManager.toggleSkip(forItem: schedule, onDate: dayDate, in: scheduleID)
                     }
                 }
             }

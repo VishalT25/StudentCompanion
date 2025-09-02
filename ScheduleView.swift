@@ -111,25 +111,27 @@ struct ScheduleView: View {
         .onAppear(perform: setupInitialDate)
     }
     
-    @ViewBuilder
+    // MARK: - ScheduleView Header Updates
+
     private var headerView: some View {
         VStack(spacing: 16) {
             // Top navigation bar
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Schedule")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.forma(.largeTitle, weight: .bold))
                         .foregroundColor(.primary)
                     
                     if let activeSchedule = scheduleManager.activeSchedule {
                         Text(activeSchedule.displayName)
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.forma(.subheadline, weight: .medium))
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 4)
                             .background(
                                 Capsule()
                                     .fill(themeManager.currentTheme.primaryColor.opacity(0.15))
+                                    .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 20)
                             )
                     }
                 }
@@ -185,6 +187,7 @@ struct ScheduleView: View {
                                         : Color.clear,
                                     radius: 4, x: 0, y: 2
                                 )
+                                .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 10)
                         )
                 }
                 .buttonStyle(.plain)
@@ -200,18 +203,19 @@ struct ScheduleView: View {
                 } 
             }) {
                 Image(systemName: "chevron.left.circle.fill")
-                    .font(.system(size: 24))
+                    .font(.forma(.title2))
                     .foregroundColor(themeManager.currentTheme.primaryColor)
                     .background(
                         Circle()
                             .fill(Color(.systemBackground))
                             .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+                            .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
                     )
             }
             
             VStack(spacing: 4) {
                 Text(weekHeaderText)
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .font(.forma(.title3, weight: .semibold))
                     .foregroundColor(.primary)
                 
                 if currentWeekOffset != 0 {
@@ -221,13 +225,14 @@ struct ScheduleView: View {
                             selectedDate = Date()
                         }
                     }
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.forma(.caption, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.primaryColor)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
                     .background(
                         Capsule()
                             .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+                            .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 10)
                     )
                 }
             }
@@ -238,12 +243,13 @@ struct ScheduleView: View {
                 } 
             }) {
                 Image(systemName: "chevron.right.circle.fill")
-                    .font(.system(size: 24))
+                    .font(.forma(.title2))
                     .foregroundColor(themeManager.currentTheme.primaryColor)
                     .background(
                         Circle()
                             .fill(Color(.systemBackground))
                             .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+                            .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
                     )
             }
         }
@@ -277,6 +283,7 @@ struct ScheduleView: View {
                             RoundedRectangle(cornerRadius: 20)
                                 .fill(Color(.systemBackground))
                                 .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+                                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 20)
                         )
                     }
                     
@@ -310,6 +317,7 @@ struct ScheduleView: View {
                             .background(
                                 Circle()
                                     .fill(showingCalendarView ? themeManager.currentTheme.primaryColor : themeManager.currentTheme.secondaryColor.opacity(0.2))
+                                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
                             )
                     }
                     .rotationEffect(.degrees(showingCalendarView ? 180 : 0))
@@ -323,6 +331,7 @@ struct ScheduleView: View {
                             .background(
                                 Circle()
                                     .fill(themeManager.currentTheme.secondaryColor.opacity(0.2))
+                                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
                             )
                     }
                     
@@ -339,6 +348,7 @@ struct ScheduleView: View {
                                         color: themeManager.currentTheme.primaryColor.opacity(0.3),
                                         radius: 8, x: 0, y: 4
                                     )
+                                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
                             )
                     }
                 }
@@ -369,7 +379,7 @@ struct ScheduleView: View {
         VStack(spacing: 16) {
             HStack {
                 Text("Week Overview")
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .font(.forma(.title3, weight: .semibold))
                     .foregroundColor(.primary)
                 Spacer()
             }
@@ -404,6 +414,7 @@ struct ScheduleView: View {
             RoundedRectangle(cornerRadius: 20)
                 .fill(Color(.systemBackground))
                 .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 20)
         )
     }
     
@@ -416,18 +427,19 @@ struct ScheduleView: View {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(formatSelectedDate())
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .font(.forma(.title2, weight: .bold))
                         .foregroundColor(.primary)
                     
                     if let dayType = getDayType(for: schedule, date: selectedDate) {
                         Text(dayType)
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.forma(.subheadline, weight: .medium))
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
                             .background(
                                 Capsule()
                                     .fill(themeManager.currentTheme.primaryColor.opacity(0.12))
+                                    .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 16)
                             )
                     }
                 }
@@ -437,11 +449,11 @@ struct ScheduleView: View {
                 if !dayClasses.isEmpty {
                     VStack(spacing: 2) {
                         Text("\(dayClasses.count)")
-                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .font(.forma(.title2, weight: .bold))
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                         
                         Text(dayClasses.count == 1 ? "class" : "classes")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.forma(.caption2, weight: .medium))
                             .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 12)
@@ -449,6 +461,7 @@ struct ScheduleView: View {
                     .background(
                         RoundedRectangle(cornerRadius: 12)
                             .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+                            .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 12)
                     )
                 }
             }
@@ -471,6 +484,7 @@ struct ScheduleView: View {
             RoundedRectangle(cornerRadius: 20)
                 .fill(Color(.systemBackground))
                 .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 20)
         )
     }
     
@@ -511,17 +525,17 @@ struct ScheduleView: View {
                     .frame(width: 120, height: 120)
                 
                 Image(systemName: "calendar.badge.plus")
-                    .font(.system(size: 48, weight: .light))
+                    .font(.forma(.largeTitle, weight: .light))
                     .foregroundColor(themeManager.currentTheme.primaryColor)
             }
             
             VStack(spacing: 12) {
                 Text("Welcome to Your Schedule")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .font(.forma(.title2, weight: .bold))
                     .foregroundColor(.primary)
                 
                 Text("Create your first schedule to see your classes, track your time, and never miss an important class again.")
-                    .font(.system(size: 16, weight: .regular))
+                    .font(.forma(.body))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
@@ -530,10 +544,10 @@ struct ScheduleView: View {
             Button(action: { showingScheduleManager = true }) {
                 HStack(spacing: 8) {
                     Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.forma(.body, weight: .semibold))
                     
                     Text("Create Schedule")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.forma(.body, weight: .semibold))
                 }
                 .foregroundColor(.white)
                 .padding(.horizontal, 24)
@@ -554,6 +568,7 @@ struct ScheduleView: View {
                             color: themeManager.currentTheme.primaryColor.opacity(0.3),
                             radius: 8, x: 0, y: 4
                         )
+                        .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 14)
                 )
             }
             .buttonStyle(.plain)
@@ -564,12 +579,13 @@ struct ScheduleView: View {
             RoundedRectangle(cornerRadius: 24)
                 .fill(Color(.systemBackground))
                 .shadow(color: Color.black.opacity(0.05), radius: 12, x: 0, y: 6)
+                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 24)
         )
         .padding(.horizontal, 24)
     }
 }
 
-// MARK: - Supporting Views
+// MARK: - Supporting Views Updates
 
 struct StatCard: View {
     @EnvironmentObject var themeManager: ThemeManager
@@ -582,15 +598,15 @@ struct StatCard: View {
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 24, weight: .medium))
+                .font(.forma(.title2, weight: .medium))
                 .foregroundColor(color)
             
             Text(value)
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.forma(.title2, weight: .bold))
                 .foregroundColor(.primary)
             
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(.forma(.caption, weight: .medium))
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -602,6 +618,7 @@ struct StatCard: View {
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(color.opacity(0.2), lineWidth: 1)
                 )
+                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 16)
         )
     }
 }
@@ -639,31 +656,32 @@ struct ModernScheduleRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(item.title)
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .font(.forma(.body, weight: .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     
                     Spacer()
                     
                     Text(duration)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.forma(.caption, weight: .medium))
                         .foregroundColor(item.color)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(
                             Capsule()
                                 .fill(item.color.opacity(0.15))
+                                .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 16)
                         )
                 }
                 
                 HStack(spacing: 12) {
                     Label(timeRange, systemImage: "clock")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.forma(.caption, weight: .medium))
                         .foregroundColor(.secondary)
                     
                     if !item.location.isEmpty {
                         Label(item.location, systemImage: "location")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.forma(.caption, weight: .medium))
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
@@ -678,6 +696,7 @@ struct ModernScheduleRow: View {
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(item.color.opacity(0.15), lineWidth: 1)
                 )
+                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 16)
         )
     }
 }

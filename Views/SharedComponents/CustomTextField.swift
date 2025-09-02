@@ -13,12 +13,12 @@ struct CustomTextField: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.title3)
+                    .font(.forma(.title3))
                     .foregroundColor(themeManager.currentTheme.primaryColor)
                     .frame(width: 24)
                 
                 Text(title)
-                    .font(.subheadline.weight(.medium))
+                    .font(.forma(.subheadline, weight: .medium))
                     .foregroundColor(.primary)
             }
             

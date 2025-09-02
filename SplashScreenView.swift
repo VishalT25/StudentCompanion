@@ -13,12 +13,12 @@ struct SplashScreenView: View {
             
             VStack(spacing: 20) {
                 Image(systemName: "graduationcap.fill")
-                    .font(.system(size: 80))
+                    .font(.forma(.largeTitle))
                     .foregroundColor(.white) // White icon and text should look good on theme colors
                     .scaleEffect(scale)
                 
                 Text("StuCo")
-                    .font(.title.bold())
+                    .font(.forma(.title, weight: .bold))
                     .foregroundColor(.white)
             }
             .opacity(opacity)

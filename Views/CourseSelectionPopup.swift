@@ -333,22 +333,4 @@ class PreviewThemeManagerForCourse: ObservableObject {
     @Published var currentTheme: Theme = Theme()
 }
 
-struct CourseSelectionPopup_Previews: PreviewProvider {
-    static var previews: some View {
-        CourseSelectionPopup(
-            originalInput: "got 95% on math test",
-            suggestedAlias: "math",
-            availableCourses: [
-                Course(name: "Mathematics", iconName: "x.squareroot", colorHex: "007AFF"),
-                Course(name: "Computer Science", iconName: "laptopcomputer", colorHex: "34C759"),
-                Course(name: "Physics", iconName: "atom", colorHex: "FF9500"),
-                Course(name: "Chemistry", iconName: "flask", colorHex: "FF3B30"),
-                Course(name: "Biology", iconName: "leaf", colorHex: "30B0C7")
-            ],
-            onCourseSelected: { _ in },
-            onDismiss: {}
-        )
-        .environmentObject(PreviewThemeManagerForCourse())
-    }
-}
 #endif

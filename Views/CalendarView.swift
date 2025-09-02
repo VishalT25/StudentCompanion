@@ -22,6 +22,7 @@ struct CalendarView: View {
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color(.systemBackground))
                 .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 16)
         )
     }
     
@@ -30,6 +31,12 @@ struct CalendarView: View {
             Button(action: previousMonth) {
                 Image(systemName: "chevron.left")
                     .foregroundColor(themeManager.currentTheme.primaryColor)
+                    .padding(8)
+                    .background(
+                        Circle()
+                            .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+                            .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
+                    )
             }
             
             Spacer()
@@ -43,6 +50,12 @@ struct CalendarView: View {
             Button(action: nextMonth) {
                 Image(systemName: "chevron.right")
                     .foregroundColor(themeManager.currentTheme.primaryColor)
+                    .padding(8)
+                    .background(
+                        Circle()
+                            .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+                            .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
+                    )
             }
         }
     }
@@ -115,6 +128,7 @@ struct CalendarView: View {
                         isToday ? themeManager.currentTheme.primaryColor.opacity(0.1) :
                         Color.clear
                     )
+                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
             )
         }
         .buttonStyle(.plain)
@@ -129,15 +143,28 @@ struct CalendarView: View {
                 updateWeekOffset()
                 showingCalendarView = false
             }
-            .buttonStyle(.bordered)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+                    .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 8)
+            )
+            .foregroundColor(themeManager.currentTheme.primaryColor)
             
             Spacer()
             
             Button("Done") {
                 showingCalendarView = false
             }
-            .buttonStyle(.borderedProminent)
-            .tint(themeManager.currentTheme.primaryColor)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.primaryColor)
+                    .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 8)
+            )
+            .foregroundColor(.white)
         }
     }
     

@@ -65,7 +65,7 @@ struct ResourcesView: View {
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .font(.title2)
+                        .font(.forma(.title2))
                 }
             }
         }
@@ -168,19 +168,19 @@ struct ResourceWidget: View {
                                 .aspectRatio(contentMode: .fit)
                         } placeholder: {
                             Image(systemName: "globe")
-                                .font(.system(size: 18))
+                                .font(.forma(.body))
                                 .foregroundColor(resource.color)
                         }
                     } else {
                         Image(systemName: "globe")
-                            .font(.system(size: 18))
+                            .font(.forma(.body))
                             .foregroundColor(resource.color)
                     }
                 }
                 .frame(width: 20, height: 20)
                 
                 Text(resource.name)
-                    .font(.caption.weight(.medium))
+                    .font(.forma(.caption, weight: .medium))
                     .foregroundColor(.primary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
@@ -219,11 +219,11 @@ struct AddResourceWidget: View {
     var body: some View {
         VStack(spacing: 6) {
             Image(systemName: "plus.circle.fill")
-                .font(.system(size: 24))
+                .font(.forma(.title2))
                 .foregroundColor(themeManager.currentTheme.primaryColor)
             
             Text("Add Resource")
-                .font(.caption.weight(.medium))
+                .font(.forma(.caption, weight: .medium))
                 .foregroundColor(themeManager.currentTheme.primaryColor)
         }
         .frame(maxWidth: .infinity)
@@ -258,7 +258,7 @@ struct AddResourceView: View {
             Form {
                 Section {
                     TextField("Resource Name", text: $name)
-                        .font(.headline)
+                        .font(.forma(.headline))
                     
                     TextField("Website URL", text: $url)
                         .textFieldStyle(.plain)
@@ -267,17 +267,20 @@ struct AddResourceView: View {
                         .keyboardType(.URL)
                 } header: {
                     Text("Resource Details")
+                        .font(.forma(.caption, weight: .medium))
                 } footer: {
                     Text("Enter the full URL including https://")
-                        .font(.caption)
+                        .font(.forma(.caption))
                         .foregroundColor(.secondary)
                 }
                 
                 Section {
                     Toggle("Use Custom Color", isOn: $useCustomColor)
+                        .font(.forma(.body))
                     
                     if useCustomColor {
                         ColorPicker("Button Color", selection: $selectedColor, supportsOpacity: false)
+                            .font(.forma(.body))
                         
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack {
@@ -300,19 +303,21 @@ struct AddResourceView: View {
                     }
                 } header: {
                     Text("Customization")
+                        .font(.forma(.caption, weight: .medium))
                 }
                 
                 Section {
                     HStack {
                         Text("Preview")
+                            .font(.forma(.body))
                         Spacer()
                         if !name.isEmpty && !url.isEmpty {
                             VStack(spacing: 4) {
                                 Image(systemName: "globe")
-                                    .font(.system(size: 20))
+                                    .font(.forma(.body))
                                     .foregroundColor(useCustomColor ? selectedColor : themeManager.currentTheme.primaryColor)
                                 Text(name)
-                                    .font(.caption.weight(.medium))
+                                    .font(.forma(.caption, weight: .medium))
                                     .foregroundColor(.primary)
                             }
                             .padding(8)
@@ -333,6 +338,7 @@ struct AddResourceView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .font(.forma(.body))
                     .foregroundColor(.secondary)
                 }
                 
@@ -349,6 +355,7 @@ struct AddResourceView: View {
                         dismiss()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .font(.forma(.body))
                     .foregroundColor(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : themeManager.currentTheme.primaryColor)
                 }
             }
@@ -385,7 +392,7 @@ struct EditResourceView: View {
             Form {
                 Section {
                     TextField("Resource Name", text: $name)
-                        .font(.headline)
+                        .font(.forma(.headline))
                     
                     TextField("Website URL", text: $url)
                         .textFieldStyle(.plain)
@@ -394,13 +401,16 @@ struct EditResourceView: View {
                         .keyboardType(.URL)
                 } header: {
                     Text("Resource Details")
+                        .font(.forma(.caption, weight: .medium))
                 }
                 
                 Section {
                     Toggle("Use Custom Color", isOn: $useCustomColor)
+                        .font(.forma(.body))
                     
                     if useCustomColor {
                         ColorPicker("Button Color", selection: $selectedColor, supportsOpacity: false)
+                            .font(.forma(.body))
                         
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack {
@@ -423,19 +433,21 @@ struct EditResourceView: View {
                     }
                 } header: {
                     Text("Customization")
+                        .font(.forma(.caption, weight: .medium))
                 }
                 
                 Section {
                     HStack {
                         Text("Preview")
+                            .font(.forma(.body))
                         Spacer()
                         if !name.isEmpty && !url.isEmpty {
                             VStack(spacing: 4) {
                                 Image(systemName: "globe")
-                                    .font(.system(size: 20))
+                                    .font(.forma(.body))
                                     .foregroundColor(useCustomColor ? selectedColor : themeManager.currentTheme.primaryColor)
                                 Text(name)
-                                    .font(.caption.weight(.medium))
+                                    .font(.forma(.caption, weight: .medium))
                                     .foregroundColor(.primary)
                             }
                             .padding(8)
@@ -456,6 +468,7 @@ struct EditResourceView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .font(.forma(.body))
                     .foregroundColor(.secondary)
                 }
                 
@@ -475,6 +488,7 @@ struct EditResourceView: View {
                         dismiss()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .font(.forma(.body))
                     .foregroundColor(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : themeManager.currentTheme.primaryColor)
                 }
             }

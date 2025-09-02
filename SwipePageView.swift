@@ -28,7 +28,8 @@ enum PageType: Int, CaseIterable {
 struct SwipePageView: View {
     @EnvironmentObject private var viewModel: EventViewModel
     @EnvironmentObject private var themeManager: ThemeManager
-    @EnvironmentObject private var academicCalendarManager: AcademicCalendarManager // NEW
+    @EnvironmentObject private var academicCalendarManager: AcademicCalendarManager
+    @EnvironmentObject private var realtimeSyncManager: RealtimeSyncManager
     @StateObject private var weatherService = WeatherService()
     @StateObject private var calendarSyncManager = CalendarSyncManager()
     
@@ -69,14 +70,15 @@ struct SwipePageView: View {
                         .environmentObject(themeManager)
                         .environmentObject(weatherService)
                         .environmentObject(calendarSyncManager)
-                        .environmentObject(academicCalendarManager) // NEW
+                        .environmentObject(academicCalendarManager)
+                        .environmentObject(realtimeSyncManager)
                         .background(Color(.systemGroupedBackground))
                         .tag(PageType.home)
                     
                     ScheduleView()
                         .environmentObject(viewModel)
                         .environmentObject(themeManager)
-                        .environmentObject(academicCalendarManager) // NEW
+                        .environmentObject(academicCalendarManager)
                         .background(Color(.systemGroupedBackground))
                         .tag(PageType.schedule)
                     
@@ -147,12 +149,14 @@ struct SwipePageView: View {
                     .environmentObject(calendarSyncManager)
                     .environmentObject(weatherService)
                     .environmentObject(viewModel)
+                    .environmentObject(realtimeSyncManager)
                     .background(Color(.systemGroupedBackground))
                     .toolbar {
                         ToolbarItem(placement: .navigationBarTrailing) {
                             Button("Done") {
                                 showingSettings = false
                             }
+                            .font(.forma(.body))
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                         }
                     }
@@ -168,6 +172,7 @@ struct SwipePageView: View {
                             Button("Done") {
                                 showingResources = false
                             }
+                            .font(.forma(.body))
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                         }
                     }
@@ -182,6 +187,7 @@ struct SwipePageView: View {
                             Button("Done") {
                                 showingGame = false
                             }
+                            .font(.forma(.body))
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                         }
                     }
@@ -265,10 +271,10 @@ struct SwipePageView: View {
                         } label: {
                             HStack(spacing: 3) {
                                 Image(systemName: currentWeather.condition.SFSymbolName)
-                                    .font(.caption)
+                                    .font(.forma(.caption))
                                     .foregroundColor(currentWeather.condition.iconColor)
                                 Text("\(currentWeather.temperature)°C")
-                                    .font(.caption.weight(.medium))
+                                    .font(.forma(.caption, weight: .medium))
                                     .foregroundColor(themeManager.currentTheme.primaryColor)
                             }
                         }
@@ -279,7 +285,7 @@ struct SwipePageView: View {
                     
                     VStack(alignment: .trailing, spacing: 0) {
                         Text(Date(), format: Date.FormatStyle().weekday(.wide).day().month())
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.forma(.caption2, weight: .medium))
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                     }
                 }
@@ -296,7 +302,7 @@ struct SwipePageView: View {
                     }
                 } label: {
                     Image(systemName: "gearshape.fill")
-                        .font(.system(size: 14))
+                        .font(.forma(.caption, weight: .medium))
                         .foregroundColor(themeManager.currentTheme.primaryColor)
                         .padding(5)
                         .background(
@@ -320,7 +326,7 @@ struct SwipePageView: View {
                     }
                 } label: {
                     Image(systemName: "bell.fill")
-                        .font(.system(size: 14))
+                        .font(.forma(.caption, weight: .medium))
                         .foregroundColor(themeManager.currentTheme.primaryColor)
                         .padding(5)
                         .background(
@@ -366,11 +372,11 @@ struct SwipePageView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: page.icon)
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.forma(.caption, weight: .medium))
                         
                         if currentPage == page {
                             Text(page.title)
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.forma(.caption, weight: .semibold))
                                 .transition(.asymmetric(
                                     insertion: .opacity.combined(with: .scale(scale: 0.8)),
                                     removal: .opacity
@@ -460,6 +466,7 @@ struct HomePageView: View {
                             Button("Done") {
                                 showingResources = false
                             }
+                            .font(.forma(.body))
                             .foregroundColor(themeManager.currentTheme.primaryColor)
                         }
                     }
@@ -569,18 +576,18 @@ struct ActionCardView: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.title2)
+                .font(.forma(.title2))
                 .foregroundColor(themeManager.currentTheme.primaryColor)
             
             VStack(spacing: 4) {
                 Text(title)
-                    .font(.caption.weight(.medium))
-                    .foregroundColor(.black)
+                    .font(.forma(.caption, weight: .medium))
+                    .foregroundColor(.primary)
                     .multilineTextAlignment(.center)
                 
                 if !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.caption.weight(.bold))
+                        .font(.forma(.caption, weight: .bold))
                         .foregroundColor(themeManager.currentTheme.primaryColor)
                 }
             }
@@ -592,5 +599,178 @@ struct ActionCardView: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.12), radius: 8, x: 0, y: 4)
         )
+        .adaptiveWidgetDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 12)
+    }
+}
+
+struct EventsPreviewView: View {
+    @EnvironmentObject private var viewModel: EventViewModel
+    @EnvironmentObject private var themeManager: ThemeManager
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                HStack(spacing: 8) {
+                    Image(systemName: "star.fill")
+                        .font(.forma(.subheadline))
+                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                    Text("Reminders")
+                        .font(.forma(.headline, weight: .bold))
+                        .foregroundColor(.primary)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.forma(.caption))
+                    .foregroundColor(.primary)
+            }
+            
+            let todaysEvents = viewModel.todaysEvents()
+            let upcomingEvents = viewModel.upcomingEvents()
+            
+            if todaysEvents.isEmpty && upcomingEvents.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "star.circle")
+                        .font(.forma(.title2))
+                        .foregroundColor(.primary)
+                    Text("No upcoming reminders")
+                        .font(.forma(.subheadline))
+                        .foregroundColor(.primary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+            } else {
+                VStack(spacing: 10) {
+                    // Today's events
+                    if !todaysEvents.isEmpty {
+                        VStack(spacing: 8) {
+                            HStack {
+                                Text("Today")
+                                    .font(.forma(.subheadline, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text("\(todaysEvents.count)")
+                                    .font(.forma(.caption))
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            ForEach(Array(todaysEvents.prefix(2))) { event in
+                                EventPreviewRow(event: event)
+                                    .environmentObject(viewModel)
+                                    .environmentObject(themeManager)
+                            }
+                            
+                            if todaysEvents.count > 2 {
+                                Text("+ \(todaysEvents.count - 2) more today")
+                                    .font(.forma(.caption))
+                                    .foregroundColor(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                    
+                    // Upcoming events
+                    if !upcomingEvents.isEmpty {
+                        VStack(spacing: 8) {
+                            if !todaysEvents.isEmpty {
+                                Divider()
+                            }
+                            
+                            HStack {
+                                Text("Upcoming")
+                                    .font(.forma(.subheadline, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text("\(upcomingEvents.count)")
+                                    .font(.forma(.caption))
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            ForEach(Array(upcomingEvents.prefix(todaysEvents.isEmpty ? 3 : 2))) { event in
+                                EventPreviewRow(event: event)
+                                    .environmentObject(viewModel)
+                                    .environmentObject(themeManager)
+                            }
+                            
+                            let displayedCount = todaysEvents.isEmpty ? 3 : 2
+                            if upcomingEvents.count > displayedCount {
+                                Text("+ \(upcomingEvents.count - displayedCount) more upcoming")
+                                    .font(.forma(.caption))
+                                    .foregroundColor(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.systemBackground))
+                .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.12), radius: 12, x: 0, y: 6)
+        )
+        .adaptiveWidgetDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 16)
+    }
+}
+
+struct EventPreviewRow: View {
+    @EnvironmentObject private var viewModel: EventViewModel
+    @EnvironmentObject private var themeManager: ThemeManager
+    let event: Event
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(spacing: 2) {
+                Text("\(Calendar.current.component(.day, from: event.date))")
+                    .font(.forma(.caption, weight: .bold))
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                Text(monthShort(from: event.date))
+                    .font(.forma(.caption2, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
+            .frame(width: 32)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+            )
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(event.title)
+                    .font(.forma(.subheadline, weight: .medium))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                
+                HStack(spacing: 8) {
+                    Label(timeString(from: event.date), systemImage: "clock")
+                        .font(.forma(.caption))
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Circle()
+                        .fill(event.category(from: viewModel.categories).color)
+                        .frame(width: 8, height: 8)
+                }
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 2)
+    }
+    
+    private func monthShort(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM"
+        return formatter.string(from: date)
+    }
+    
+    private func timeString(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WeekDayCard: View {
     @EnvironmentObject var themeManager: ThemeManager
+    @Environment(\.colorScheme) var colorScheme
     
     let date: Date
     let dayOfWeek: DayOfWeek
@@ -39,6 +40,7 @@ struct WeekDayCard: View {
                     .background(
                         Circle()
                             .fill(badgeBackgroundColor)
+                            .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
                     )
             } else {
                 Circle()
@@ -48,12 +50,15 @@ struct WeekDayCard: View {
         }
         .frame(height: 70)
         .frame(maxWidth: .infinity)
-        .background(backgroundColor)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(backgroundColor)
+                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 12)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(borderColor, lineWidth: isSelected ? 2 : 1)
         )
-        .cornerRadius(12)
         .scaleEffect(isSelected ? 1.05 : 1.0)
         .shadow(
             color: shadowColor,
@@ -65,14 +70,7 @@ struct WeekDayCard: View {
     
     private var backgroundColor: Color {
         if isSelected {
-            return LinearGradient(
-                colors: [
-                    themeManager.currentTheme.primaryColor.opacity(0.15),
-                    themeManager.currentTheme.primaryColor.opacity(0.08)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ).color
+            return themeManager.currentTheme.primaryColor.opacity(0.15)
         } else if isToday {
             return themeManager.currentTheme.primaryColor.opacity(0.05)
         } else {
@@ -86,7 +84,7 @@ struct WeekDayCard: View {
         } else if isToday {
             return themeManager.currentTheme.primaryColor.opacity(0.4)
         } else {
-            return Color(.systemGray6)
+            return colorScheme == .dark ? Color(.systemGray4) : Color(.systemGray6)
         }
     }
     
@@ -134,11 +132,5 @@ struct WeekDayCard: View {
         } else {
             return 2
         }
-    }
-}
-
-extension LinearGradient {
-    var color: Color {
-        return Color.clear // Placeholder - SwiftUI will handle the gradient
     }
 }

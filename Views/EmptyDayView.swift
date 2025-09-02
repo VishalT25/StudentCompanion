@@ -37,6 +37,7 @@ struct EmptyDayView: View {
                         )
                     )
                     .frame(width: 60, height: 60)
+                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
                 
                 Image(systemName: illustrationIcon)
                     .font(.system(size: 24, weight: .light))
@@ -77,6 +78,7 @@ struct EmptyDayView: View {
                             RoundedRectangle(cornerRadius: 10)
                                 .stroke(themeManager.currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
                         )
+                        .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 10)
                 )
             }
         }

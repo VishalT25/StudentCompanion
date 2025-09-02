@@ -2,23 +2,17 @@ import SwiftUI
 
 struct MenuView: View {
     @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var supabaseService: SupabaseService
     @Binding var isShowing: Bool
     @Binding var selectedRoute: AppRoute?
     @State private var happyFaceClickCount = 0
 
     var body: some View {
         ZStack {
-            // Color.black.opacity(0.3)
-            //     .ignoresSafeArea()
-            //     .onTapGesture {
-            //         withAnimation(.spring()) {
-            //             isShowing = false
-            //         }
-            //     }
-            
             HStack {
                 MenuContentView(isShowing: $isShowing, selectedRoute: $selectedRoute)
                     .environmentObject(themeManager)
+                    .environmentObject(supabaseService)
                 
                 Spacer()
             }
@@ -28,12 +22,50 @@ struct MenuView: View {
 
 struct MenuContentView: View {
     @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var supabaseService: SupabaseService
     @Binding var isShowing: Bool
     @Binding var selectedRoute: AppRoute?
     @State private var happyFaceClickCount = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // User Profile Section (if authenticated)
+            if supabaseService.isAuthenticated {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(LinearGradient(colors: [.white.opacity(0.3), .white.opacity(0.1)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(width: 40, height: 40)
+                            Text((displayName.prefix(1)).uppercased())
+                                .font(.forma(.headline, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(displayName)
+                                .font(.forma(.body, weight: .semibold))
+                                .foregroundColor(.white)
+                            Text(supabaseService.currentUser?.email ?? "")
+                                .font(.forma(.caption))
+                                .foregroundColor(.white.opacity(0.8))
+                                .lineLimit(1)
+                        }
+                        
+                        Spacer()
+                        
+                        // Add Sync Status Indicator
+                        SyncStatusIndicator()
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 16)
+                    
+                    Divider()
+                        .background(Color.white.opacity(0.3))
+                        .padding(.horizontal, 24)
+                }
+            }
+            
             menuItem(.schedule, icon: "calendar", title: "Schedule")
             menuItem(.events, icon: "star.fill", title: "Reminders")
             menuItem(.gpa, icon: "graduationcap", title: "Courses")
@@ -54,10 +86,10 @@ struct MenuContentView: View {
             } label: {
                 HStack {
                     Text("😀")
-                        .font(.title)
+                        .font(.forma(.title))
                     if happyFaceClickCount > 0 {
                         Text("(\(happyFaceClickCount)/3)")
-                            .font(.caption)
+                            .font(.forma(.caption))
                             .foregroundColor(.white.opacity(0.7))
                     }
                 }
@@ -72,6 +104,10 @@ struct MenuContentView: View {
         .shadow(radius: 10)
     }
     
+    private var displayName: String {
+        supabaseService.userProfile?.displayName ?? "User"
+    }
+    
     private func menuItem(_ route: AppRoute, icon: String, title: String) -> some View {
         Button {
             selectedRoute = route
@@ -81,9 +117,9 @@ struct MenuContentView: View {
         } label: {
             HStack(spacing: 16) {
                 Image(systemName: icon)
-                    .font(.headline)
+                    .font(.forma(.headline))
                 Text(title)
-                    .font(.headline)
+                    .font(.forma(.headline))
             }
             .foregroundColor(.white)
             .frame(maxWidth: .infinity, alignment: .leading)

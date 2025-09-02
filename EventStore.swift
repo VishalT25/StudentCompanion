@@ -14,7 +14,9 @@ struct EventStore {
         if let idx = viewModel.events.firstIndex(where: { $0.id == localId }) {
             viewModel.events[idx].googleCalendarIdentifier = id
             viewModel.events[idx].externalIdentifier = id   // keep them identical
-            viewModel.saveData()
+            
+            // Save the data locally and sync to database
+            viewModel.updateEvent(viewModel.events[idx])
         }
     }
 }

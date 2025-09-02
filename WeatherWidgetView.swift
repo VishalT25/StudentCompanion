@@ -103,6 +103,7 @@ struct WeatherWidgetView: View {
                 .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         )
         .shadow(color: Color.black.opacity(0.1), radius: 20, x: 0, y: 8)
+        .adaptiveWidgetDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 24)
         .frame(maxWidth: .infinity, idealHeight: 400, maxHeight: 500)
         .padding(16)
         .sheet(isPresented: $showingCitySelection) {
@@ -110,6 +111,8 @@ struct WeatherWidgetView: View {
         }
     }
     
+    // MARK: - Header and Main Weather Display Updates
+
     private var headerView: some View {
         HStack {
             Spacer()
@@ -121,7 +124,7 @@ struct WeatherWidgetView: View {
                 Text("Done")
                     .padding(.vertical, 10)
                     .padding(.horizontal, 20)
-                    .font(.headline.weight(.medium))
+                    .font(.forma(.headline, weight: .medium))
                     .foregroundColor(.white)
                     .background(
                         Capsule()
@@ -151,12 +154,12 @@ struct CurrentWeatherHeaderView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "location.fill")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.forma(.subheadline, weight: .medium))
                         Text(currentWeather.locationName)
-                            .font(.headline.weight(.medium))
+                            .font(.forma(.headline, weight: .medium))
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.forma(.caption, weight: .medium))
                             .opacity(0.7)
                     }
                     .padding(.horizontal, 12)
@@ -176,7 +179,7 @@ struct CurrentWeatherHeaderView: View {
                 HStack(spacing: 10) {
                     Image(systemName: currentWeather.condition.SFSymbolName)
                         .renderingMode(.original)
-                        .font(.title2)
+                        .font(.forma(.title2))
                         .foregroundColor(currentWeather.condition.iconColor)
                         .frame(width: 30, height: 30)
                     HDToggleView(selectedType: $selectedForecastType)
@@ -187,7 +190,7 @@ struct CurrentWeatherHeaderView: View {
             HStack {
                 Spacer()
                 Text("\(currentWeather.temperature)°")
-                    .font(.system(size: 60, weight: .thin))
+                    .font(.forma(.largeTitle, weight: .thin))
                     .foregroundColor(.white)
                 Spacer()
             }
@@ -196,7 +199,7 @@ struct CurrentWeatherHeaderView: View {
             HStack {
                 Spacer()
                 Text(currentWeather.condition.description)
-                    .font(.title3.weight(.regular))
+                    .font(.forma(.title3))
                 Spacer()
             }
             .foregroundColor(.white.opacity(0.9))
@@ -204,7 +207,7 @@ struct CurrentWeatherHeaderView: View {
             HStack {
                 Spacer()
                 Text("H:\(currentWeather.todayHigh)° L:\(currentWeather.todayLow)°")
-                    .font(.headline.weight(.medium))
+                    .font(.forma(.headline, weight: .medium))
                 Spacer()
             }
             .foregroundColor(.white.opacity(0.9))
@@ -214,19 +217,19 @@ struct CurrentWeatherHeaderView: View {
                 HStack(spacing: 20) {
                     VStack(spacing: 2) {
                         Text("Humidity")
-                            .font(.caption)
+                            .font(.forma(.caption))
                             .foregroundColor(.white.opacity(0.7))
                         Text("\(currentWeather.humidity)%")
-                            .font(.caption.weight(.medium))
+                            .font(.forma(.caption, weight: .medium))
                             .foregroundColor(.white)
                     }
                     
                     VStack(spacing: 2) {
                         Text("Wind")
-                            .font(.caption)
+                            .font(.forma(.caption))
                             .foregroundColor(.white.opacity(0.7))
                         Text("\(Int(currentWeather.windSpeed)) km/h")
-                            .font(.caption.weight(.medium))
+                            .font(.forma(.caption, weight: .medium))
                             .foregroundColor(.white)
                     }
                 }
@@ -254,7 +257,7 @@ struct HDToggleButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(isSelected ? .bold : .regular))
+            .font(.forma(.subheadline, weight: isSelected ? .bold : .regular))
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .frame(minWidth: 30)
@@ -286,14 +289,14 @@ struct HourlyForecastScrollView: View {
                 ForEach(hourlyForecasts) { forecast in
                     VStack(spacing: 8) {
                         Text(formatHour(forecast.date))
-                            .font(.subheadline.weight(.medium))
+                            .font(.forma(.subheadline, weight: .medium))
                             .foregroundColor(.white.opacity(0.8))
                         Image(systemName: forecast.condition.SFSymbolName)
-                            .font(.title2)
+                            .font(.forma(.title2))
                             .foregroundColor(forecast.condition.iconColor)
                             .frame(height: 25)
                         Text("\(forecast.temperature)°")
-                            .font(.title3.weight(.medium))
+                            .font(.forma(.title3, weight: .medium))
                             .foregroundColor(.white)
                     }
                     .frame(width: 60)
@@ -322,21 +325,21 @@ struct DailyForecastListView: View {
             ForEach(dailyForecasts) { forecast in
                 HStack(spacing: 15) {
                     Text(formatDay(forecast.date))
-                        .font(.headline.weight(.medium))
+                        .font(.forma(.headline, weight: .medium))
                         .frame(width: 70, alignment: .leading)
                         .foregroundColor(.white)
 
                     Image(systemName: forecast.condition.SFSymbolName)
-                        .font(.title3)
+                        .font(.forma(.title3))
                         .foregroundColor(forecast.condition.iconColor)
                         .frame(width: 30)
                     
                     Spacer()
                     Text("H:\(forecast.highTemp)°")
-                        .font(.headline.weight(.medium))
+                        .font(.forma(.headline, weight: .medium))
                         .foregroundColor(.white)
                     Text("L:\(forecast.lowTemp)°")
-                        .font(.headline.weight(.regular))
+                        .font(.forma(.headline))
                         .foregroundColor(.white.opacity(0.7))
                 }
                 .padding(.vertical, 8)
@@ -374,12 +377,13 @@ struct CitySelectionView: View {
                         Button("Cancel") {
                             dismiss()
                         }
+                        .font(.forma(.body))
                         .foregroundColor(.white)
                         
                         Spacer()
                         
                         Text("Choose Location")
-                            .font(.title2.bold())
+                            .font(.forma(.title2, weight: .bold))
                             .foregroundColor(.white)
                         
                         Spacer()
@@ -387,6 +391,7 @@ struct CitySelectionView: View {
                         Button("Done") {
                             dismiss()
                         }
+                        .font(.forma(.body))
                         .foregroundColor(.white)
                         .opacity(0)
                     }
@@ -396,12 +401,12 @@ struct CitySelectionView: View {
                     HStack(spacing: 12) {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(.white.opacity(0.7))
-                            .font(.system(size: 16, weight: .medium))
+                            .font(.forma(.body, weight: .medium))
                         
                         TextField("Search cities or countries...", text: $searchText)
                             .textFieldStyle(PlainTextFieldStyle())
                             .foregroundColor(.white)
-                            .font(.system(size: 16))
+                            .font(.forma(.body))
                             .autocorrectionDisabled()
                         
                         if !searchText.isEmpty {
@@ -410,7 +415,7 @@ struct CitySelectionView: View {
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundColor(.white.opacity(0.7))
-                                    .font(.system(size: 16))
+                                    .font(.forma(.body))
                             }
                         }
                     }
@@ -481,19 +486,19 @@ struct CityCard: View {
                         .frame(width: 50, height: 50)
                     
                     Image(systemName: "location.fill")
-                        .font(.system(size: 20, weight: .medium))
+                        .font(.forma(.title3, weight: .medium))
                         .foregroundColor(.blue)
                 }
                 
                 VStack(spacing: 4) {
                     Text(city.name)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.forma(.body, weight: .semibold))
                         .foregroundColor(.primary)
                         .multilineTextAlignment(.center)
                         .lineLimit(1)
                     
                     Text(city.country)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.forma(.caption, weight: .medium))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -501,10 +506,10 @@ struct CityCard: View {
                 if isSelected {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(.forma(.caption))
                             .foregroundColor(.green)
                         Text("Selected")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.forma(.caption2, weight: .medium))
                             .foregroundColor(.green)
                     }
                     .padding(.horizontal, 8)

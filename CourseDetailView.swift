@@ -168,7 +168,7 @@ struct CourseDetailView: View {
                         .foregroundColor(.secondary)
                 } else {
                     Button(action: {
-                        course.assignments.append(Assignment())
+                        course.assignments.append(Assignment(courseId: course.id))
                         requestSave()
                     }) {
                         Image(systemName: "plus.circle.fill")
@@ -224,7 +224,7 @@ struct CourseDetailView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                     Button("Add your first assignment") {
-                        course.assignments.append(Assignment())
+                        course.assignments.append(Assignment(courseId: course.id))
                         requestSave()
                     }
                     .font(.caption)
@@ -704,11 +704,15 @@ struct CalculatorInputRow: View {
 
 #Preview {
     struct PreviewWrapper: View {
-        @StateObject var sampleCourse = Course(name: "Sample Course", assignments: [
-            Assignment(name: "Homework 1", grade: "95", weight: "15"),
-            Assignment(name: "Midterm Exam", grade: "87", weight: "25"),
-            Assignment(name: "Final Project", grade: "92", weight: "20")
-        ])
+        @StateObject var sampleCourse = Course(
+            scheduleId: UUID(),
+            name: "Sample Course",
+            assignments: [
+                Assignment(courseId: UUID(), name: "Homework 1", grade: "95", weight: "15"),
+                Assignment(courseId: UUID(), name: "Midterm Exam", grade: "87", weight: "25"),
+                Assignment(courseId: UUID(), name: "Final Project", grade: "92", weight: "20")
+            ]
+        )
         
         var body: some View {
             NavigationView {

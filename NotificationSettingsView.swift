@@ -10,8 +10,10 @@ struct NotificationSettingsView: View {
                 Section("Notification Status") {
                     HStack {
                         Text("Status")
+                            .font(.forma(.body))
                         Spacer()
                         Text(notificationManager.authorizationStatusText)
+                            .font(.forma(.body, weight: .medium))
                             .foregroundColor(notificationManager.isAuthorized ? .green : .red)
                     }
                     
@@ -19,6 +21,7 @@ struct NotificationSettingsView: View {
                         Button("Enable Notifications") {
                             notificationManager.openNotificationSettings()
                         }
+                        .font(.forma(.body))
                         .foregroundColor(.blue)
                     }
                 }
@@ -26,17 +29,20 @@ struct NotificationSettingsView: View {
                 Section("Notification Settings") {
                     HStack {
                         Text("Notifications Enabled")
+                            .font(.forma(.body))
                         Spacer()
-                        // FIXED: Use the property directly, not as a binding for display
                         Text(notificationManager.isAuthorized ? "Yes" : "No")
+                            .font(.forma(.body, weight: .medium))
                             .foregroundColor(notificationManager.isAuthorized ? .green : .red)
                     }
                     
                     if notificationManager.isAuthorized {
                         HStack {
                             Text("Pending Notifications")
+                                .font(.forma(.body))
                             Spacer()
                             Text("\(pendingNotificationsCount)")
+                                .font(.forma(.body, weight: .medium))
                                 .foregroundColor(.secondary)
                         }
                         
@@ -45,11 +51,13 @@ struct NotificationSettingsView: View {
                                 pendingNotificationsCount = await notificationManager.getPendingNotificationsCount()
                             }
                         }
+                        .font(.forma(.body))
                         
                         Button("Clear All Notifications") {
                             notificationManager.cancelAllNotifications()
                             pendingNotificationsCount = 0
                         }
+                        .font(.forma(.body))
                         .foregroundColor(.red)
                     }
                 }
@@ -58,12 +66,14 @@ struct NotificationSettingsView: View {
                     Button("Check Authorization Status") {
                         notificationManager.checkAuthorizationStatus()
                     }
+                    .font(.forma(.body))
                     
                     Button("Request Authorization") {
                         Task {
                             await notificationManager.requestAuthorization()
                         }
                     }
+                    .font(.forma(.body))
                 }
             }
             .navigationTitle("Notifications")

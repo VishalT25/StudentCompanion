@@ -3,6 +3,7 @@ import Combine
 
 class Course: Identifiable, ObservableObject, Codable, Equatable {
     @Published var id: UUID
+    @Published var scheduleId: UUID // NEW: Required reference to schedule
     @Published var name: String
     @Published var iconName: String
     @Published var colorHex: String
@@ -30,15 +31,25 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
 
     private var cancellables = Set<AnyCancellable>()
 
-    init(id: UUID = UUID(), name: String = "New Course", iconName: String = "book.closed.fill", colorHex: String = Color.blue.toHex() ?? "007AFF", assignments: [Assignment] = [], finalGradeGoal: String = "", weightOfRemainingTasks: String = "") {
+    init(id: UUID = UUID(), scheduleId: UUID, name: String = "New Course", iconName: String = "book.closed.fill", colorHex: String = Color.blue.toHex() ?? "007AFF", assignments: [Assignment] = [], finalGradeGoal: String = "", weightOfRemainingTasks: String = "") {
         self.id = id
+        self.scheduleId = scheduleId
         self.name = name
         self.iconName = iconName
         self.colorHex = colorHex
-        self.assignments = assignments 
+        
+        // Ensure all assignments have the correct courseId
+        self.assignments = assignments.map { assignment in
+            var updatedAssignment = assignment
+            updatedAssignment.courseId = id
+            return updatedAssignment
+        }
+        
         self.finalGradeGoal = finalGradeGoal
         self.weightOfRemainingTasks = weightOfRemainingTasks
-        setupAssignmentsObservation()
+        DispatchQueue.main.async { [weak self] in
+            self?.setupAssignmentsObservation()
+        }
     }
 
     private func setupAssignmentsObservation() {
@@ -70,26 +81,48 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         setupAssignmentsObservation()
         triggerGradeUpdate()
     }
+    
+    // NEW: Method to add assignment with proper courseId
+    func addAssignment(_ assignment: Assignment) {
+        var newAssignment = assignment
+        newAssignment.courseId = self.id
+        assignments.append(newAssignment)
+    }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, iconName, colorHex, assignments, finalGradeGoal, weightOfRemainingTasks
+        case id, scheduleId, name, iconName, colorHex, assignments, finalGradeGoal, weightOfRemainingTasks
     }
 
     required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
+        scheduleId = try container.decode(UUID.self, forKey: .scheduleId)
         name = try container.decode(String.self, forKey: .name)
         iconName = try container.decode(String.self, forKey: .iconName)
         colorHex = try container.decode(String.self, forKey: .colorHex)
-        assignments = try container.decode([Assignment].self, forKey: .assignments)
+        
+        // Decode to a temporary, then finish initializing all stored properties
+        let decodedAssignments = try container.decode([Assignment].self, forKey: .assignments)
         finalGradeGoal = try container.decode(String.self, forKey: .finalGradeGoal)
         weightOfRemainingTasks = try container.decode(String.self, forKey: .weightOfRemainingTasks)
-        setupAssignmentsObservation()
+        
+        // Initialize assignments first to complete stored property initialization
+        assignments = decodedAssignments
+        
+        // Now it's safe to use self; update each assignment's courseId without using closures
+        for i in assignments.indices {
+            assignments[i].courseId = id
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.setupAssignmentsObservation()
+        }
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
+        try container.encode(scheduleId, forKey: .scheduleId)
         try container.encode(name, forKey: .name)
         try container.encode(iconName, forKey: .iconName)
         try container.encode(colorHex, forKey: .colorHex)
@@ -100,12 +133,44 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
 
     static func == (lhs: Course, rhs: Course) -> Bool {
         lhs.id == rhs.id &&
+        lhs.scheduleId == rhs.scheduleId &&
         lhs.name == rhs.name &&
         lhs.iconName == rhs.iconName &&
         lhs.colorHex == rhs.colorHex &&
         lhs.assignments == rhs.assignments &&
         lhs.finalGradeGoal == rhs.finalGradeGoal &&
         lhs.weightOfRemainingTasks == rhs.weightOfRemainingTasks
+    }
+    
+    var color: Color {
+        Color(hex: colorHex) ?? .blue
+    }
+}
+
+// MARK: - Schedule Model
+struct Schedule: Identifiable, Codable {
+    var id = UUID()
+    var name: String
+    var semester: String
+    var isActive: Bool = false
+    var isArchived: Bool = false
+    var colorHex: String = Color.blue.toHex() ?? "007AFF"
+    var scheduleType: String = "traditional"
+    var academicCalendarId: UUID?
+    var createdDate: Date = Date()
+    var lastModified: Date = Date()
+    
+    init(name: String, semester: String, isActive: Bool = false) {
+        self.name = name
+        self.semester = semester
+        self.isActive = isActive
+    }
+    
+    var displayName: String {
+        if name.isEmpty {
+            return semester
+        }
+        return "\(name) - \(semester)"
     }
     
     var color: Color {

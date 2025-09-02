@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import Combine
 
 // MARK: - Schedule Collection Model
 struct ScheduleCollection: Identifiable, Codable {
@@ -268,19 +269,357 @@ extension ScheduleItem {
     }
 }
 
-// MARK: - Schedule Manager
+// MARK: - Enhanced Schedule Manager with Real-time Sync
 @MainActor
-class ScheduleManager: ObservableObject {
+class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
     @Published var scheduleCollections: [ScheduleCollection] = []
     @Published var activeScheduleID: UUID? = nil
+    @Published var isSyncing: Bool = false
+    @Published var syncStatus: String = "Ready"
+    @Published var lastSyncTime: Date?
     
     private let schedulesKey = "savedScheduleCollections"
     private let activeScheduleKey = "activeScheduleID"
+    private let realtimeSyncManager = RealtimeSyncManager.shared
+    private var cancellables = Set<AnyCancellable>()
+    private var isInitialLoad = true
     
     init() {
         print("🔍 ScheduleManager: Initializing...")
+        
+        // Set up real-time sync delegate
+        realtimeSyncManager.schedulesDelegate = self
+        
+        // Load local data first for offline support
         loadSchedules()
+        
+        // Setup sync status observation
+        setupSyncStatusObservation()
+        
         print("🔍 ScheduleManager: Initialized with \(scheduleCollections.count) schedules")
+    }
+    
+    // MARK: - RealtimeSyncDelegate
+    
+    func didReceiveRealtimeUpdate(_ data: [String: Any], action: String, table: String) {
+        print("🔄 ScheduleManager: Received real-time update for table: \(table), action: \(action)")
+        
+        switch (table, action) {
+        case ("schedule_items", "SYNC"):
+            if let scheduleItemsData = data["schedule_items"] as? [DatabaseScheduleItem] {
+                syncScheduleItemsFromDatabase(scheduleItemsData)
+            }
+        case ("schedule_items", "INSERT"):
+            if let scheduleItemData = try? JSONSerialization.data(withJSONObject: data),
+               let dbScheduleItem = try? JSONDecoder().decode(DatabaseScheduleItem.self, from: scheduleItemData) {
+                handleScheduleItemInsert(dbScheduleItem)
+            }
+        case ("schedule_items", "UPDATE"):
+            if let scheduleItemData = try? JSONSerialization.data(withJSONObject: data),
+               let dbScheduleItem = try? JSONDecoder().decode(DatabaseScheduleItem.self, from: scheduleItemData) {
+                handleScheduleItemUpdate(dbScheduleItem)
+            }
+        case ("schedule_items", "DELETE"):
+            if let scheduleItemId = data["id"] as? String {
+                handleScheduleItemDelete(scheduleItemId)
+            }
+            
+        case ("academic_calendars", "SYNC"):
+            if let calendarsData = data["academic_calendars"] as? [DatabaseAcademicCalendar] {
+                syncAcademicCalendarsFromDatabase(calendarsData)
+            }
+        case ("academic_calendars", "INSERT"):
+            if let calendarData = try? JSONSerialization.data(withJSONObject: data),
+               let dbCalendar = try? JSONDecoder().decode(DatabaseAcademicCalendar.self, from: calendarData) {
+                handleAcademicCalendarInsert(dbCalendar)
+            }
+        case ("academic_calendars", "UPDATE"):
+            if let calendarData = try? JSONSerialization.data(withJSONObject: data),
+               let dbCalendar = try? JSONDecoder().decode(DatabaseAcademicCalendar.self, from: calendarData) {
+                handleAcademicCalendarUpdate(dbCalendar)
+            }
+        case ("academic_calendars", "DELETE"):
+            if let calendarId = data["id"] as? String {
+                handleAcademicCalendarDelete(calendarId)
+            }
+            
+        default:
+            print("🔄 ScheduleManager: Unhandled real-time update: \(table) - \(action)")
+        }
+    }
+    
+    // MARK: - Real-time Schedule Item Handlers
+    
+    private func syncScheduleItemsFromDatabase(_ scheduleItems: [DatabaseScheduleItem]) {
+        print("🔄 ScheduleManager: Syncing \(scheduleItems.count) schedule items from database")
+        
+        // Group schedule items by schedule_id
+        let groupedItems = Dictionary(grouping: scheduleItems) { $0.schedule_id }
+        
+        for (scheduleIdString, items) in groupedItems {
+            guard let scheduleId = UUID(uuidString: scheduleIdString),
+                  let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleId }) else {
+                print("🔄 ScheduleManager: Schedule not found for items: \(scheduleIdString)")
+                continue
+            }
+            
+            let localItems = items.map { $0.toLocal() }
+            scheduleCollections[scheduleIndex].scheduleItems = localItems
+        }
+        
+        if !isInitialLoad {
+            saveSchedulesLocally() // Cache for offline use
+        }
+        
+        print("🔄 ScheduleManager: Schedule items sync complete")
+    }
+    
+    private func handleScheduleItemInsert(_ dbScheduleItem: DatabaseScheduleItem) {
+        let localScheduleItem = dbScheduleItem.toLocal()
+        
+        guard let scheduleId = UUID(uuidString: dbScheduleItem.schedule_id),
+              let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleId }) else {
+            print("🔄 ScheduleManager: Schedule not found for new item: \(dbScheduleItem.schedule_id)")
+            return
+        }
+        
+        // Check if schedule item already exists locally
+        if !scheduleCollections[scheduleIndex].scheduleItems.contains(where: { $0.id == localScheduleItem.id }) {
+            scheduleCollections[scheduleIndex].scheduleItems.append(localScheduleItem)
+            scheduleCollections[scheduleIndex].lastModified = Date()
+            saveSchedulesLocally()
+            print("🔄 ScheduleManager: Added new schedule item from real-time: \(localScheduleItem.title)")
+        }
+    }
+    
+    private func handleScheduleItemUpdate(_ dbScheduleItem: DatabaseScheduleItem) {
+        let localScheduleItem = dbScheduleItem.toLocal()
+        
+        guard let scheduleId = UUID(uuidString: dbScheduleItem.schedule_id),
+              let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleId }),
+              let itemIndex = scheduleCollections[scheduleIndex].scheduleItems.firstIndex(where: { $0.id == localScheduleItem.id }) else {
+            print("🔄 ScheduleManager: Schedule or item not found for update: \(dbScheduleItem.id)")
+            return
+        }
+        
+        scheduleCollections[scheduleIndex].scheduleItems[itemIndex] = localScheduleItem
+        scheduleCollections[scheduleIndex].lastModified = Date()
+        saveSchedulesLocally()
+        print("🔄 ScheduleManager: Updated schedule item from real-time: \(localScheduleItem.title)")
+    }
+    
+    private func handleScheduleItemDelete(_ scheduleItemId: String) {
+        guard let uuid = UUID(uuidString: scheduleItemId) else { return }
+        
+        for scheduleIndex in scheduleCollections.indices {
+            if let itemIndex = scheduleCollections[scheduleIndex].scheduleItems.firstIndex(where: { $0.id == uuid }) {
+                let removedItem = scheduleCollections[scheduleIndex].scheduleItems.remove(at: itemIndex)
+                scheduleCollections[scheduleIndex].lastModified = Date()
+                saveSchedulesLocally()
+                print("🔄 ScheduleManager: Deleted schedule item from real-time: \(removedItem.title)")
+                break
+            }
+        }
+    }
+    
+    // MARK: - Real-time Academic Calendar Handlers
+    
+    private func syncAcademicCalendarsFromDatabase(_ calendars: [DatabaseAcademicCalendar]) {
+        print("🔄 ScheduleManager: Syncing \(calendars.count) academic calendars from database")
+        
+        // Academic calendars are managed separately now, but we need to update
+        // any embedded legacy calendars in schedule collections for backward compatibility
+        
+        if !isInitialLoad {
+            saveSchedulesLocally() // Cache for offline use
+        }
+        
+        print("🔄 ScheduleManager: Academic calendars sync complete")
+    }
+    
+    private func handleAcademicCalendarInsert(_ dbCalendar: DatabaseAcademicCalendar) {
+        let localCalendar = dbCalendar.toLocal()
+        print("🔄 ScheduleManager: Added new academic calendar from real-time: \(localCalendar.name)")
+    }
+    
+    private func handleAcademicCalendarUpdate(_ dbCalendar: DatabaseAcademicCalendar) {
+        let localCalendar = dbCalendar.toLocal()
+        print("🔄 ScheduleManager: Updated academic calendar from real-time: \(localCalendar.name)")
+    }
+    
+    private func handleAcademicCalendarDelete(_ calendarId: String) {
+        print("🔄 ScheduleManager: Deleted academic calendar from real-time: \(calendarId)")
+    }
+    
+    // MARK: - Enhanced Schedule Operations with Sync
+    
+    func addSchedule(_ schedule: ScheduleCollection) {
+        var newSchedule = schedule
+        newSchedule.createdDate = Date()
+        newSchedule.lastModified = Date()
+        
+        // Add locally for immediate UI update
+        scheduleCollections.append(newSchedule)
+        saveSchedulesLocally()
+        
+        print("🔍 ScheduleManager: Added new schedule locally: \(newSchedule.displayName)")
+        
+        // Note: Individual schedule collections aren't synced to database yet
+        // Only schedule items are synced. This could be enhanced in the future.
+    }
+    
+    func updateSchedule(_ schedule: ScheduleCollection) {
+        guard let index = scheduleCollections.firstIndex(where: { $0.id == schedule.id }) else { return }
+        var updatedSchedule = schedule
+        updatedSchedule.lastModified = Date()
+        
+        // Update locally for immediate UI update
+        scheduleCollections[index] = updatedSchedule
+        saveSchedulesLocally()
+        
+        print("🔍 ScheduleManager: Updated schedule locally: \(updatedSchedule.displayName)")
+    }
+    
+    func addScheduleItem(_ item: ScheduleItem, to scheduleID: UUID) {
+        guard let index = scheduleCollections.firstIndex(where: { $0.id == scheduleID }) else { return }
+        
+        // Add locally for immediate UI update
+        scheduleCollections[index].scheduleItems.append(item)
+        scheduleCollections[index].lastModified = Date()
+        saveSchedulesLocally()
+        
+        // Sync to database
+        syncScheduleItemToDatabase(item, scheduleId: scheduleID, action: .create)
+        
+        print("🔍 ScheduleManager: Added schedule item: \(item.title) to schedule: \(scheduleID)")
+    }
+    
+    func updateScheduleItem(_ item: ScheduleItem, in scheduleID: UUID) {
+        guard let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleID }),
+              let itemIndex = scheduleCollections[scheduleIndex].scheduleItems.firstIndex(where: { $0.id == item.id }) else { return }
+        
+        // Update locally for immediate UI update
+        scheduleCollections[scheduleIndex].scheduleItems[itemIndex] = item
+        scheduleCollections[scheduleIndex].lastModified = Date()
+        saveSchedulesLocally()
+        
+        // Sync to database
+        syncScheduleItemToDatabase(item, scheduleId: scheduleID, action: .update)
+        
+        print("🔍 ScheduleManager: Updated schedule item: \(item.title)")
+    }
+    
+    func deleteScheduleItem(_ item: ScheduleItem, from scheduleID: UUID) {
+        guard let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleID }) else { return }
+        
+        // Remove locally for immediate UI update
+        scheduleCollections[scheduleIndex].scheduleItems.removeAll { $0.id == item.id }
+        scheduleCollections[scheduleIndex].lastModified = Date()
+        saveSchedulesLocally()
+        
+        // Sync to database
+        syncScheduleItemToDatabase(item, scheduleId: scheduleID, action: .delete)
+        
+        print("🔍 ScheduleManager: Deleted schedule item: \(item.title)")
+    }
+    
+    func toggleSkip(forItem item: ScheduleItem, onDate date: Date, in scheduleID: UUID) {
+        guard let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleID }),
+              let itemIndex = scheduleCollections[scheduleIndex].scheduleItems.firstIndex(where: { $0.id == item.id }) else { return }
+        
+        let identifier = ScheduleItem.instanceIdentifier(for: item.id, onDate: date)
+        
+        // Update locally for immediate UI update
+        if scheduleCollections[scheduleIndex].scheduleItems[itemIndex].skippedInstanceIdentifiers.contains(identifier) {
+            scheduleCollections[scheduleIndex].scheduleItems[itemIndex].skippedInstanceIdentifiers.remove(identifier)
+        } else {
+            scheduleCollections[scheduleIndex].scheduleItems[itemIndex].skippedInstanceIdentifiers.insert(identifier)
+        }
+        
+        scheduleCollections[scheduleIndex].lastModified = Date()
+        saveSchedulesLocally()
+        
+        // Sync to database
+        let updatedItem = scheduleCollections[scheduleIndex].scheduleItems[itemIndex]
+        syncScheduleItemToDatabase(updatedItem, scheduleId: scheduleID, action: .update)
+        
+        print("🔍 ScheduleManager: Toggled skip for: \(item.title) on \(date)")
+    }
+    
+    // MARK: - Database Sync Operations
+    
+    private func syncScheduleItemToDatabase(_ item: ScheduleItem, scheduleId: UUID, action: SyncAction) {
+        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
+            print("🔄 ScheduleManager: Cannot sync - user not authenticated")
+            return
+        }
+        
+        let dbScheduleItem = DatabaseScheduleItem(
+            from: item, 
+            userId: userId, 
+            scheduleId: scheduleId.uuidString
+        )
+        
+        do {
+            let data = try JSONEncoder().encode(dbScheduleItem)
+            let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+            
+            let operation = SyncOperation(
+                type: .scheduleItems,
+                action: action,
+                data: dict
+            )
+            
+            realtimeSyncManager.queueSyncOperation(operation)
+        } catch {
+            print("🔄 ScheduleManager: Failed to prepare schedule item sync: \(error)")
+        }
+    }
+    
+    // MARK: - Enhanced Refresh with Sync
+    
+    func refreshScheduleData() async {
+        isSyncing = true
+        
+        // Refresh real-time sync data
+        await realtimeSyncManager.refreshAllData()
+        
+        // Mark as no longer initial load after first refresh
+        isInitialLoad = false
+        
+        lastSyncTime = Date()
+        isSyncing = false
+    }
+    
+    // MARK: - Sync Status Observation
+    
+    private func setupSyncStatusObservation() {
+        realtimeSyncManager.$syncStatus
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in
+                self?.syncStatus = status.displayName
+                self?.isSyncing = status.isActive
+            }
+            .store(in: &cancellables)
+    }
+    
+    // MARK: - Save locally for offline support
+    
+    private func saveSchedulesLocally() {
+        print("🔍 ScheduleManager: Saving \(scheduleCollections.count) schedules locally...")
+        do {
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(scheduleCollections)
+            UserDefaults.standard.set(data, forKey: schedulesKey)
+            
+            if let activeID = activeScheduleID {
+                UserDefaults.standard.set(activeID.uuidString, forKey: activeScheduleKey)
+                print("🔍 ScheduleManager: Saved active schedule ID: \(activeID.uuidString)")
+            }
+            print("🔍 ScheduleManager: Schedules saved locally successfully")
+        } catch {
+            print("🔍 ScheduleManager: Error saving schedules locally: \(error)")
+        }
     }
     
     var activeSchedule: ScheduleCollection? {
@@ -345,23 +684,6 @@ class ScheduleManager: ObservableObject {
         }
     }
     
-    func saveSchedules() {
-        print("🔍 ScheduleManager: Saving \(scheduleCollections.count) schedules...")
-        do {
-            let encoder = JSONEncoder()
-            let data = try encoder.encode(scheduleCollections)
-            UserDefaults.standard.set(data, forKey: schedulesKey)
-            
-            if let activeID = activeScheduleID {
-                UserDefaults.standard.set(activeID.uuidString, forKey: activeScheduleKey)
-                print("🔍 ScheduleManager: Saved active schedule ID: \(activeID.uuidString)")
-            }
-            print("🔍 ScheduleManager: Schedules saved successfully")
-        } catch {
-            print("🔍 ScheduleManager: Error saving schedules: \(error)")
-        }
-    }
-    
     private func setupDefaultSchedule() {
         print("🔍 ScheduleManager: Setting up default schedule...")
         let defaultSchedule = ScheduleCollection(
@@ -372,7 +694,7 @@ class ScheduleManager: ObservableObject {
         scheduleCollections = [defaultSchedule]
         activeScheduleID = defaultSchedule.id
         print("🔍 ScheduleManager: Created default schedule: \(defaultSchedule.displayName)")
-        saveSchedules()
+        saveSchedulesLocally()
     }
     
     private func getCurrentSemester() -> String {
@@ -389,22 +711,6 @@ class ScheduleManager: ObservableObject {
         }
     }
     
-    func addSchedule(_ schedule: ScheduleCollection) {
-        var newSchedule = schedule
-        newSchedule.createdDate = Date()
-        newSchedule.lastModified = Date()
-        scheduleCollections.append(newSchedule)
-        saveSchedules()
-    }
-    
-    func updateSchedule(_ schedule: ScheduleCollection) {
-        guard let index = scheduleCollections.firstIndex(where: { $0.id == schedule.id }) else { return }
-        var updatedSchedule = schedule
-        updatedSchedule.lastModified = Date()
-        scheduleCollections[index] = updatedSchedule
-        saveSchedules()
-    }
-    
     func archiveSchedule(_ schedule: ScheduleCollection) {
         guard let index = scheduleCollections.firstIndex(where: { $0.id == schedule.id }) else { return }
         scheduleCollections[index].isArchived = true
@@ -419,7 +725,7 @@ class ScheduleManager: ObservableObject {
         if activeSchedules.isEmpty {
             setupDefaultSchedule()
         } else {
-            saveSchedules()
+            saveSchedulesLocally()
         }
     }
     
@@ -427,7 +733,7 @@ class ScheduleManager: ObservableObject {
         guard let index = scheduleCollections.firstIndex(where: { $0.id == schedule.id }) else { return }
         scheduleCollections[index].isArchived = false
         scheduleCollections[index].lastModified = Date()
-        saveSchedules()
+        saveSchedulesLocally()
     }
     
     func deleteSchedule(_ schedule: ScheduleCollection) {
@@ -444,52 +750,13 @@ class ScheduleManager: ObservableObject {
             print("🔍 ScheduleManager: No schedules left, creating default")
             setupDefaultSchedule()
         } else {
-            saveSchedules()
+            saveSchedulesLocally()
         }
     }
     
     func setActiveSchedule(_ scheduleID: UUID) {
         activeScheduleID = scheduleID
-        saveSchedules()
-    }
-    
-    func addScheduleItem(_ item: ScheduleItem, to scheduleID: UUID) {
-        guard let index = scheduleCollections.firstIndex(where: { $0.id == scheduleID }) else { return }
-        scheduleCollections[index].scheduleItems.append(item)
-        scheduleCollections[index].lastModified = Date()
-        saveSchedules()
-    }
-    
-    func updateScheduleItem(_ item: ScheduleItem, in scheduleID: UUID) {
-        guard let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleID }),
-              let itemIndex = scheduleCollections[scheduleIndex].scheduleItems.firstIndex(where: { $0.id == item.id }) else { return }
-        
-        scheduleCollections[scheduleIndex].scheduleItems[itemIndex] = item
-        scheduleCollections[scheduleIndex].lastModified = Date()
-        saveSchedules()
-    }
-    
-    func deleteScheduleItem(_ item: ScheduleItem, from scheduleID: UUID) {
-        guard let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleID }) else { return }
-        scheduleCollections[scheduleIndex].scheduleItems.removeAll { $0.id == item.id }
-        scheduleCollections[scheduleIndex].lastModified = Date()
-        saveSchedules()
-    }
-    
-    func toggleSkip(forItem item: ScheduleItem, onDate date: Date, in scheduleID: UUID) {
-        guard let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleID }),
-              let itemIndex = scheduleCollections[scheduleIndex].scheduleItems.firstIndex(where: { $0.id == item.id }) else { return }
-        
-        let identifier = ScheduleItem.instanceIdentifier(for: item.id, onDate: date)
-        
-        if scheduleCollections[scheduleIndex].scheduleItems[itemIndex].skippedInstanceIdentifiers.contains(identifier) {
-            scheduleCollections[scheduleIndex].scheduleItems[itemIndex].skippedInstanceIdentifiers.remove(identifier)
-        } else {
-            scheduleCollections[scheduleIndex].scheduleItems[itemIndex].skippedInstanceIdentifiers.insert(identifier)
-        }
-        
-        scheduleCollections[scheduleIndex].lastModified = Date()
-        saveSchedules()
+        saveSchedulesLocally()
     }
 }
 

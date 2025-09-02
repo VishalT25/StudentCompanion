@@ -4,6 +4,21 @@ import UserNotifications
 import ActivityKit
 import EventKit
 
+// MARK: - Extensions at file scope
+extension Notification.Name {
+    static let googleCalendarEventsFetched = Notification.Name("googleCalendarEventsFetched")
+}
+
+extension Color {
+    static let primaryGreen = Color(UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor(red: 95/255, green: 135/255, blue: 105/255, alpha: 1.0)
+        } else {
+            return UIColor(red: 134/255, green: 167/255, blue: 137/255, alpha: 1.0)
+        }
+    })
+}
+
 // MARK: - Bulk Selection Manager
 class BulkSelectionManager: ObservableObject {
     @Published var isSelecting = false
@@ -203,13 +218,16 @@ enum DayOfWeek: Int, Codable, CaseIterable {
 }
 
 @MainActor
-class EventViewModel: ObservableObject {
+class EventViewModel: ObservableObject, RealtimeSyncDelegate {
     @Published var categories: [Category] = []
     @Published var events: [Event] = []
-    @Published var schedules: [ScheduleItem] = [] // Deprecated - kept for backward compatibility
-    @Published var scheduleItems: [ScheduleItem] = [] // Removed default schedule items
+    @Published var schedules: [ScheduleItem] = [] 
+    @Published var scheduleItems: [ScheduleItem] = [] 
     @Published var isRefreshing: Bool = false
     @Published var lastRefreshTime: Date?
+    @Published var isSyncing: Bool = false
+    @Published var syncStatus: String = "Ready"
+    
     private var isUpdatingCoursesFromNotification = false
     @Published var courses: [Course] = [] {
         didSet {
@@ -222,22 +240,29 @@ class EventViewModel: ObservableObject {
     private let categoriesKey = "savedCategories"
     private let eventsKey = "savedEvents"
     private let scheduleKey = "savedSchedule"
+    private let coursesKey = "savedCourses"
     private let notificationManager = NotificationManager.shared
+    private let realtimeSyncManager = RealtimeSyncManager.shared
     
     private var weatherService: WeatherService?
     private var calendarSyncManager: CalendarSyncManager?
     
     private var cancellables = Set<AnyCancellable>()
+    private var isInitialLoad = true
     
     private func updateSmartEngineWithCourses() {
         let courseNames = courses.map { $0.name }
-        print("🔍 EventViewModel: Updating SmartEngine with courses: \(courseNames)")
-        print("🟦 [SmartInput] Updating SmartInputEngine with courses: \(courseNames)")
+        print(" EventViewModel: Updating SmartEngine with courses: \(courseNames)")
+        print(" [SmartInput] Updating SmartInputEngine with courses: \(courseNames)")
     }
     
     init() {
+        realtimeSyncManager.eventsDelegate = self
+        
         loadData()
         loadCourses()
+        
+        setupSyncStatusObservation()
         
         registerDefaultIntegrationToggles()
         
@@ -263,199 +288,273 @@ class EventViewModel: ObservableObject {
             .store(in: &cancellables)
     }
     
-    private func loadCourses() {
-        self.courses = CourseStorage.load()
-        print("EventViewModel: Loaded \(courses.count) courses from CourseStorage")
-        for course in courses {
-            print("EventViewModel: Course '\(course.name)' with \(course.assignments.count) assignments")
-        }
-        updateSmartEngineWithCourses()
-    }
-    
     private func loadData() {
-        if let categoriesData = UserDefaults.standard.data(forKey: categoriesKey),
-           let eventsData = UserDefaults.standard.data(forKey: eventsKey),
-           let scheduleData = UserDefaults.standard.data(forKey: scheduleKey) {
-            do {
-                let decoder = JSONDecoder()
-                categories = try decoder.decode([Category].self, from: categoriesData)
-                events = try decoder.decode([Event].self, from: eventsData)
-                scheduleItems = try decoder.decode([ScheduleItem].self, from: scheduleData)
-            } catch {
-                print("Error loading data: \(error). Using default data.")
-                setupDefaultData()
-            }
-        } else {
-            setupDefaultData()
-        }
-    }
-    
-    private func setupDefaultData() {
-        categories = [
-            Category(name: "Assignment", color: .primaryGreen),
-            Category(name: "Lab", color: .orange),
-            Category(name: "Exam", color: .red),
-            Category(name: "Personal", color: .purple),
-            Category(name: "Imported", color: .gray)
-        ]
-        
-        guard let defaultCatID = categories.first?.id,
-              let labCatID = categories.dropFirst().first?.id else {
-            print("Default categories not set up correctly.")
-            return
+        print(" EventViewModel: Loading local data...")
+        if let data = UserDefaults.standard.data(forKey: categoriesKey),
+           let decodedCategories = try? JSONDecoder().decode([Category].self, from: data) {
+            categories = decodedCategories
         }
         
-        events = [
-            Event(title: "Math assignment due", date: Date(), categoryId: defaultCatID),
-            Event(title: "Physics lab", date: Calendar.current.date(byAdding: .day, value: 1, to: Date())!, categoryId: labCatID),
-            Event(title: "History essay draft", date: Calendar.current.date(byAdding: .day, value: 3, to: Date())!, categoryId: defaultCatID)
-        ]
-        
-        // Default schedule items removed
-        scheduleItems = []
-        
-        saveData()
-    }
-    
-    func saveData() {
-        do {
-            let encoder = JSONEncoder()
-            let categoriesData = try encoder.encode(categories)
-            let eventsData = try encoder.encode(events)
-            let scheduleData = try encoder.encode(scheduleItems)
-            UserDefaults.standard.set(categoriesData, forKey: categoriesKey)
-            UserDefaults.standard.set(eventsData, forKey: eventsKey)
-            UserDefaults.standard.set(scheduleData, forKey: scheduleKey)
-        } catch {
-            print("Error saving data: \(error)")
+        if let data = UserDefaults.standard.data(forKey: eventsKey),
+           let decodedEvents = try? JSONDecoder().decode([Event].self, from: data) {
+            events = decodedEvents
         }
+        
+        if let data = UserDefaults.standard.data(forKey: scheduleKey),
+           let decodedScheduleItems = try? JSONDecoder().decode([ScheduleItem].self, from: data) {
+            scheduleItems = decodedScheduleItems
+        }
+        
+        print(" EventViewModel: Loaded \(categories.count) categories, \(events.count) events, \(scheduleItems.count) schedule items")
     }
     
-    // MARK: - Bulk Delete Operations
-    func bulkDeleteEvents(_ eventIDs: Set<UUID>) {
-        let eventsToDelete = events.filter { eventIDs.contains($0.id) }
-        
-        for event in eventsToDelete {
-            if let calendarSyncManager = calendarSyncManager {
+    private func loadCourses() {
+        print(" EventViewModel: Loading courses...")
+        if let data = UserDefaults.standard.data(forKey: coursesKey),
+           let decodedCourses = try? JSONDecoder().decode([Course].self, from: data) {
+            courses = decodedCourses
+        }
+        print(" EventViewModel: Loaded \(courses.count) courses")
+    }
+    
+    private func registerDefaultIntegrationToggles() {
+        UserDefaults.standard.register(defaults: [
+            "GoogleCalendarIntegrationEnabled": false,
+            "AppleCalendarIntegrationEnabled": false,
+            "NotificationIntegrationEnabled": true
+        ])
+    }
+    
+    private func setupCalendarSyncSubscriptions() {
+        NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
                 Task {
-                    if event.syncToAppleCalendar, let appleId = event.appleCalendarIdentifier {
-                        _ = await calendarSyncManager.deleteAppleCalendarEvent(withIdentifier: appleId)
-                    }
-                    if event.syncToGoogleCalendar, event.googleCalendarIdentifier != nil {
-                        _ = await calendarSyncManager.deleteGoogleCalendarEvent(from: event, calendarId: "primary")
-                    }
+                    await self?.refreshLiveData()
                 }
             }
-            
-            notificationManager.removeAllEventNotifications(for: event)
-        }
+            .store(in: &cancellables)
+    }
+    
+    private func processFetchedGoogleCalendarEvents() async {
+        print(" EventViewModel: Processing fetched Google Calendar events")
+        await refreshLiveData()
+    }
+    
+    private func handleCalendarSyncOnUpdate(oldEvent: Event, newEvent: Event) {
+        guard let calendarSyncManager = calendarSyncManager else { return }
         
-        events.removeAll { eventIDs.contains($0.id) }
-        saveData()
+        Task {
+            if newEvent.syncToAppleCalendar, let _ = newEvent.appleCalendarIdentifier {
+                _ = await calendarSyncManager.updateAppleCalendarEvent(from: newEvent)
+            }
+            
+            if newEvent.syncToGoogleCalendar, newEvent.googleCalendarIdentifier != nil {
+                _ = await calendarSyncManager.updateGoogleCalendarEvent(from: newEvent, calendarId: "primary")
+            }
+        }
+    }
+    
+    func todaysEvents() -> [Event] {
+        let today = Date()
+        let calendar = Calendar.current
+        return events.filter { calendar.isDate($0.date, inSameDayAs: today) }
+            .sorted { $0.date < $1.date }
+    }
+    
+    func upcomingEvents() -> [Event] {
+        let now = Date()
+        return events.filter { $0.date > now }.sorted { $0.date < $1.date }
+    }
+    
+    func pastEvents() -> [Event] {
+        let now = Date()
+        return events.filter { $0.date <= now }.sorted { $0.date > $1.date }
+    }
+    
+    func events(for date: Date) -> [Event] {
+        let calendar = Calendar.current
+        return events.filter { calendar.isDate($0.date, inSameDayAs: date) }
+    }
+    
+    func bulkDeleteEvents(_ eventIDs: Set<UUID>) {
+        let eventsToDelete = events.filter { eventIDs.contains($0.id) }
+        for event in eventsToDelete {
+            deleteEvent(event)
+        }
     }
     
     func bulkDeleteCategories(_ categoryIDs: Set<UUID>) {
-        categories.removeAll { categoryIDs.contains($0.id) }
-        saveData()
+        let categoriesToDelete = categories.filter { categoryIDs.contains($0.id) }
+        for category in categoriesToDelete {
+            deleteCategory(category)
+        }
     }
     
-    func bulkDeleteScheduleItems(_ scheduleItemIDs: Set<UUID>, themeManager: ThemeManager? = nil) {
+    func bulkDeleteScheduleItems(_ scheduleItemIDs: Set<UUID>, themeManager: ThemeManager) {
         let itemsToDelete = scheduleItems.filter { scheduleItemIDs.contains($0.id) }
-        
         for item in itemsToDelete {
-            notificationManager.removeAllScheduleItemNotifications(for: item)
+            scheduleItems.removeAll { $0.id == item.id }
+        }
+        saveDataLocally()
+    }
+    
+    func markEventCompleted(_ event: Event) {
+        guard let index = events.firstIndex(where: { $0.id == event.id }) else { return }
+        
+        var updatedEvent = event
+        updatedEvent.isCompleted = true
+        
+        events[index] = updatedEvent
+        saveDataLocally()
+        
+        notificationManager.removeAllEventNotifications(for: updatedEvent)
+        
+        syncEventToDatabase(updatedEvent, action: .update)
+    }
+    
+    func didReceiveRealtimeUpdate(_ data: [String: Any], action: String, table: String) {
+        print(" EventViewModel: Received real-time update for table: \(table), action: \(action)")
+        
+        switch (table, action) {
+        case ("events", "SYNC"):
+            if let eventsData = data["events"] as? [DatabaseEvent] {
+                syncEventsFromDatabase(eventsData)
+            }
+        case ("events", "INSERT"):
+            if let eventData = try? JSONSerialization.data(withJSONObject: data),
+               let dbEvent = try? JSONDecoder().decode(DatabaseEvent.self, from: eventData) {
+                handleEventInsert(dbEvent)
+            }
+        case ("events", "UPDATE"):
+            if let eventData = try? JSONSerialization.data(withJSONObject: data),
+               let dbEvent = try? JSONDecoder().decode(DatabaseEvent.self, from: eventData) {
+                handleEventUpdate(dbEvent)
+            }
+        case ("events", "DELETE"):
+            if let eventId = data["id"] as? String {
+                handleEventDelete(eventId)
+            }
+            
+        case ("categories", "SYNC"):
+            if let categoriesData = data["categories"] as? [DatabaseCategory] {
+                syncCategoriesFromDatabase(categoriesData)
+            }
+        case ("categories", "INSERT"):
+            if let categoryData = try? JSONSerialization.data(withJSONObject: data),
+               let dbCategory = try? JSONDecoder().decode(DatabaseCategory.self, from: categoryData) {
+                handleCategoryInsert(dbCategory)
+            }
+        case ("categories", "UPDATE"):
+            if let categoryData = try? JSONSerialization.data(withJSONObject: data),
+               let dbCategory = try? JSONDecoder().decode(DatabaseCategory.self, from: categoryData) {
+                handleCategoryUpdate(dbCategory)
+            }
+        case ("categories", "DELETE"):
+            if let categoryId = data["id"] as? String {
+                handleCategoryDelete(categoryId)
+            }
+            
+        default:
+            print(" EventViewModel: Unhandled real-time update: \(table) - \(action)")
+        }
+    }
+    
+    private func syncEventsFromDatabase(_ events: [DatabaseEvent]) {
+        print(" EventViewModel: Syncing \(events.count) events from database")
+        let localEvents = events.map { $0.toLocal() }
+        
+        self.events = localEvents
+        
+        if !isInitialLoad {
+            saveDataLocally() 
         }
         
-        scheduleItems.removeAll(where: { scheduleItemIDs.contains($0.id) })
-        saveData()
+        print(" EventViewModel: Events sync complete - \(self.events.count) total events")
     }
     
-    private func dayOfWeek(for date: Date) -> DayOfWeek? {
-        DayOfWeek(rawValue: Calendar.current.component(.weekday, from: date))
-    }
-    
-    // MARK: - Schedule Item Operations
-    func addScheduleItem(_ item: ScheduleItem, themeManager: ThemeManager) {
-        scheduleItems.append(item)
-        if item.reminderTime != .none {
-            notificationManager.scheduleScheduleItemNotifications(for: item, reminderTime: item.reminderTime)
-        }
-        saveData()
-    }
-    
-    @MainActor
-    func updateScheduleItem(_ item: ScheduleItem, themeManager: ThemeManager) async {
-        guard let idx = scheduleItems.firstIndex(where: { $0.id == item.id }) else { return }
-        let oldItem = scheduleItems[idx]
+    private func syncCategoriesFromDatabase(_ categories: [DatabaseCategory]) {
+        print(" EventViewModel: Syncing \(categories.count) categories from database")
+        let localCategories = categories.map { $0.toLocal() }
         
-        notificationManager.removeAllScheduleItemNotifications(for: oldItem)
-        scheduleItems[idx] = item
+        self.categories = localCategories
         
-        if item.reminderTime != .none {
-            notificationManager.scheduleScheduleItemNotifications(for: item, reminderTime: item.reminderTime)
+        if !isInitialLoad {
+            saveDataLocally() 
         }
         
-        saveData()
+        print(" EventViewModel: Categories sync complete - \(self.categories.count) total categories")
     }
     
-    func deleteScheduleItem(_ item: ScheduleItem, themeManager: ThemeManager) {
-        notificationManager.removeAllScheduleItemNotifications(for: item)
-        scheduleItems.removeAll { $0.id == item.id }
-        saveData()
-    }
-    
-    func toggleSkip(forInstance item: ScheduleItem, onDate date: Date, themeManager: ThemeManager) {
-        guard let idx = scheduleItems.firstIndex(where: { $0.id == item.id }) else { return }
-        let identifier = ScheduleItem.instanceIdentifier(for: item.id, onDate: date)
+    private func handleEventInsert(_ dbEvent: DatabaseEvent) {
+        let localEvent = dbEvent.toLocal()
         
-        if scheduleItems[idx].skippedInstanceIdentifiers.contains(identifier) {
-            scheduleItems[idx].skippedInstanceIdentifiers.remove(identifier)
-        } else {
-            scheduleItems[idx].skippedInstanceIdentifiers.insert(identifier)
+        if !events.contains(where: { $0.id == localEvent.id }) {
+            events.append(localEvent)
+            saveDataLocally()
+            print(" EventViewModel: Added new event from real-time: \(localEvent.title)")
         }
-        
-        saveData()
     }
     
-
+    private func handleEventUpdate(_ dbEvent: DatabaseEvent) {
+        let localEvent = dbEvent.toLocal()
+        
+        if let index = events.firstIndex(where: { $0.id == localEvent.id }) {
+            events[index] = localEvent
+            saveDataLocally()
+            print(" EventViewModel: Updated event from real-time: \(localEvent.title)")
+        }
+    }
     
-    // MARK: - Event Operations
+    private func handleEventDelete(_ eventId: String) {
+        if let uuid = UUID(uuidString: eventId),
+           let index = events.firstIndex(where: { $0.id == uuid }) {
+            let removedEvent = events.remove(at: index)
+            saveDataLocally()
+            print(" EventViewModel: Deleted event from real-time: \(removedEvent.title)")
+        }
+    }
+    
+    private func handleCategoryInsert(_ dbCategory: DatabaseCategory) {
+        let localCategory = dbCategory.toLocal()
+        
+        if !categories.contains(where: { $0.id == localCategory.id }) {
+            categories.append(localCategory)
+            saveDataLocally()
+            print(" EventViewModel: Added new category from real-time: \(localCategory.name)")
+        }
+    }
+    
+    private func handleCategoryUpdate(_ dbCategory: DatabaseCategory) {
+        let localCategory = dbCategory.toLocal()
+        
+        if let index = categories.firstIndex(where: { $0.id == localCategory.id }) {
+            categories[index] = localCategory
+            saveDataLocally()
+            print(" EventViewModel: Updated category from real-time: \(localCategory.name)")
+        }
+    }
+    
+    private func handleCategoryDelete(_ categoryId: String) {
+        if let uuid = UUID(uuidString: categoryId),
+           let index = categories.firstIndex(where: { $0.id == uuid }) {
+            let removedCategory = categories.remove(at: index)
+            saveDataLocally()
+            print(" EventViewModel: Deleted category from real-time: \(removedCategory.name)")
+        }
+    }
+    
     func addEvent(_ event: Event) {
         events.append(event)
-        guard let eventIndex = events.firstIndex(where: { $0.id == event.id }) else { return }
+        saveDataLocally()
         
         if event.reminderTime != .none {
             notificationManager.scheduleEventNotification(for: event, reminderTime: event.reminderTime, categories: categories)
         }
         
-        if event.syncToAppleCalendar || event.syncToGoogleCalendar {
-            guard let calendarSyncManager = calendarSyncManager else {
-                print("CalendarSyncManager is nil when trying to add an event.")
-                saveData()
-                return
-            }
-            Task {
-                var eventToUpdate = event
-                if event.syncToAppleCalendar {
-                    if let newID = await calendarSyncManager.createAppleCalendarEvent(from: event) {
-                        eventToUpdate.appleCalendarIdentifier = newID
-                    }
-                }
-                if event.syncToGoogleCalendar {
-                    if let newID = await calendarSyncManager.createGoogleCalendarEvent(from: event, calendarId: "primary") {
-                        eventToUpdate.googleCalendarIdentifier = newID
-                        eventToUpdate.externalIdentifier       = newID
-                    }
-                }
-                
-                await MainActor.run {
-                    self.events[eventIndex] = eventToUpdate
-                    self.saveData()
-                }
-            }
-        }
+        handleCalendarSyncForNewEvent(event)
         
-        saveData()
+        syncEventToDatabase(event, action: .create)
     }
     
     func updateEvent(_ event: Event) {
@@ -463,6 +562,7 @@ class EventViewModel: ObservableObject {
         
         let oldEvent = events[idx]
         events[idx] = event
+        saveDataLocally()
         
         notificationManager.removeAllEventNotifications(for: oldEvent)
         if event.reminderTime != .none {
@@ -471,10 +571,15 @@ class EventViewModel: ObservableObject {
         
         handleCalendarSyncOnUpdate(oldEvent: oldEvent, newEvent: event)
         
-        saveData()
+        syncEventToDatabase(event, action: .update)
     }
     
     func deleteEvent(_ event: Event) {
+        events.removeAll { $0.id == event.id }
+        saveDataLocally()
+        
+        notificationManager.removeAllEventNotifications(for: event)
+        
         if let calendarSyncManager = calendarSyncManager {
             Task {
                 if event.syncToAppleCalendar, let appleId = event.appleCalendarIdentifier {
@@ -486,1239 +591,287 @@ class EventViewModel: ObservableObject {
             }
         }
         
-        events.removeAll { $0.id == event.id }
-        notificationManager.removeAllEventNotifications(for: event)
-        saveData()
+        syncEventToDatabase(event, action: .delete)
     }
     
-    func markEventCompleted(_ event: Event) {
-        guard let idx = events.firstIndex(where: { $0.id == event.id }) else { return }
-        var updated = events[idx]
-        updated.isCompleted = true
-        events[idx] = updated
-        notificationManager.removeAllEventNotifications(for: updated)
-        saveData()
-    }
-    
-    // MARK: - Category Operations
     func addCategory(_ category: Category) {
         categories.append(category)
-        saveData()
+        saveDataLocally()
+        
+        syncCategoryToDatabase(category, action: .create)
     }
     
     func updateCategory(_ category: Category) {
         if let idx = categories.firstIndex(where: { $0.id == category.id }) {
             categories[idx] = category
-            saveData()
+            saveDataLocally()
+            
+            syncCategoryToDatabase(category, action: .update)
         }
     }
     
     func deleteCategory(_ category: Category) {
         categories.removeAll { $0.id == category.id }
-        saveData()
+        saveDataLocally()
+        
+        syncCategoryToDatabase(category, action: .delete)
     }
     
-    func removeImportedData(sourcePrefix: String) {
-        let toRemove = events.filter { ($0.sourceName ?? "").hasPrefix(sourcePrefix) }
-        for evt in toRemove {
-            notificationManager.removeAllEventNotifications(for: evt)
+    private func syncEventToDatabase(_ event: Event, action: SyncAction) {
+        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
+            print(" EventViewModel: Cannot sync - user not authenticated")
+            return
         }
-        events.removeAll { ($0.sourceName ?? "").hasPrefix(sourcePrefix) }
-        saveData()
+        
+        let dbEvent = DatabaseEvent(from: event, userId: userId)
+        
+        do {
+            let data = try JSONEncoder().encode(dbEvent)
+            let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+            
+            let operation = SyncOperation(
+                type: .events,
+                action: action,
+                data: dict
+            )
+            
+            realtimeSyncManager.queueSyncOperation(operation)
+        } catch {
+            print(" EventViewModel: Failed to prepare event sync: \(error)")
+        }
     }
     
-    // MARK: - Helper Functions
-    func todaysEvents() -> [Event] {
-        let calendar = Calendar.current
-        return events.filter {
-            calendar.isDate($0.date, inSameDayAs: Date()) && !$0.isCompleted
-        }.sorted { $0.date < $1.date }
-    }
-    
-    // MARK: - Deprecated schedule methods - use ScheduleManager instead
-    func todaysSchedule() -> [ScheduleItem] {
-        // Return empty array - schedules are now managed by ScheduleManager
-        return []
-    }
-    
-    func upcomingEvents() -> [Event] {
-        let now = Date()
-        return events.filter { $0.date > now && !$0.isCompleted }
-            .sorted { $0.date < $1.date }
-    }
-    
-    func pastEvents() -> [Event] {
-        let now = Date()
-        return events.filter { ($0.date <= now || $0.isCompleted) }
-            .sorted { $0.date > $1.date }
-    }
-    
-    func events(for date: Date) -> [Event] {
-        let calendar = Calendar.current
-        return events.filter {
-            calendar.isDate($0.date, inSameDayAs: date)
-        }.sorted { $0.date < $1.date }
-    }
-    
-    // MARK: - Live Data Services (Placeholder functions)
-    func setLiveDataServices(weatherService: WeatherService?, calendarSyncManager: CalendarSyncManager?) {
-        self.weatherService = weatherService
-        self.calendarSyncManager = calendarSyncManager
-        setupCalendarSyncSubscriptions()
+    private func syncCategoryToDatabase(_ category: Category, action: SyncAction) {
+        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
+            print(" EventViewModel: Cannot sync - user not authenticated")
+            return
+        }
+        
+        let dbCategory = DatabaseCategory(from: category, userId: userId)
+        
+        do {
+            let data = try JSONEncoder().encode(dbCategory)
+            let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+            
+            let operation = SyncOperation(
+                type: .categories,
+                action: action,
+                data: dict
+            )
+            
+            realtimeSyncManager.queueSyncOperation(operation)
+        } catch {
+            print(" EventViewModel: Failed to prepare category sync: \(error)")
+        }
     }
     
     @MainActor
     func refreshLiveData() async {
         isRefreshing = true
-        // Placeholder for refresh logic
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        
+        await realtimeSyncManager.refreshAllData()
+        
+        isInitialLoad = false
+        
         lastRefreshTime = Date()
         isRefreshing = false
     }
     
-    func handleCalendarSyncOnUpdate(oldEvent: Event, newEvent: Event) {
-        // Subscriptions to CalendarSyncManager updates
-        guard let calendarSyncManager = self.calendarSyncManager else { return }
-        Task {
-            // Apple Calendar
-            if newEvent.syncToAppleCalendar {
-                if oldEvent.syncToAppleCalendar == false || oldEvent.appleCalendarIdentifier == nil {
-                    if let newID = await calendarSyncManager.createAppleCalendarEvent(from: newEvent) {
-                        await MainActor.run {
-                            if let idx = self.events.firstIndex(where: { $0.id == newEvent.id }) {
-                                self.events[idx].appleCalendarIdentifier = newID
-                            }
-                        }
-                    }
-                } else {
-                    _ = await calendarSyncManager.updateAppleCalendarEvent(from: newEvent)
-                }
-            } else if oldEvent.syncToAppleCalendar, let appleId = oldEvent.appleCalendarIdentifier {
-                _ = await calendarSyncManager.deleteAppleCalendarEvent(withIdentifier: appleId)
-                await MainActor.run {
-                    if let idx = self.events.firstIndex(where: { $0.id == newEvent.id }) {
-                        self.events[idx].appleCalendarIdentifier = nil
-                    }
-                }
+    private func setupSyncStatusObservation() {
+        realtimeSyncManager.$syncStatus
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in
+                self?.syncStatus = status.displayName
+                self?.isSyncing = status.isActive
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func saveDataLocally() {
+        do {
+            let encoder = JSONEncoder()
+            let categoriesData = try encoder.encode(categories)
+            let eventsData = try encoder.encode(events)
+            let scheduleData = try encoder.encode(scheduleItems)
+            let coursesData = try encoder.encode(courses)
+            UserDefaults.standard.set(categoriesData, forKey: categoriesKey)
+            UserDefaults.standard.set(eventsData, forKey: eventsKey)
+            UserDefaults.standard.set(scheduleData, forKey: scheduleKey)
+            UserDefaults.standard.set(coursesData, forKey: coursesKey)
+        } catch {
+            print("Error saving data locally: \(error)")
+        }
+    }
+    
+    private func handleCalendarSyncForNewEvent(_ event: Event) {
+        if event.syncToAppleCalendar || event.syncToGoogleCalendar {
+            guard let calendarSyncManager = calendarSyncManager else {
+                print("CalendarSyncManager is nil when trying to add an event.")
+                return
             }
             
-            // Google Calendar
-            if newEvent.syncToGoogleCalendar {
-                if oldEvent.syncToGoogleCalendar == false || oldEvent.googleCalendarIdentifier == nil {
-                    if let newID = await calendarSyncManager.createGoogleCalendarEvent(from: newEvent, calendarId: "primary") {
-                        await MainActor.run {
-                            if let idx = self.events.firstIndex(where: { $0.id == newEvent.id }) {
-                                self.events[idx].googleCalendarIdentifier = newID
-                                self.events[idx].externalIdentifier = newID
-                            }
+            Task {
+                var eventToUpdate = event
+                if let eventIndex = events.firstIndex(where: { $0.id == event.id }) {
+                    if event.syncToAppleCalendar {
+                        if let newID = await calendarSyncManager.createAppleCalendarEvent(from: event) {
+                            eventToUpdate.appleCalendarIdentifier = newID
                         }
                     }
-                } else {
-                    _ = await calendarSyncManager.updateGoogleCalendarEvent(from: newEvent, calendarId: "primary")
-                }
-            } else if oldEvent.syncToGoogleCalendar, let gid = oldEvent.googleCalendarIdentifier {
-                _ = try? await calendarSyncManager.deleteGoogleCalendarEvent(eventId: gid, calendarId: "primary")
-                await MainActor.run {
-                    if let idx = self.events.firstIndex(where: { $0.id == newEvent.id }) {
-                        self.events[idx].googleCalendarIdentifier = nil
+                    if event.syncToGoogleCalendar {
+                        if let newID = await calendarSyncManager.createGoogleCalendarEvent(from: event, calendarId: "primary") {
+                            eventToUpdate.googleCalendarIdentifier = newID
+                            eventToUpdate.externalIdentifier = newID
+                        }
+                    }
+                    
+                    await MainActor.run {
+                        self.events[eventIndex] = eventToUpdate
+                        self.saveDataLocally()
+                        self.syncEventToDatabase(eventToUpdate, action: .update)
                     }
                 }
             }
-            
-            await MainActor.run {
-                self.saveData()
-            }
         }
     }
     
-    private func getOrCreateImportedCategory() -> UUID {
-        if let imported = categories.first(where: { $0.name == "Imported" }) {
-            return imported.id
-        } else {
-            let cat = Category(name: "Imported", color: .gray)
-            categories.append(cat)
-            saveData()
-            return cat.id
-        }
+    func setLiveDataServices(weatherService: WeatherService, calendarSyncManager: CalendarSyncManager) {
+        self.weatherService = weatherService
+        self.calendarSyncManager = calendarSyncManager
     }
     
-    func processFetchedGoogleCalendarEvents() async {
-        guard let manager = calendarSyncManager else { return }
-        let importedCatId = getOrCreateImportedCategory()
-        
-        // Clear previous Google imports to avoid duplicates, then import fresh
-        removeImportedData(sourcePrefix: "GoogleCalendar")
-        
-        var imported: [Event] = []
-        for gEvent in manager.googleCalendarEvents {
-            let title = gEvent.summary ?? "Untitled"
-            let startDate = gEvent.start?.dateTime?.date ?? gEvent.start?.date?.date ?? Date()
-            let id = gEvent.identifier ?? UUID().uuidString
-            let evt = Event(
-                title: title, date: startDate,
-                categoryId: importedCatId,
-                reminderTime: .none,
-                isCompleted: false,
-                externalIdentifier: id,
-                sourceName: "GoogleCalendar"
-            )
-            imported.append(evt)
-        }
-        
-        if !imported.isEmpty {
-            events.append(contentsOf: imported)
-            saveData()
-        }
-    }
-    
-    // MARK: - Setup default integration toggles
-    private func registerDefaultIntegrationToggles() {
-        UserDefaults.standard.register(defaults: [
-            "appleCalendarIntegrationEnabled": true,
-            "appleRemindersIntegrationEnabled": true
-        ])
-    }
-    
-    // MARK: - Subscriptions to CalendarSyncManager updates
-    private func setupCalendarSyncSubscriptions() {
-        guard let calendarSyncManager = self.calendarSyncManager else { return }
-        
-        calendarSyncManager.$googleCalendarEvents
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task {
-                    await self?.processFetchedGoogleCalendarEvents()
-                }
-            }
-            .store(in: &cancellables)
-        
-        calendarSyncManager.$appleCalendarEvents
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.processFetchedAppleCalendarEvents()
-            }
-            .store(in: &cancellables)
-        
-        calendarSyncManager.$appleReminders
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.processFetchedAppleReminders()
-            }
-            .store(in: &cancellables)
-    }
-    
-    private func processFetchedAppleCalendarEvents() {
-        guard let manager = calendarSyncManager else { return }
-        let importedCatId = getOrCreateImportedCategory()
-        
-        removeImportedData(sourcePrefix: "AppleCalendar")
-        
-        var imported: [Event] = []
-        for ek in manager.appleCalendarEvents {
-            let start = ek.startDate ?? Date()
-            let title = ek.title ?? "Untitled"
-            let externalId = ek.eventIdentifier ?? UUID().uuidString
-            imported.append(Event(
-                title: title, date: start,
-                categoryId: importedCatId,
-                reminderTime: .none,
-                isCompleted: false,
-                externalIdentifier: externalId,
-                sourceName: "AppleCalendar"
-            ))
-        }
-        
-        if !imported.isEmpty {
-            events.append(contentsOf: imported)
-            saveData()
-        }
-    }
-    
-    private func processFetchedAppleReminders() {
-        guard let manager = calendarSyncManager else { return }
-        let importedCatId = getOrCreateImportedCategory()
-        
-        removeImportedData(sourcePrefix: "AppleReminders")
-        
-        var imported: [Event] = []
-        for reminder in manager.appleReminders {
-            guard let comps = reminder.dueDateComponents,
-                  let date = Calendar.current.date(from: comps) else { continue }
-            let title = reminder.title ?? "Reminder"
-            let externalId = reminder.calendarItemIdentifier
-            imported.append(Event(
-                title: title, date: date,
-                categoryId: importedCatId,
-                reminderTime: .none,
-                isCompleted: reminder.isCompleted,
-                externalIdentifier: externalId,
-                sourceName: "AppleReminders"
-            ))
-        }
-        
-        if !imported.isEmpty {
-            events.append(contentsOf: imported)
-            saveData()
-        }
-    }
-    
-    // MARK: - Live Activities Management
-    @MainActor
     func manageLiveActivities(themeManager: ThemeManager) {
-        // Check if live activities are enabled
-        let liveActivitiesEnabled = UserDefaults.standard.bool(forKey: "liveActivitiesEnabled")
-        
-        guard liveActivitiesEnabled else {
-            // If disabled, end all activities
-            LiveActivityManager.shared.endAllActivities()
-            return
-        }
-        
-        // Get the current schedule manager to access schedule items
-        let scheduleManager = ScheduleManager()
-        
-        guard let activeSchedule = scheduleManager.activeSchedule else {
-            // No active schedule, end all activities
-            LiveActivityManager.shared.endAllActivities()
-            return
-        }
-        
-        let now = Date()
-        let calendar = Calendar.current
-        let currentWeekday = calendar.component(.weekday, from: now)
-        
-        guard let todayDayOfWeek = DayOfWeek(rawValue: currentWeekday) else {
-            return
-        }
-        
-        // Get today's schedule items
-        let todaysItems = activeSchedule.scheduleItems.filter { item in
-            item.daysOfWeek.contains(todayDayOfWeek) && item.isLiveActivityEnabled
-        }
-        
-        // Clean up ended activities first
-        LiveActivityManager.shared.cleanupEndedActivities(scheduleItems: todaysItems)
-        
-        // Find current or upcoming item
-        for item in todaysItems {
-            let itemStartTime = LiveActivityManager.shared.getAbsoluteTime(for: item.startTime, on: now)
-            let itemEndTime = LiveActivityManager.shared.getAbsoluteTime(for: item.endTime, on: now)
-            
-            // Check if item is currently active or starting soon (within 5 minutes)
-            let fiveMinutesFromNow = now.addingTimeInterval(5 * 60)
-            
-            if now >= itemStartTime && now < itemEndTime {
-                // Item is currently active - start live activity
-                LiveActivityManager.shared.startActivity(for: item, themeManager: themeManager)
-            } else if itemStartTime > now && itemStartTime <= fiveMinutesFromNow {
-                // Item is starting soon - start live activity
-                LiveActivityManager.shared.startActivity(for: item, themeManager: themeManager)
-            }
-        }
+        print(" EventViewModel: Managing live activities")
     }
+}
+
+struct CategoryRow: View {
+    let category: Category
+    @EnvironmentObject var themeManager: ThemeManager
     
-    // MARK: - EventsPreviewView
-    struct EventsPreviewView: View {
-        @EnvironmentObject var viewModel: EventViewModel
-        @EnvironmentObject var themeManager: ThemeManager
-        
-        var body: some View {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Text("Upcoming Reminders")
-                        .font(.title3.bold())
-                        .foregroundColor(.primary)
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(category.color)
+                .frame(width: 28, height: 28)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(.systemBackground), lineWidth: 2)
+                )
+                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 6)
+            
+            Text(category.name)
+                .font(.forma(.subheadline, weight: .medium))
+            
+            Spacer()
+        }
+        .padding(.vertical, 2)
+        .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
+    }
+}
+
+struct EnhancedEventRow: View {
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+    let event: Event
+    var isPast: Bool = false
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(spacing: 2) {
+                Text("\(Calendar.current.component(.day, from: event.date))")
+                    .font(.forma(.title3, weight: .bold))
+                    .foregroundColor(isPast || event.isCompleted ? .secondary : themeManager.currentTheme.primaryColor)
+                Text(monthShort(from: event.date))
+                    .font(.forma(.caption2, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
+            .frame(width: 45)
+            .padding(.vertical, 6)
+            .background(backgroundColor)
+            .cornerRadius(8)
+            .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 8)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(event.title)
+                    .font(.forma(.headline))
+                    .foregroundColor(isPast || event.isCompleted ? .secondary : .primary)
+                    .strikethrough(event.isCompleted)
+                
+                HStack(spacing: 8) {
+                    Label(timeString(from: event.date), systemImage: "clock")
+                        .font(.forma(.caption))
+                        .foregroundColor(.secondary)
                     
                     Spacer()
                     
-                    NavigationLink(value: AppRoute.events) {
-                        Image(systemName: "arrow.right.circle.fill")
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
-                            .font(.title2)
-                    }
-                }
-                
-                let upcomingEvents = viewModel.upcomingEvents()
-                
-                if upcomingEvents.isEmpty {
-                    EmptyEventsView()
-                } else {
-                    VStack(spacing: 12) {
-                        ForEach(upcomingEvents.prefix(3)) { event in
-                            EventPreviewCard(event: event)
-                                .environmentObject(viewModel)
-                        }
-                    }
+                    Text(event.category(from: viewModel.categories).name)
+                        .font(.forma(.caption, weight: .medium))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(event.category(from: viewModel.categories).color.opacity(0.2))
+                        .foregroundColor(event.category(from: viewModel.categories).color)
+                        .cornerRadius(8)
+                        .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 8)
                 }
             }
-            .padding(20)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(themeManager.currentTheme.quaternaryColor)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(themeManager.currentTheme.primaryColor.opacity(0.3), lineWidth: 1.5)
-                    )
-                    .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.1), radius: 8, x: 0, y: 4)
-            )
+        }
+        .padding(.vertical, 4)
+        .opacity(isPast || event.isCompleted ? 0.7 : 1.0)
+        .adaptiveDarkModeEnhanced(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
+    }
+    
+    private var backgroundColor: Color {
+        if isPast || event.isCompleted {
+            return Color(.systemGray6)
+        } else {
+            return themeManager.currentTheme.primaryColor.opacity(0.1)
         }
     }
     
-    struct EmptyEventsView: View {
-        @EnvironmentObject var themeManager: ThemeManager
-        
-        var body: some View {
-            VStack(spacing: 16) {
-                Image(systemName: "bell.badge.plus")
-                    .font(.system(size: 40))
-                    .foregroundColor(themeManager.currentTheme.primaryColor.opacity(0.6))
-                
-                VStack(spacing: 8) {
-                    Text("No upcoming reminders")
-                        .font(.headline.weight(.medium))
-                        .foregroundColor(.primary)
-                    
-                    Text("Add reminders to stay organized")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 30)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(themeManager.currentTheme.tertiaryColor.opacity(0.5))
-            )
-        }
+    private func monthShort(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM"
+        return formatter.string(from: date)
     }
     
-    struct EventPreviewCard: View {
-        @EnvironmentObject var viewModel: EventViewModel
-        @EnvironmentObject var themeManager: ThemeManager
-        let event: Event
-        
-        var body: some View {
-            HStack(spacing: 12) {
-                VStack(spacing: 2) {
-                    Text("\(Calendar.current.component(.day, from: event.date))")
-                        .font(.title2.weight(.bold))
-                        .foregroundColor(.primary)
-                    Text(monthShort(from: event.date))
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.primary.opacity(0.9))
-                }
-                .frame(width: 60)
-                .padding(.vertical, 6)
-                .background(themeManager.currentTheme.primaryColor.opacity(0.12))
-                .cornerRadius(8)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(event.title)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
-                    HStack(spacing: 8) {
-                        Label(timeString(from: event.date), systemImage: "clock")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        Text(event.category(from: viewModel.categories).name)
-                            .font(.caption.weight(.medium))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule()
-                                    .fill(themeManager.currentTheme.tertiaryColor.opacity(0.6))
-                            )
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
-                    }
-                }
-            }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(themeManager.currentTheme.tertiaryColor.opacity(0.3))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(themeManager.currentTheme.secondaryColor.opacity(0.3), lineWidth: 0.5)
-                    )
-            )
-        }
-        
-        private func monthShort(from date: Date) -> String {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM"
-            return formatter.string(from: date)
-        }
-        
-        private func timeString(from date: Date) -> String {
-            let formatter = DateFormatter()
-            formatter.timeStyle = .short
-            return formatter.string(from: date)
-        }
+    private func timeString(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
-    
-    // MARK: - EventsListView with Enhanced Bulk Selection
-    struct EventsListView: View {
-        @EnvironmentObject var viewModel: EventViewModel
-        @EnvironmentObject var themeManager: ThemeManager
-        @StateObject private var bulkSelectionManager = BulkSelectionManager()
-        @State private var showingAddEvent = false
-        @State private var showingAddCategory = false
-        @State private var selectedDate = Date()
-        @State private var showCalendarView = false
-        @State private var showCategories = false
-        @State private var pendingCategoryDeletion: Category?
-        @State private var showDeleteCategoryAlert = false
-        @State private var pendingEventDeletion: Event?
-        @State private var showDeleteEventAlert = false
-        @State private var showBulkDeleteAlert = false
-        
-        @State private var showAllUpcoming = false
-        @State private var showAllPast = false
-        
-        var sortedUpcomingEvents: [Event] {
-            viewModel.upcomingEvents()
-        }
-        
-        var sortedPastEvents: [Event] {
-            viewModel.pastEvents()
-        }
-        
-        var upcomingVisible: [Event] {
-            showAllUpcoming ? sortedUpcomingEvents : Array(sortedUpcomingEvents.prefix(5))
-        }
-        
-        var pastVisible: [Event] {
-            showAllPast ? sortedPastEvents : Array(sortedPastEvents.prefix(5))
-        }
-        
-        var body: some View {
-            VStack(spacing: 0) {
-                headerView
-                
-                if showCalendarView {
-                    calendarView
-                } else {
-                    listView
-                }
-            }
-            .sheet(isPresented: $showingAddEvent) {
-                AddEventView(isPresented: $showingAddEvent)
-                    .environmentObject(viewModel)
-                    .environmentObject(themeManager)
-            }
-            .sheet(isPresented: $showingAddCategory) {
-                AddCategoryView(isPresented: $showingAddCategory)
-                    .environmentObject(viewModel)
-                    .environmentObject(themeManager)
-            }
-            .refreshable {
-                await viewModel.refreshLiveData()
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if !bulkSelectionManager.isSelecting {
-                    VStack(spacing: 12) {
-                        Button(action: { showingAddCategory = true }) {
-                            Image(systemName: "tag.fill")
-                                .font(.headline.bold())
-                                .foregroundColor(themeManager.currentTheme.primaryColor)
-                                .padding(14)
-                                .background(Circle().fill(themeManager.currentTheme.secondaryColor.opacity(0.2)))
-                                .overlay(Circle().stroke(themeManager.currentTheme.secondaryColor.opacity(0.4), lineWidth: 1))
-                                .shadow(color: themeManager.currentTheme.secondaryColor.opacity(0.2), radius: 6, x: 0, y: 3)
-                        }
-                        
-                        Button(action: { showingAddEvent = true }) {
-                            Image(systemName: "plus")
-                                .font(.title2.bold())
-                                .foregroundColor(.white)
-                                .padding(20)
-                                .background(Circle().fill(themeManager.currentTheme.primaryColor))
-                                .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.3), radius: 8, x: 0, y: 4)
-                        }
-                    }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 20)
-                }
-            }
-            .toolbar {
-                ToolbarItemGroup(placement: .navigationBarLeading) {
-                    if bulkSelectionManager.isSelecting {
-                        Button("Cancel") {
-                            bulkSelectionManager.endSelection()
-                        }
-                        .foregroundColor(.secondary)
-                    }
-                }
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    if bulkSelectionManager.isSelecting {
-                        Button(selectionAllButtonTitle()) {
-                            toggleSelectAll()
-                        }
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        
-                        Button(role: .destructive) {
-                            showBulkDeleteAlert = true
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .disabled(bulkSelectionManager.selectedCount() == 0)
-                        .foregroundColor(bulkSelectionManager.selectedCount() == 0 ? .secondary : .red)
-                    }
-                }
-            }
-            .alert("Delete Selected?", isPresented: $showBulkDeleteAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Delete", role: .destructive) {
-                    performBulkDelete()
-                }
-            } message: {
-                Text("This will permanently delete \(bulkSelectionManager.selectedCount()) item(s).")
-            }
-        }
-        
-        private func selectionAllButtonTitle() -> String {
-            switch bulkSelectionManager.selectionContext {
-            case .events:
-                let total = upcomingVisible.count + pastVisible.count
-                let selected = bulkSelectionManager.selectedCount()
-                return selected == total && total > 0 ? "Deselect All" : "Select All"
-            case .categories:
-                let total = viewModel.categories.count
-                let selected = bulkSelectionManager.selectedCount()
-                return selected == total && total > 0 ? "Deselect All" : "Select All"
-            default:
-                return "Select All"
-            }
-        }
-        
-        private func toggleSelectAll() {
-            switch bulkSelectionManager.selectionContext {
-            case .events:
-                let visibleEvents = upcomingVisible + pastVisible
-                let allIDs = Set(visibleEvents.map { $0.id })
-                if bulkSelectionManager.selectedEventIDs == allIDs {
-                    bulkSelectionManager.deselectAll()
-                } else {
-                    bulkSelectionManager.selectedEventIDs = allIDs
-                }
-            case .categories:
-                let allIDs = Set(viewModel.categories.map { $0.id })
-                if bulkSelectionManager.selectedCategoryIDs.count == allIDs.count {
-                    bulkSelectionManager.deselectAll()
-                } else {
-                    bulkSelectionManager.selectedCategoryIDs = allIDs
-                }
-            default:
-                break
-            }
-        }
-        
-        private func performBulkDelete() {
-            switch bulkSelectionManager.selectionContext {
-            case .events:
-                viewModel.bulkDeleteEvents(bulkSelectionManager.selectedEventIDs)
-            case .categories:
-                viewModel.bulkDeleteCategories(bulkSelectionManager.selectedCategoryIDs)
-            case .scheduleItems:
-                viewModel.bulkDeleteScheduleItems(bulkSelectionManager.selectedScheduleItemIDs, themeManager: themeManager)
-            case .none:
-                break
-            }
-            bulkSelectionManager.endSelection()
-        }
-        
-        private var headerView: some View {
-            VStack(spacing: 8) {
-                HStack {
-                    Picker("View Mode", selection: $showCalendarView) {
-                        Text("List").tag(false)
-                        Text("Calendar").tag(true)
-                    }
-                    .pickerStyle(SegmentedPickerStyle())
-                    .padding(.horizontal)
-                }
-                .padding(.top, 8)
-                
-                if !showCalendarView {
-                    HStack {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                showCategories.toggle()
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "tag")
-                                    .font(.subheadline)
-                                Text("Categories")
-                                    .font(.subheadline.weight(.medium))
-                                Image(systemName: showCategories ? "chevron.up" : "chevron.down")
-                                    .font(.caption)
-                            }
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(themeManager.currentTheme.primaryColor.opacity(0.1))
-                            .cornerRadius(8)
-                        }
-                        
-                        Spacer()
-                        
-                        if bulkSelectionManager.isSelecting {
-                            Text("\(bulkSelectionManager.selectedCount()) selected")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundColor(.secondary)
-                                .animation(.easeInOut(duration: 0.2), value: bulkSelectionManager.selectedCount())
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-            }
-            .padding(.vertical, 8)
-            .background(Color(.systemGroupedBackground))
-        }
-        
-        private var calendarView: some View {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    CalendarMonthView(selectedDate: $selectedDate)
-                        .environmentObject(viewModel)
-                        .environmentObject(themeManager)
-                        .padding(.horizontal)
+}
 
-                    let dayEvents = viewModel.events(for: selectedDate)
-                    if dayEvents.isEmpty {
-                        VStack(spacing: 8) {
-                            Text("No reminders on this date")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                    } else {
-                        VStack(spacing: 8) {
-                            ForEach(dayEvents) { event in
-                                NavigationLink {
-                                    EventEditView(event: event, isNew: false)
-                                        .environmentObject(viewModel)
-                                        .environmentObject(themeManager)
-                                } label: {
-                                    EnhancedEventRow(event: event, isPast: event.date < Date())
-                                        .environmentObject(viewModel)
-                                        .environmentObject(themeManager)
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.horizontal)
-                            }
-                        }
-                    }
-                }
-                .padding(.top, 12)
-            }
-            .background(Color(.systemGroupedBackground))
-        }
-        
-        private var listView: some View {
-            List {
-                if showCategories {
-                    Section {
-                        if bulkSelectionManager.selectionContext == .categories {
-                            ForEach(viewModel.categories) { category in
-                                HStack {
-                                    CategoryRow(category: category)
-                                    Spacer()
-                                    selectionIndicator(isSelected: bulkSelectionManager.isSelected(category.id))
-                                }
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    bulkSelectionManager.toggleSelection(category.id)
-                                }
-                            }
-                        } else {
-                            ForEach(viewModel.categories) { category in
-                                CategoryRow(category: category)
-                                    .contextMenu {
-                                        Button("Select Multiple", systemImage: "checkmark.circle") {
-                                            bulkSelectionManager.startSelection(.categories, initialID: category.id)
-                                        }
-                                        Button("Delete Category", systemImage: "trash", role: .destructive) {
-                                            pendingCategoryDeletion = category
-                                            showDeleteCategoryAlert = true
-                                        }
-                                    }
-                                    .contentShape(Rectangle())
-                                    .simultaneousGesture(
-                                        LongPressGesture(minimumDuration: 0.6)
-                                            .onEnded { _ in
-                                                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                                impactFeedback.impactOccurred()
-                                                bulkSelectionManager.startSelection(.categories, initialID: category.id)
-                                            }
-                                    )
-                            }
-                        }
-                    } header: {
-                        Text("Categories")
-                    }
-                }
-                
-                if !sortedUpcomingEvents.isEmpty {
-                    Section {
-                        ForEach(upcomingVisible) { event in
-                            if bulkSelectionManager.selectionContext == .events {
-                                HStack {
-                                    EnhancedEventRow(event: event)
-                                    Spacer()
-                                    selectionIndicator(isSelected: bulkSelectionManager.isSelected(event.id))
-                                }
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    bulkSelectionManager.toggleSelection(event.id)
-                                }
-                            } else {
-                                NavigationLink {
-                                    EventEditView(event: event, isNew: false)
-                                        .environmentObject(viewModel)
-                                        .environmentObject(themeManager)
-                                } label: {
-                                    EnhancedEventRow(event: event)
-                                }
-                                .contextMenu {
-                                    Button("Select Multiple", systemImage: "checkmark.circle") {
-                                        bulkSelectionManager.startSelection(.events, initialID: event.id)
-                                    }
-                                    Button("Delete Reminder", systemImage: "trash", role: .destructive) {
-                                        pendingEventDeletion = event
-                                        showDeleteEventAlert = true
-                                    }
-                                }
-                                .contentShape(Rectangle())
-                                .simultaneousGesture(
-                                    LongPressGesture(minimumDuration: 0.6)
-                                        .onEnded { _ in
-                                            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                            impactFeedback.impactOccurred()
-                                            bulkSelectionManager.startSelection(.events, initialID: event.id)
-                                        }
-                                )
-                            }
-                        }
-                        
-                        if sortedUpcomingEvents.count > 5 {
-                            HStack {
-                                Spacer()
-                                Button {
-                                    withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                                        showAllUpcoming.toggle()
-                                    }
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Text(showAllUpcoming ? "Show less" : "Show all (\(sortedUpcomingEvents.count))")
-                                            .font(.caption.weight(.semibold))
-                                        Image(systemName: showAllUpcoming ? "chevron.up" : "chevron.down")
-                                            .font(.caption.weight(.bold))
-                                    }
-                                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(themeManager.currentTheme.primaryColor.opacity(0.12))
-                                    .clipShape(Capsule())
-                                }
-                                Spacer()
-                            }
-                            .listRowBackground(Color.clear)
-                        }
-                    } header: {
-                        HStack {
-                            Image(systemName: "calendar.badge.clock")
-                                .foregroundColor(themeManager.currentTheme.primaryColor)
-                            Text("Upcoming Reminders")
-                            Spacer()
-                            Text("\(sortedUpcomingEvents.count)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                
-                if !sortedPastEvents.isEmpty {
-                    Section {
-                        ForEach(pastVisible) { event in
-                            if bulkSelectionManager.selectionContext == .events {
-                                HStack {
-                                    EnhancedEventRow(event: event, isPast: true)
-                                    Spacer()
-                                    selectionIndicator(isSelected: bulkSelectionManager.isSelected(event.id))
-                                }
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    bulkSelectionManager.toggleSelection(event.id)
-                                }
-                            } else {
-                                NavigationLink {
-                                    EventEditView(event: event, isNew: false)
-                                        .environmentObject(viewModel)
-                                        .environmentObject(themeManager)
-                                } label: {
-                                    EnhancedEventRow(event: event, isPast: true)
-                                }
-                                .contextMenu {
-                                    Button("Select Multiple", systemImage: "checkmark.circle") {
-                                        bulkSelectionManager.startSelection(.events, initialID: event.id)
-                                    }
-                                    Button("Delete Reminder", systemImage: "trash", role: .destructive) {
-                                        pendingEventDeletion = event
-                                        showDeleteEventAlert = true
-                                    }
-                                }
-                                .contentShape(Rectangle())
-                                .simultaneousGesture(
-                                    LongPressGesture(minimumDuration: 0.6)
-                                        .onEnded { _ in
-                                            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                            impactFeedback.impactOccurred()
-                                            bulkSelectionManager.startSelection(.events, initialID: event.id)
-                                        }
-                                )
-                            }
-                        }
-                        
-                        if sortedPastEvents.count > 5 {
-                            HStack {
-                                Spacer()
-                                Button {
-                                    withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                                        showAllPast.toggle()
-                                    }
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Text(showAllPast ? "Show less" : "Show all (\(sortedPastEvents.count))")
-                                            .font(.caption.weight(.semibold))
-                                        Image(systemName: showAllPast ? "chevron.up" : "chevron.down")
-                                            .font(.caption.weight(.bold))
-                                    }
-                                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(themeManager.currentTheme.primaryColor.opacity(0.12))
-                                    .clipShape(Capsule())
-                                }
-                                Spacer()
-                            }
-                            .listRowBackground(Color.clear)
-                        }
-                    } header: {
-                        HStack {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .foregroundColor(themeManager.currentTheme.primaryColor)
-                            Text("Past Reminders")
-                            Spacer()
-                            Text("\(sortedPastEvents.count)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                
-                if sortedUpcomingEvents.isEmpty && sortedPastEvents.isEmpty && !showCategories {
-                    Section {
-                        VStack(spacing: 12) {
-                            Text("No reminders found. Tap '+' to add a new reminder.")
-                                .foregroundColor(.secondary)
-                        }
-                        .padding()
-                    }
-                }
-            }
-            .listStyle(InsetGroupedListStyle())
-            .alert("Delete Category?", isPresented: $showDeleteCategoryAlert) {
-                Button("Cancel", role: .cancel) { pendingCategoryDeletion = nil }
-                Button("Delete", role: .destructive) {
-                    if let cat = pendingCategoryDeletion {
-                        viewModel.deleteCategory(cat)
-                    }
-                    pendingCategoryDeletion = nil
-                }
-            } message: {
-                Text("This will remove the category from StuCo.")
-            }
-            .alert("Delete Reminder?", isPresented: $showDeleteEventAlert) {
-                Button("Cancel", role: .cancel) { pendingEventDeletion = nil }
-                Button("Delete", role: .destructive) {
-                    if let evt = pendingEventDeletion {
-                        viewModel.deleteEvent(evt)
-                    }
-                    pendingEventDeletion = nil
-                }
-            } message: {
-                Text("This will delete the reminder and cancel its notifications.")
-            }
-        }
-        
-        private func selectionIndicator(isSelected: Bool) -> some View {
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.title3)
-                .foregroundColor(isSelected ? themeManager.currentTheme.primaryColor : .secondary)
-                .animation(.easeInOut(duration: 0.2), value: isSelected)
-        }
-    }
-    
-    // MARK: - Supporting Views
-    struct CategoryRow: View {
-        let category: Category
-        
-        var body: some View {
-            HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(category.color)
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color(.systemBackground), lineWidth: 2)
-                    )
-                
-                Text(category.name)
-                    .font(.subheadline.weight(.medium))
-                
-                Spacer()
-            }
-            .padding(.vertical, 2)
-        }
-    }
-    
-    struct EnhancedEventRow: View {
-        @EnvironmentObject var viewModel: EventViewModel
-        @EnvironmentObject var themeManager: ThemeManager
-        let event: Event
-        var isPast: Bool = false
-        
-        var body: some View {
-            HStack(spacing: 12) {
-                VStack(spacing: 2) {
-                    Text("\(Calendar.current.component(.day, from: event.date))")
-                        .font(.title3.weight(.bold))
-                        .foregroundColor(isPast || event.isCompleted ? .secondary : themeManager.currentTheme.primaryColor)
-                    Text(monthShort(from: event.date))
-                        .font(.caption2.weight(.medium))
-                        .foregroundColor(.secondary)
-                }
-                .frame(width: 45)
-                .padding(.vertical, 6)
-                .background(backgroundColor)
-                .cornerRadius(8)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(event.title)
-                        .font(.headline)
-                        .foregroundColor(isPast || event.isCompleted ? .secondary : .primary)
-                        .strikethrough(event.isCompleted)
-                    
-                    HStack(spacing: 8) {
-                        Label(timeString(from: event.date), systemImage: "clock")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        Text(event.category(from: viewModel.categories).name)
-                            .font(.caption.weight(.medium))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(event.category(from: viewModel.categories).color.opacity(0.2))
-                            .foregroundColor(event.category(from: viewModel.categories).color)
-                            .cornerRadius(8)
-                    }
-                }
-            }
-            .padding(.vertical, 4)
-            .opacity(isPast || event.isCompleted ? 0.7 : 1.0)
-        }
-        
-        private var backgroundColor: Color {
-            if isPast || event.isCompleted {
-                return Color(.systemGray6)
-            } else {
-                return themeManager.currentTheme.primaryColor.opacity(0.1)
-            }
-        }
-        
-        private func monthShort(from date: Date) -> String {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM"
-            return formatter.string(from: date)
-        }
-        
-        private func timeString(from date: Date) -> String {
-            let formatter = DateFormatter()
-            formatter.timeStyle = .short
-            return formatter.string(from: date)
-        }
-    }
-    
-    // MARK: - Placeholder Views
-    struct AddEventView: View {
-        @Binding var isPresented: Bool
-        @EnvironmentObject var viewModel: EventViewModel
-        @EnvironmentObject var themeManager: ThemeManager
+struct AddEventView: View {
+    @Binding var isPresented: Bool
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
 
-        @State private var title: String = ""
-        @State private var date: Date = Date()
-        @State private var categoryId: UUID?
-        @State private var reminderTime: ReminderTime = .none
-        @State private var syncToApple = false
-        @State private var syncToGoogle = false
+    @State private var title: String = ""
+    @State private var date: Date = Date()
+    @State private var categoryId: UUID?
+    @State private var reminderTime: ReminderTime = .none
+    @State private var syncToApple = false
+    @State private var syncToGoogle = false
 
-        var body: some View {
-            NavigationView {
-                Form {
-                    Section(header: Text("Details")) {
-                        TextField("Title", text: $title)
-                            .textInputAutocapitalization(.sentences)
-                            .disableAutocorrection(false)
-                        DatePicker("Date & Time", selection: $date)
-                    }
-
-                    Section(header: Text("Category")) {
-                        if viewModel.categories.isEmpty {
-                            Text("No categories yet. Create one from the Reminders screen.")
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                        } else {
-                            Picker("Category", selection: Binding(
-                                get: { categoryId ?? viewModel.categories.first?.id },
-                                set: { categoryId = $0 }
-                            )) {
-                                ForEach(viewModel.categories) { cat in
-                                    HStack {
-                                        Circle().fill(cat.color).frame(width: 10, height: 10)
-                                        Text(cat.name)
-                                    }.tag(Optional(cat.id))
-                                }
-                            }
-                        }
-                    }
-
-                    Section(header: Text("Reminder")) {
-                        Picker("Notify", selection: $reminderTime) {
-                            ForEach(ReminderTime.allCases, id: \.self) { rt in
-                                Text(rt.displayName).tag(rt)
-                            }
-                        }
-                    }
-
-                    Section(header: Text("Calendar Sync")) {
-                        Toggle("Sync to Apple Calendar", isOn: $syncToApple)
-                        Toggle("Sync to Google Calendar", isOn: $syncToGoogle)
-                    }
-                }
-                .navigationTitle("Add Reminder")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { isPresented = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
-                            guard let catId = (categoryId ?? viewModel.categories.first?.id),
-                                  !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                            let newEvent = Event(
-                                title: title.trimmingCharacters(in: .whitespacesAndNewlines), date: date,
-                                categoryId: catId,
-                                reminderTime: reminderTime,
-                                isCompleted: false,
-                                externalIdentifier: nil,
-                                sourceName: nil,
-                                syncToAppleCalendar: syncToApple,
-                                syncToGoogleCalendar: syncToGoogle
-                            )
-                            viewModel.addEvent(newEvent)
-                            isPresented = false
-                        }
-                        .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (viewModel.categories.isEmpty && categoryId == nil))
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                    }
-                }
-                .onAppear {
-                    if categoryId == nil {
-                        categoryId = viewModel.categories.first?.id
-                    }
-                }
-            }
-        }
-    }
-
-    struct AddCategoryView: View {
-        @Binding var isPresented: Bool
-        @EnvironmentObject var viewModel: EventViewModel
-        @EnvironmentObject var themeManager: ThemeManager
-
-        @State private var name: String = ""
-        @State private var color: Color = .blue
-
-        var body: some View {
-            NavigationView {
-                Form {
-                    Section(header: Text("Category")) {
-                        TextField("Name", text: $name)
-                        ColorPicker("Color", selection: $color, supportsOpacity: false)
-                    }
-                }
-                .navigationTitle("Add Category")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { isPresented = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
-                            let newCategory = Category(name: name.trimmingCharacters(in: .whitespacesAndNewlines), color: color)
-                            viewModel.addCategory(newCategory)
-                            isPresented = false
-                        }
-                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                    }
-                }
-            }
-        }
-    }
-
-    struct EventEditView: View {
-        let event: Event
-        let isNew: Bool
-        @EnvironmentObject var viewModel: EventViewModel
-        @EnvironmentObject var themeManager: ThemeManager
-        @Environment(\.dismiss) private var dismiss
-
-        @State private var title: String = ""
-        @State private var date: Date = Date()
-        @State private var categoryId: UUID?
-        @State private var reminderTime: ReminderTime = .none
-        @State private var isCompleted: Bool = false
-        @State private var syncToApple = false
-        @State private var syncToGoogle = false
-        @State private var showDeleteAlert = false
-
-        var body: some View {
+    var body: some View {
+        NavigationView {
             Form {
-                Section(header: Text("Details")) {
+                Section(header: Text("Details").font(.forma(.caption, weight: .medium))) {
                     TextField("Title", text: $title)
+                        .textInputAutocapitalization(.sentences)
+                        .disableAutocorrection(false)
                     DatePicker("Date & Time", selection: $date)
-                    Toggle("Completed", isOn: $isCompleted)
                 }
 
-                Section(header: Text("Category")) {
+                Section(header: Text("Category").font(.forma(.caption, weight: .medium))) {
                     if viewModel.categories.isEmpty {
                         Text("No categories yet. Create one from the Reminders screen.")
-                            .font(.footnote)
+                            .font(.forma(.footnote))
                             .foregroundColor(.secondary)
                     } else {
                         Picker("Category", selection: Binding(
-                            get: { categoryId ?? event.categoryId },
+                            get: { categoryId ?? viewModel.categories.first?.id },
                             set: { categoryId = $0 }
                         )) {
                             ForEach(viewModel.categories) { cat in
@@ -1731,7 +884,7 @@ class EventViewModel: ObservableObject {
                     }
                 }
 
-                Section(header: Text("Reminder")) {
+                Section(header: Text("Reminder").font(.forma(.caption, weight: .medium))) {
                     Picker("Notify", selection: $reminderTime) {
                         ForEach(ReminderTime.allCases, id: \.self) { rt in
                             Text(rt.displayName).tag(rt)
@@ -1739,93 +892,196 @@ class EventViewModel: ObservableObject {
                     }
                 }
 
-                Section(header: Text("Calendar Sync")) {
+                Section(header: Text("Calendar Sync").font(.forma(.caption, weight: .medium))) {
                     Toggle("Sync to Apple Calendar", isOn: $syncToApple)
                     Toggle("Sync to Google Calendar", isOn: $syncToGoogle)
                 }
+            }
+            .navigationTitle("Add Reminder")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                        .font(.forma(.body))
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard let catId = (categoryId ?? viewModel.categories.first?.id),
+                              !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                        let newEvent = Event(
+                            title: title.trimmingCharacters(in: .whitespacesAndNewlines), date: date,
+                            categoryId: catId,
+                            reminderTime: reminderTime,
+                            isCompleted: false,
+                            externalIdentifier: nil,
+                            sourceName: nil,
+                            syncToAppleCalendar: syncToApple,
+                            syncToGoogleCalendar: syncToGoogle
+                        )
+                        viewModel.addEvent(newEvent)
+                        isPresented = false
+                    }
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (viewModel.categories.isEmpty && categoryId == nil))
+                    .font(.forma(.body))
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                }
+            }
+            .onAppear {
+                if categoryId == nil {
+                    categoryId = viewModel.categories.first?.id
+                }
+            }
+        }
+    }
+}
 
-                Section {
-                    Button(role: .destructive) {
-                        showDeleteAlert = true
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Text("Delete Reminder")
-                            Spacer()
+struct AddCategoryView: View {
+    @Binding var isPresented: Bool
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+
+    @State private var name: String = ""
+    @State private var color: Color = .blue
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Category").font(.forma(.caption, weight: .medium))) {
+                    TextField("Name", text: $name)
+                    ColorPicker("Color", selection: $color, supportsOpacity: false)
+                }
+            }
+            .navigationTitle("Add Category")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                        .font(.forma(.body))
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let newCategory = Category(name: name.trimmingCharacters(in: .whitespacesAndNewlines), color: color)
+                        viewModel.addCategory(newCategory)
+                        isPresented = false
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .font(.forma(.body))
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                }
+            }
+        }
+    }
+}
+
+struct EventEditView: View {
+    let event: Event
+    let isNew: Bool
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var title: String = ""
+    @State private var date: Date = Date()
+    @State private var categoryId: UUID?
+    @State private var reminderTime: ReminderTime = .none
+    @State private var isCompleted: Bool = false
+    @State private var syncToApple = false
+    @State private var syncToGoogle = false
+    @State private var showDeleteAlert = false
+
+    var body: some View {
+        Form {
+            Section(header: Text("Details")) {
+                TextField("Title", text: $title)
+                DatePicker("Date & Time", selection: $date)
+                Toggle("Completed", isOn: $isCompleted)
+            }
+
+            Section(header: Text("Category")) {
+                if viewModel.categories.isEmpty {
+                    Text("No categories yet. Create one from the Reminders screen.")
+                        .font(.forma(.footnote))
+                        .foregroundColor(.secondary)
+                } else {
+                    Picker("Category", selection: Binding(
+                        get: { categoryId ?? event.categoryId },
+                        set: { categoryId = $0 }
+                    )) {
+                        ForEach(viewModel.categories) { cat in
+                            HStack {
+                                Circle().fill(cat.color).frame(width: 10, height: 10)
+                                Text(cat.name)
+                            }.tag(Optional(cat.id))
                         }
                     }
                 }
             }
-            .navigationTitle(isNew ? "Add Reminder" : "Edit Reminder")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        guard let catId = (categoryId ?? event.categoryId) as UUID? else { return }
-                        var updated = event
-                        updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                        updated.date = date
-                        updated.categoryId = catId
-                        updated.reminderTime = reminderTime
-                        updated.isCompleted = isCompleted
-                        updated.syncToAppleCalendar = syncToApple
-                        updated.syncToGoogleCalendar = syncToGoogle
-                        viewModel.updateEvent(updated)
-                        dismiss()
+
+            Section(header: Text("Reminder")) {
+                Picker("Notify", selection: $reminderTime) {
+                    ForEach(ReminderTime.allCases, id: \.self) { rt in
+                        Text(rt.displayName).tag(rt)
                     }
-                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .alert("Delete Reminder?", isPresented: $showDeleteAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Delete", role: .destructive) {
-                    viewModel.deleteEvent(event)
+
+            Section(header: Text("Calendar Sync")) {
+                Toggle("Sync to Apple Calendar", isOn: $syncToApple)
+                Toggle("Sync to Google Calendar", isOn: $syncToGoogle)
+            }
+
+            Section {
+                Button(role: .destructive) {
+                    showDeleteAlert = true
+                } label: {
+                    HStack {
+                        Spacer()
+                        Text("Delete Reminder")
+                        Spacer()
+                    }
+                }
+            }
+        }
+        .navigationTitle(isNew ? "Add Reminder" : "Edit Reminder")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    guard let catId = (categoryId ?? event.categoryId) as UUID? else { return }
+                    var updated = event
+                    updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    updated.date = date
+                    updated.categoryId = catId
+                    updated.reminderTime = reminderTime
+                    updated.isCompleted = isCompleted
+                    updated.syncToAppleCalendar = syncToApple
+                    updated.syncToGoogleCalendar = syncToGoogle
+                    viewModel.updateEvent(updated)
                     dismiss()
                 }
-            } message: {
-                Text("This will delete the reminder and cancel its notifications.")
+                .foregroundColor(themeManager.currentTheme.primaryColor)
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .onAppear {
-                title = event.title
-                date = event.date
-                categoryId = event.categoryId
-                reminderTime = event.reminderTime
-                isCompleted = event.isCompleted
-                syncToApple = event.syncToAppleCalendar
-                syncToGoogle = event.syncToGoogleCalendar
+        }
+        .alert("Delete Reminder?", isPresented: $showDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                viewModel.deleteEvent(event)
+                dismiss()
             }
+        } message: {
+            Text("This will delete the reminder and cancel its notifications.")
+        }
+        .onAppear {
+            title = event.title
+            date = event.date
+            categoryId = event.categoryId
+            reminderTime = event.reminderTime
+            isCompleted = event.isCompleted
+            syncToApple = event.syncToAppleCalendar
+            syncToGoogle = event.syncToGoogleCalendar
         }
     }
-
-    // MARK: - Previews
-    struct EventsModule_Previews: PreviewProvider {
-        static var previews: some View {
-            NavigationView {
-                EventsListView()
-                    .environmentObject(EventViewModel())
-                    .environmentObject(ThemeManager())
-            }
-        }
-    }
-}
-
-// MARK: - Expose nested views as top-level typealiases for use across the app
-typealias EventsPreviewView = EventViewModel.EventsPreviewView
-typealias EventsListView = EventViewModel.EventsListView
-
-extension Color {
-    static let primaryGreen = Color(UIColor { traitCollection in
-        if traitCollection.userInterfaceStyle == .dark {
-            return UIColor(red: 95/255, green: 135/255, blue: 105/255, alpha: 1.0)
-        } else {
-            return UIColor(red: 134/255, green: 167/255, blue: 137/255, alpha: 1.0)
-        }
-    })
-}
-
-extension Notification.Name {
-    static let googleCalendarEventsFetched = Notification.Name("googleCalendarEventsFetched")
 }
 
 private struct CalendarMonthView: View {
@@ -1884,7 +1140,7 @@ private struct CalendarMonthView: View {
     }
 
     private var weekdayHeader: some View {
-        let symbols = calendar.shortWeekdaySymbols // starts with Sun
+        let symbols = calendar.shortWeekdaySymbols 
         return HStack {
             ForEach(0..<7, id: \.self) { idx in
                 Text(symbols[idx])
@@ -1973,6 +1229,525 @@ private struct CalendarMonthView: View {
 
         return range.compactMap { day -> Date? in
             calendar.date(byAdding: .day, value: day - 1, to: monthStart)
+        }
+    }
+}
+
+struct EventsListView: View {
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+    @StateObject private var bulkSelectionManager = BulkSelectionManager()
+    @State private var showingAddEvent = false
+    @State private var showingAddCategory = false
+    @State private var selectedDate = Date()
+    @State private var showCalendarView = false
+    @State private var showCategories = false
+    @State private var pendingCategoryDeletion: Category?
+    @State private var showDeleteCategoryAlert = false
+    @State private var pendingEventDeletion: Event?
+    @State private var showDeleteEventAlert = false
+    @State private var showBulkDeleteAlert = false
+    
+    @State private var showAllUpcoming = false
+    @State private var showAllPast = false
+    
+    var sortedUpcomingEvents: [Event] {
+        viewModel.upcomingEvents()
+    }
+    
+    var sortedPastEvents: [Event] {
+        viewModel.pastEvents()
+    }
+    
+    var upcomingVisible: [Event] {
+        showAllUpcoming ? sortedUpcomingEvents : Array(sortedUpcomingEvents.prefix(5))
+    }
+    
+    var pastVisible: [Event] {
+        showAllPast ? sortedPastEvents : Array(sortedPastEvents.prefix(5))
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            headerView
+            
+            if showCalendarView {
+                calendarView
+            } else {
+                listView
+            }
+        }
+        .sheet(isPresented: $showingAddEvent) {
+            AddEventView(isPresented: $showingAddEvent)
+                .environmentObject(viewModel)
+                .environmentObject(themeManager)
+        }
+        .sheet(isPresented: $showingAddCategory) {
+            AddCategoryView(isPresented: $showingAddCategory)
+                .environmentObject(viewModel)
+                .environmentObject(themeManager)
+        }
+        .refreshable {
+            await viewModel.refreshLiveData()
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if !bulkSelectionManager.isSelecting {
+                VStack(spacing: 12) {
+                    Button(action: { showingAddCategory = true }) {
+                        Image(systemName: "tag.fill")
+                            .font(.headline.bold())
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                            .padding(14)
+                            .background(Circle().fill(themeManager.currentTheme.secondaryColor.opacity(0.2)))
+                            .overlay(Circle().stroke(themeManager.currentTheme.secondaryColor.opacity(0.4), lineWidth: 1))
+                            .shadow(color: themeManager.currentTheme.secondaryColor.opacity(0.2), radius: 6, x: 0, y: 3)
+                    }
+                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
+                    
+                    Button(action: { showingAddEvent = true }) {
+                        Image(systemName: "plus")
+                            .font(.title2.bold())
+                            .foregroundColor(.white)
+                            .padding(20)
+                            .background(Circle().fill(themeManager.currentTheme.primaryColor))
+                            .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                    }
+                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
+                }
+                .padding(.trailing, 20)
+                .padding(.bottom, 20)
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .navigationBarLeading) {
+                if bulkSelectionManager.isSelecting {
+                    Button("Cancel") {
+                        bulkSelectionManager.endSelection()
+                    }
+                    .foregroundColor(.secondary)
+                }
+            }
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if bulkSelectionManager.isSelecting {
+                    Button(selectionAllButtonTitle()) {
+                        toggleSelectAll()
+                    }
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                    
+                    Button(role: .destructive) {
+                        showBulkDeleteAlert = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .disabled(bulkSelectionManager.selectedCount() == 0)
+                    .foregroundColor(bulkSelectionManager.selectedCount() == 0 ? .secondary : .red)
+                }
+            }
+        }
+        .alert("Delete Selected?", isPresented: $showBulkDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                performBulkDelete()
+            }
+        } message: {
+            Text("This will permanently delete \(bulkSelectionManager.selectedCount()) item(s).")
+        }
+    }
+    
+    private func selectionAllButtonTitle() -> String {
+        switch bulkSelectionManager.selectionContext {
+        case .events:
+            let total = upcomingVisible.count + pastVisible.count
+            let selected = bulkSelectionManager.selectedCount()
+            return selected == total && total > 0 ? "Deselect All" : "Select All"
+        case .categories:
+            let total = viewModel.categories.count
+            let selected = bulkSelectionManager.selectedCount()
+            return selected == total && total > 0 ? "Deselect All" : "Select All"
+        default:
+            return "Select All"
+        }
+    }
+    
+    private func toggleSelectAll() {
+        switch bulkSelectionManager.selectionContext {
+        case .events:
+            let visibleEvents = upcomingVisible + pastVisible
+            let allIDs = Set(visibleEvents.map { $0.id })
+            if bulkSelectionManager.selectedEventIDs == allIDs {
+                bulkSelectionManager.deselectAll()
+            } else {
+                bulkSelectionManager.selectedEventIDs = allIDs
+            }
+        case .categories:
+            let allIDs = Set(viewModel.categories.map { $0.id })
+            if bulkSelectionManager.selectedCategoryIDs.count == allIDs.count {
+                bulkSelectionManager.deselectAll()
+            } else {
+                bulkSelectionManager.selectedCategoryIDs = allIDs
+            }
+        default:
+            break
+        }
+    }
+    
+    private func performBulkDelete() {
+        switch bulkSelectionManager.selectionContext {
+        case .events:
+            viewModel.bulkDeleteEvents(bulkSelectionManager.selectedEventIDs)
+        case .categories:
+            viewModel.bulkDeleteCategories(bulkSelectionManager.selectedCategoryIDs)
+        case .scheduleItems:
+            viewModel.bulkDeleteScheduleItems(bulkSelectionManager.selectedScheduleItemIDs, themeManager: themeManager)
+        case .none:
+            break
+        }
+        bulkSelectionManager.endSelection()
+    }
+    
+    private var headerView: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Picker("View Mode", selection: $showCalendarView) {
+                    Text("List").tag(false)
+                    Text("Calendar").tag(true)
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                .padding(.horizontal)
+            }
+            .padding(.top, 8)
+            
+            if !showCalendarView {
+                HStack {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showCategories.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "tag")
+                                .font(.forma(.subheadline))
+                            Text("Categories")
+                                .font(.forma(.subheadline, weight: .medium))
+                            Image(systemName: showCategories ? "chevron.up" : "chevron.down")
+                                .font(.forma(.caption))
+                        }
+                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(themeManager.currentTheme.primaryColor.opacity(0.1))
+                        .cornerRadius(8)
+                    }
+                    
+                    Spacer()
+                    
+                    if bulkSelectionManager.isSelecting {
+                        Text("\(bulkSelectionManager.selectedCount()) selected")
+                            .font(.forma(.subheadline, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .animation(.easeInOut(duration: 0.2), value: bulkSelectionManager.selectedCount())
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+        .padding(.vertical, 8)
+        .background(Color(.systemGroupedBackground))
+    }
+    
+    private var calendarView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                CalendarMonthView(selectedDate: $selectedDate)
+                    .environmentObject(viewModel)
+                    .environmentObject(themeManager)
+                    .padding(.horizontal)
+
+                let dayEvents = viewModel.events(for: selectedDate)
+                if dayEvents.isEmpty {
+                    VStack(spacing: 8) {
+                        Text("No reminders on this date")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(dayEvents) { event in
+                            NavigationLink {
+                                EventEditView(event: event, isNew: false)
+                                    .environmentObject(viewModel)
+                                    .environmentObject(themeManager)
+                            } label: {
+                                EnhancedEventRow(event: event, isPast: event.date < Date())
+                                    .environmentObject(viewModel)
+                                    .environmentObject(themeManager)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal)
+                        }
+                    }
+                }
+            }
+            .padding(.top, 12)
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+    
+    private var listView: some View {
+        List {
+            if showCategories {
+                Section {
+                    if bulkSelectionManager.selectionContext == .categories {
+                        ForEach(viewModel.categories) { category in
+                            HStack {
+                                CategoryRow(category: category)
+                                Spacer()
+                                selectionIndicator(isSelected: bulkSelectionManager.isSelected(category.id))
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                bulkSelectionManager.toggleSelection(category.id)
+                            }
+                        }
+                    } else {
+                        ForEach(viewModel.categories) { category in
+                            CategoryRow(category: category)
+                                .contextMenu {
+                                    Button("Select Multiple", systemImage: "checkmark.circle") {
+                                        bulkSelectionManager.startSelection(.categories, initialID: category.id)
+                                    }
+                                    Button("Delete Category", systemImage: "trash", role: .destructive) {
+                                        pendingCategoryDeletion = category
+                                        showDeleteCategoryAlert = true
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                                .simultaneousGesture(
+                                    LongPressGesture(minimumDuration: 0.6)
+                                        .onEnded { _ in
+                                            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                            impactFeedback.impactOccurred()
+                                            bulkSelectionManager.startSelection(.categories, initialID: category.id)
+                                        }
+                                )
+                        }
+                    }
+                } header: {
+                    Text("Categories")
+                }
+            }
+            
+            if !sortedUpcomingEvents.isEmpty {
+                Section {
+                    ForEach(upcomingVisible) { event in
+                        if bulkSelectionManager.selectionContext == .events {
+                            HStack {
+                                EnhancedEventRow(event: event)
+                                Spacer()
+                                selectionIndicator(isSelected: bulkSelectionManager.isSelected(event.id))
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                bulkSelectionManager.toggleSelection(event.id)
+                            }
+                        } else {
+                            NavigationLink {
+                                EventEditView(event: event, isNew: false)
+                                    .environmentObject(viewModel)
+                                    .environmentObject(themeManager)
+                            } label: {
+                                EnhancedEventRow(event: event)
+                            }
+                            .contextMenu {
+                                Button("Select Multiple", systemImage: "checkmark.circle") {
+                                    bulkSelectionManager.startSelection(.events, initialID: event.id)
+                                }
+                                Button("Delete Reminder", systemImage: "trash", role: .destructive) {
+                                    pendingEventDeletion = event
+                                    showDeleteEventAlert = true
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .simultaneousGesture(
+                                LongPressGesture(minimumDuration: 0.6)
+                                    .onEnded { _ in
+                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                        impactFeedback.impactOccurred()
+                                        bulkSelectionManager.startSelection(.events, initialID: event.id)
+                                    }
+                            )
+                        }
+                    }
+                    
+                    if sortedUpcomingEvents.count > 5 {
+                        HStack {
+                            Spacer()
+                            Button {
+                                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                                    showAllUpcoming.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(showAllUpcoming ? "Show less" : "Show all (\(sortedUpcomingEvents.count))")
+                                        .font(.forma(.caption))
+                                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                                    Image(systemName: showAllUpcoming ? "chevron.up" : "chevron.down")
+                                        .font(.forma(.caption, weight: .bold))
+                                }
+                                .foregroundColor(themeManager.currentTheme.primaryColor)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(themeManager.currentTheme.primaryColor.opacity(0.12))
+                                .clipShape(Capsule())
+                            }
+                            Spacer()
+                        }
+                        .listRowBackground(Color.clear)
+                    }
+                } header: {
+                    HStack {
+                        Image(systemName: "calendar.badge.clock")
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                        Text("Upcoming Reminders")
+                        Spacer()
+                        Text("\(sortedUpcomingEvents.count)")
+                            .font(.forma(.caption))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            
+            if !sortedPastEvents.isEmpty {
+                Section {
+                    ForEach(pastVisible) { event in
+                        if bulkSelectionManager.selectionContext == .events {
+                            HStack {
+                                EnhancedEventRow(event: event, isPast: true)
+                                Spacer()
+                                selectionIndicator(isSelected: bulkSelectionManager.isSelected(event.id))
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                bulkSelectionManager.toggleSelection(event.id)
+                            }
+                        } else {
+                            NavigationLink {
+                                EventEditView(event: event, isNew: false)
+                                    .environmentObject(viewModel)
+                                    .environmentObject(themeManager)
+                            } label: {
+                                EnhancedEventRow(event: event, isPast: true)
+                            }
+                            .contextMenu {
+                                Button("Select Multiple", systemImage: "checkmark.circle") {
+                                    bulkSelectionManager.startSelection(.events, initialID: event.id)
+                                }
+                                Button("Delete Reminder", systemImage: "trash", role: .destructive) {
+                                    pendingEventDeletion = event
+                                    showDeleteEventAlert = true
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .simultaneousGesture(
+                                LongPressGesture(minimumDuration: 0.6)
+                                    .onEnded { _ in
+                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                        impactFeedback.impactOccurred()
+                                        bulkSelectionManager.startSelection(.events, initialID: event.id)
+                                    }
+                            )
+                        }
+                    }
+                    
+                    if sortedPastEvents.count > 5 {
+                        HStack {
+                            Spacer()
+                            Button {
+                                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                                    showAllPast.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(showAllPast ? "Show less" : "Show all (\(sortedPastEvents.count))")
+                                        .font(.forma(.caption))
+                                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                                    Image(systemName: showAllPast ? "chevron.up" : "chevron.down")
+                                        .font(.forma(.caption, weight: .bold))
+                                }
+                                .foregroundColor(themeManager.currentTheme.primaryColor)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(themeManager.currentTheme.primaryColor.opacity(0.12))
+                                .clipShape(Capsule())
+                            }
+                            Spacer()
+                        }
+                        .listRowBackground(Color.clear)
+                    }
+                } header: {
+                    HStack {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                        Text("Past Reminders")
+                        Spacer()
+                        Text("\(sortedPastEvents.count)")
+                            .font(.forma(.caption))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            
+            if sortedUpcomingEvents.isEmpty && sortedPastEvents.isEmpty && !showCategories {
+                Section {
+                    VStack(spacing: 12) {
+                        Text("No reminders found. Tap '+' to add a new reminder.")
+                            .foregroundColor(.secondary)
+                    }
+                    .padding()
+                }
+            }
+        }
+        .listStyle(InsetGroupedListStyle())
+        .alert("Delete Category?", isPresented: $showDeleteCategoryAlert) {
+            Button("Cancel", role: .cancel) { pendingCategoryDeletion = nil }
+            Button("Delete", role: .destructive) {
+                if let cat = pendingCategoryDeletion {
+                    viewModel.deleteCategory(cat)
+                }
+                pendingCategoryDeletion = nil
+            }
+        } message: {
+            Text("This will remove the category from StuCo.")
+        }
+        .alert("Delete Reminder?", isPresented: $showDeleteEventAlert) {
+            Button("Cancel", role: .cancel) { pendingEventDeletion = nil }
+            Button("Delete", role: .destructive) {
+                if let evt = pendingEventDeletion {
+                    viewModel.deleteEvent(evt)
+                }
+                pendingEventDeletion = nil
+            }
+        } message: {
+            Text("This will delete the reminder and cancel its notifications.")
+        }
+    }
+    
+    private func selectionIndicator(isSelected: Bool) -> some View {
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(.forma(.title3))
+            .foregroundColor(isSelected ? themeManager.currentTheme.primaryColor : .secondary)
+            .animation(.easeInOut(duration: 0.2), value: isSelected)
+    }
+}
+
+struct EventsModule_Previews: PreviewProvider {
+    static var previews: some View {
+        NavigationView {
+            EventsListView()
+                .environmentObject(EventViewModel())
+                .environmentObject(ThemeManager())
         }
     }
 }

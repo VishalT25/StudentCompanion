@@ -83,16 +83,17 @@ struct AddCourseView: View {
 
     private func saveCourse() {
         guard !courseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let scheduleManager = ScheduleManager()
+        let scheduleId = scheduleManager.activeScheduleID ?? UUID()
+        
         let newCourse = Course(
+            scheduleId: scheduleId,
             name: courseName,
             iconName: selectedIconName,
-            colorHex: selectedColor.toHex() ?? Color.blue.toHex()! // Fallback hex
+            colorHex: selectedColor.toHex() ?? Color.blue.toHex()!
         )
         courses.append(newCourse)
-        // Note: The saveCourses() function in GPAView will need to be called after this append.
-        // We'll handle this by making GPAView save when its `courses` @State array changes,
-        // or explicitly calling it. For now, `GPAView`'s `onDisappear` or `onChange` for `courses`
-        // would be a good place to trigger a save.
+        // Note: The saveCourses() function in GPAView will persist via onChange of courses
     }
 }
 

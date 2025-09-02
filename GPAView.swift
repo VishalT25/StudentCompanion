@@ -9,54 +9,16 @@ struct GPAView: View {
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
     @AppStorage("lastGradeUpdate") private var lastGradeUpdate: Double = 0
     @State private var showBulkDeleteAlert = false
+    @State private var showDeleteCourseAlert = false
+    @State private var courseToDelete: Course?
 
     var body: some View {
-        VStack(spacing: 0) {
-            if bulkSelectionManager.isSelecting {
-                selectionToolbar
-            }
+        ZStack {
+            mainContentView
             
-            List {
-                ForEach(courseManager.courses) { course in
-                    if bulkSelectionManager.selectionContext == .courses {
-                        HStack {
-                            CourseWidgetView(course: course, showGrade: showCurrentGPA, usePercentage: usePercentageGrades)
-                            Spacer()
-                            selectionIndicator(isSelected: bulkSelectionManager.isSelected(course.id))
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            bulkSelectionManager.toggleSelection(course.id)
-                        }
-                    } else {
-                        NavigationLink(destination: CourseDetailView(course: course, courseManager: courseManager)) {
-                            CourseWidgetView(course: course, showGrade: showCurrentGPA, usePercentage: usePercentageGrades)
-                        }
-                        .contextMenu {
-                            Button("Select Multiple", systemImage: "checkmark.circle") {
-                                bulkSelectionManager.startSelection(.courses, initialID: course.id)
-                            }
-                            Button("Delete Course", systemImage: "trash", role: .destructive) {
-                                courseToDelete = course
-                                showDeleteCourseAlert = true
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .simultaneousGesture(
-                            LongPressGesture(minimumDuration: 0.6)
-                                .onEnded { _ in
-                                    let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                    impactFeedback.impactOccurred()
-                                    bulkSelectionManager.startSelection(.courses, initialID: course.id)
-                                }
-                        )
-                    }
-                }
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
+            if !bulkSelectionManager.isSelecting {
+                addButton
             }
-            .listStyle(.plain)
-            .environment(\.editMode, bulkSelectionManager.isSelecting ? .constant(.active) : .constant(.inactive))
         }
         .sheet(isPresented: $showingAddCourseSheet) {
             AddCourseView(courses: $courseManager.courses)
@@ -68,11 +30,108 @@ struct GPAView: View {
         .refreshable {
             courseManager.loadCourses()
         }
-        .onChange(of: courseManager.courses) { _, _ in
-            courseManager.saveCourses()
+        .toolbar {
+            toolbarContent
         }
-        .overlay(alignment: .bottomTrailing) {
-            if !bulkSelectionManager.isSelecting {
+        .alert("Delete Course?", isPresented: $showDeleteCourseAlert) {
+            deleteAlert
+        } message: {
+            Text("This will remove the course and its assignments.")
+        }
+        .alert("Delete Selected Courses?", isPresented: $showBulkDeleteAlert) {
+            bulkDeleteAlert
+        } message: {
+            Text("This will permanently delete \(bulkSelectionManager.selectedCount()) course(s) and all their assignments.")
+        }
+    }
+    
+    private var mainContentView: some View {
+        VStack(spacing: 0) {
+            if bulkSelectionManager.isSelecting {
+                selectionToolbar
+            }
+            
+            coursesList
+        }
+    }
+    
+    private var coursesList: some View {
+        List {
+            ForEach(courseManager.courses) { course in
+                courseRow(for: course)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+        }
+        .listStyle(.plain)
+        .environment(\.editMode, bulkSelectionManager.isSelecting ? .constant(.active) : .constant(.inactive))
+    }
+    
+    @ViewBuilder
+    private func courseRow(for course: Course) -> some View {
+        if bulkSelectionManager.selectionContext == .courses {
+            selectionModeRow(for: course)
+        } else {
+            normalModeRow(for: course)
+        }
+    }
+    
+    private func selectionModeRow(for course: Course) -> some View {
+        HStack {
+            CourseWidgetView(
+                course: course,
+                showGrade: showCurrentGPA,
+                usePercentage: usePercentageGrades
+            )
+            Spacer()
+            selectionIndicator(isSelected: bulkSelectionManager.isSelected(course.id))
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            bulkSelectionManager.toggleSelection(course.id)
+        }
+    }
+    
+    private func normalModeRow(for course: Course) -> some View {
+        NavigationLink(destination: CourseDetailView(course: course, courseManager: courseManager)) {
+            CourseWidgetView(
+                course: course,
+                showGrade: showCurrentGPA,
+                usePercentage: usePercentageGrades
+            )
+        }
+        .contextMenu {
+            courseContextMenu(for: course)
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(longPressGesture(for: course))
+    }
+    
+    @ViewBuilder
+    private func courseContextMenu(for course: Course) -> some View {
+        Button("Select Multiple", systemImage: "checkmark.circle") {
+            bulkSelectionManager.startSelection(.courses, initialID: course.id)
+        }
+        Button("Delete Course", systemImage: "trash", role: .destructive) {
+            courseToDelete = course
+            showDeleteCourseAlert = true
+        }
+    }
+    
+    private func longPressGesture(for course: Course) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.6)
+            .onEnded { _ in
+                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                impactFeedback.impactOccurred()
+                bulkSelectionManager.startSelection(.courses, initialID: course.id)
+            }
+    }
+    
+    private var addButton: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
                 Button(action: { showingAddCourseSheet = true }) {
                     Image(systemName: "plus")
                         .font(.title2.bold())
@@ -86,56 +145,59 @@ struct GPAView: View {
                 .padding(.bottom, 20)
             }
         }
-        .toolbar {
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                if bulkSelectionManager.isSelecting && bulkSelectionManager.selectionContext == .courses {
-                    Button(selectionAllButtonTitle()) {
-                        toggleSelectAll()
-                    }
-                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                    
-                    Button(role: .destructive) {
-                        showBulkDeleteAlert = true
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .disabled(bulkSelectionManager.selectedCount() == 0)
-                    .foregroundColor(bulkSelectionManager.selectedCount() == 0 ? .secondary : .red)
+    }
+    
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .navigationBarTrailing) {
+            if bulkSelectionManager.isSelecting && bulkSelectionManager.selectionContext == .courses {
+                Button(selectionAllButtonTitle()) {
+                    toggleSelectAll()
                 }
-            }
-            ToolbarItemGroup(placement: .navigationBarLeading) {
-                if bulkSelectionManager.isSelecting {
-                    Button("Cancel") {
-                        bulkSelectionManager.endSelection()
-                    }
-                    .foregroundColor(.secondary)
+                .foregroundColor(themeManager.currentTheme.primaryColor)
+                
+                Button(role: .destructive) {
+                    showBulkDeleteAlert = true
+                } label: {
+                    Image(systemName: "trash")
                 }
+                .disabled(bulkSelectionManager.selectedCount() == 0)
+                .foregroundColor(bulkSelectionManager.selectedCount() == 0 ? .secondary : .red)
             }
         }
-        .alert("Delete Course?", isPresented: $showDeleteCourseAlert) {
-            Button("Cancel", role: .cancel) { courseToDelete = nil }
-            Button("Delete", role: .destructive) {
-                if let course = courseToDelete {
-                    courseManager.deleteCourse(course.id)
+        
+        ToolbarItemGroup(placement: .navigationBarLeading) {
+            if bulkSelectionManager.isSelecting {
+                Button("Cancel") {
+                    bulkSelectionManager.endSelection()
                 }
-                courseToDelete = nil
+                .foregroundColor(.secondary)
             }
-        } message: {
-            Text("This will remove the course and its assignments.")
-        }
-        .alert("Delete Selected Courses?", isPresented: $showBulkDeleteAlert) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                courseManager.bulkDeleteCourses(bulkSelectionManager.selectedCourseIDs)
-                bulkSelectionManager.endSelection()
-            }
-        } message: {
-            Text("This will permanently delete \(bulkSelectionManager.selectedCount()) course(s) and all their assignments.")
         }
     }
-
-    @State private var showDeleteCourseAlert = false
-    @State private var courseToDelete: Course?
+    
+    @ViewBuilder
+    private var deleteAlert: some View {
+        Button("Cancel", role: .cancel) { courseToDelete = nil }
+        Button("Delete", role: .destructive) {
+            if let course = courseToDelete {
+                courseManager.deleteCourse(course.id)
+            }
+            courseToDelete = nil
+        }
+    }
+    
+    @ViewBuilder
+    private var bulkDeleteAlert: some View {
+        Button("Cancel", role: .cancel) { }
+        Button("Delete", role: .destructive) {
+            // Bulk delete selected courses
+            for courseID in bulkSelectionManager.selectedCourseIDs {
+                courseManager.deleteCourse(courseID)
+            }
+            bulkSelectionManager.endSelection()
+        }
+    }
     
     private var selectionToolbar: some View {
         HStack {
@@ -232,37 +294,47 @@ struct CourseWidgetView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: course.iconName)
-                    .font(.title2)
-                    .foregroundColor(foregroundColor)
-                    .frame(width: 30, alignment: .center)
-
-                Text(course.name)
-                    .font(.headline)
-                    .foregroundColor(foregroundColor)
-                    .lineLimit(2)
-            }
-
+            courseInfo
+            
             Spacer()
 
             if showGrade && !currentGrade.isEmpty {
-                Text(currentGrade)
-                    .font(.headline.bold())
-                    .foregroundColor(foregroundColor)
+                gradeDisplay
             }
         }
         .padding()
         .frame(maxWidth: .infinity)
         .frame(minHeight: 80)
-        .background(
-            LinearGradient(
-                gradient: Gradient(colors: [course.color.lighter(by: 0.2), course.color]),
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-        )
+        .background(courseBackground)
         .cornerRadius(12)
+    }
+    
+    private var courseInfo: some View {
+        HStack(spacing: 10) {
+            Image(systemName: course.iconName)
+                .font(.title2)
+                .foregroundColor(foregroundColor)
+                .frame(width: 30, alignment: .center)
+
+            Text(course.name)
+                .font(.headline)
+                .foregroundColor(foregroundColor)
+                .lineLimit(2)
+        }
+    }
+    
+    private var gradeDisplay: some View {
+        Text(currentGrade)
+            .font(.headline.bold())
+            .foregroundColor(foregroundColor)
+    }
+    
+    private var courseBackground: some View {
+        LinearGradient(
+            gradient: Gradient(colors: [course.color.lighter(by: 0.2), course.color]),
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 }
 
