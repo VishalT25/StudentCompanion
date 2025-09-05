@@ -112,13 +112,16 @@ class BulkCourseSelectionManager: ObservableObject {
     }
 }
 
-// MARK: - Enhanced Course Operations Manager with Real-time Sync
+// MARK: - Enhanced Course Operations Manager with Real-time Sync and Schedule Integration
 @MainActor
 class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
     @Published var courses: [Course] = []
     @Published var isSyncing: Bool = false
     @Published var syncStatus: String = "Ready"
     @Published var lastSyncTime: Date?
+    
+    // NEW: Schedule integration
+    private var scheduleManager: ScheduleManager?
     
     private let realtimeSyncManager = RealtimeSyncManager.shared
     private var cancellables = Set<AnyCancellable>()
@@ -133,13 +136,21 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         
         // Setup sync status observation
         setupSyncStatusObservation()
+        
+        Task {
+            await realtimeSyncManager.ensureStarted()
+            await self.refreshCourseData()
+        }
+    }
+    
+    // NEW: Set schedule manager for synchronization
+    func setScheduleManager(_ scheduleManager: ScheduleManager) {
+        self.scheduleManager = scheduleManager
     }
     
     // MARK: - RealtimeSyncDelegate
     
     func didReceiveRealtimeUpdate(_ data: [String: Any], action: String, table: String) {
-        print("🔄 CourseOperationsManager: Received real-time update for table: \(table), action: \(action)")
-        
         switch (table, action) {
         case ("courses", "SYNC"):
             if let coursesData = data["courses"] as? [DatabaseCourse] {
@@ -180,14 +191,13 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             }
             
         default:
-            print("🔄 CourseOperationsManager: Unhandled real-time update: \(table) - \(action)")
+            break
         }
     }
     
     // MARK: - Real-time Course Handlers
     
     private func syncCoursesFromDatabase(_ courses: [DatabaseCourse]) {
-        print("🔄 CourseOperationsManager: Syncing \(courses.count) courses from database")
         let localCourses = courses.map { $0.toLocal() }
         
         // Preserve existing assignments for courses that already exist
@@ -210,20 +220,15 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         if !isInitialLoad {
             saveCoursesLocally() // Cache for offline use
         }
-        
-        print("🔄 CourseOperationsManager: Courses sync complete - \(self.courses.count) total courses")
     }
     
     private func syncAssignmentsFromDatabase(_ assignments: [DatabaseAssignment]) {
-        print("🔄 CourseOperationsManager: Syncing \(assignments.count) assignments from database")
-        
         // Group assignments by course_id
         let groupedAssignments = Dictionary(grouping: assignments) { $0.course_id }
         
         for (courseIdString, dbAssignments) in groupedAssignments {
             guard let courseId = UUID(uuidString: courseIdString),
                   let courseIndex = courses.firstIndex(where: { $0.id == courseId }) else {
-                print("🔄 CourseOperationsManager: Course not found for assignments: \(courseIdString)")
                 continue
             }
             
@@ -234,8 +239,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         if !isInitialLoad {
             saveCoursesLocally() // Cache for offline use
         }
-        
-        print("🔄 CourseOperationsManager: Assignments sync complete")
     }
     
     private func handleCourseInsert(_ dbCourse: DatabaseCourse) {
@@ -245,7 +248,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         if !courses.contains(where: { $0.id == localCourse.id }) {
             courses.append(localCourse)
             saveCoursesLocally()
-            print("🔄 CourseOperationsManager: Added new course from real-time: \(localCourse.name)")
         }
     }
     
@@ -258,7 +260,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             updatedCourse.assignments = courses[index].assignments
             courses[index] = updatedCourse
             saveCoursesLocally()
-            print("🔄 CourseOperationsManager: Updated course from real-time: \(localCourse.name)")
         }
     }
     
@@ -267,7 +268,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
            let index = courses.firstIndex(where: { $0.id == uuid }) {
             let removedCourse = courses.remove(at: index)
             saveCoursesLocally()
-            print("🔄 CourseOperationsManager: Deleted course from real-time: \(removedCourse.name)")
         }
     }
     
@@ -276,7 +276,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         
         guard let courseId = UUID(uuidString: dbAssignment.course_id),
               let courseIndex = courses.firstIndex(where: { $0.id == courseId }) else {
-            print("🔄 CourseOperationsManager: Course not found for new assignment: \(dbAssignment.course_id)")
             return
         }
         
@@ -284,7 +283,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         if !courses[courseIndex].assignments.contains(where: { $0.id == localAssignment.id }) {
             courses[courseIndex].addAssignment(localAssignment)
             saveCoursesLocally()
-            print("🔄 CourseOperationsManager: Added new assignment from real-time: \(localAssignment.name)")
         }
     }
     
@@ -294,13 +292,11 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         guard let courseId = UUID(uuidString: dbAssignment.course_id),
               let courseIndex = courses.firstIndex(where: { $0.id == courseId }),
               let assignmentIndex = courses[courseIndex].assignments.firstIndex(where: { $0.id == localAssignment.id }) else {
-            print("🔄 CourseOperationsManager: Course or assignment not found for update: \(dbAssignment.id)")
             return
         }
         
         courses[courseIndex].assignments[assignmentIndex] = localAssignment
         saveCoursesLocally()
-        print("🔄 CourseOperationsManager: Updated assignment from real-time: \(localAssignment.name)")
     }
     
     private func handleAssignmentDelete(_ assignmentId: String) {
@@ -310,7 +306,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             if let assignmentIndex = courses[courseIndex].assignments.firstIndex(where: { $0.id == uuid }) {
                 let removedAssignment = courses[courseIndex].assignments.remove(at: assignmentIndex)
                 saveCoursesLocally()
-                print("🔄 CourseOperationsManager: Deleted assignment from real-time: \(removedAssignment.name)")
                 break
             }
         }
@@ -323,10 +318,20 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         courses.append(course)
         saveCoursesLocally()
         
+        // NEW: Create corresponding schedule item if course has schedule info
+        if course.hasScheduleInfo,
+           let scheduleManager = scheduleManager,
+           let activeSchedule = scheduleManager.activeSchedule {
+            let scheduleItem = course.toScheduleItem()
+            // Don't create duplicate - check if it already exists
+            let existingItem = activeSchedule.scheduleItems.first { $0.id == course.id }
+            if existingItem == nil {
+                scheduleManager.addScheduleItem(scheduleItem, to: activeSchedule.id)
+            }
+        }
+        
         // Sync to database
         syncCourseToDatabase(course, action: .create)
-        
-        print("📚 CourseOperationsManager: Added course: \(course.name)")
     }
     
     func updateCourse(_ course: Course) {
@@ -336,10 +341,36 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         courses[index] = course
         saveCoursesLocally()
         
+        // NEW: Update corresponding schedule item (but prevent recursive updates)
+        if !isSyncing,
+           let scheduleManager = scheduleManager,
+           let activeSchedule = scheduleManager.activeSchedule {
+            
+            // Temporarily set syncing flag to prevent recursive updates
+            let wasSyncing = isSyncing
+            isSyncing = true
+            defer { isSyncing = wasSyncing }
+            
+            if course.hasScheduleInfo {
+                // Update or create schedule item
+                let scheduleItem = course.toScheduleItem()
+                let existingItemIndex = activeSchedule.scheduleItems.firstIndex { $0.id == course.id }
+                
+                if existingItemIndex != nil {
+                    scheduleManager.updateScheduleItem(scheduleItem, in: activeSchedule.id)
+                } else {
+                    scheduleManager.addScheduleItem(scheduleItem, to: activeSchedule.id)
+                }
+            } else {
+                // Remove schedule item if course no longer has schedule info
+                if let existingItem = activeSchedule.scheduleItems.first(where: { $0.id == course.id }) {
+                    scheduleManager.deleteScheduleItem(existingItem, from: activeSchedule.id)
+                }
+            }
+        }
+        
         // Sync to database
         syncCourseToDatabase(course, action: .update)
-        
-        print("📚 CourseOperationsManager: Updated course: \(course.name)")
     }
     
     func deleteCourse(_ courseID: UUID) {
@@ -349,10 +380,15 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         courses.removeAll { $0.id == courseID }
         saveCoursesLocally()
         
+        // NEW: Remove corresponding schedule item
+        if let scheduleManager = scheduleManager,
+           let activeSchedule = scheduleManager.activeSchedule,
+           let scheduleItem = activeSchedule.scheduleItems.first(where: { $0.id == courseID }) {
+            scheduleManager.deleteScheduleItem(scheduleItem, from: activeSchedule.id)
+        }
+        
         // Sync to database
         syncCourseToDatabase(course, action: .delete)
-        
-        print("📚 CourseOperationsManager: Deleted course: \(course.name)")
     }
     
     func addAssignment(_ assignment: Assignment, to courseId: UUID) {
@@ -364,8 +400,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         
         // Sync to database
         syncAssignmentToDatabase(assignment, courseId: courseId, action: .create)
-        
-        print("📚 CourseOperationsManager: Added assignment: \(assignment.name) to course: \(courseId)")
     }
     
     func updateAssignment(_ assignment: Assignment, in courseId: UUID) {
@@ -378,8 +412,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         
         // Sync to database
         syncAssignmentToDatabase(assignment, courseId: courseId, action: .update)
-        
-        print("📚 CourseOperationsManager: Updated assignment: \(assignment.name)")
     }
     
     func deleteAssignment(_ assignmentId: UUID, from courseId: UUID) {
@@ -392,15 +424,12 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         
         // Sync to database
         syncAssignmentToDatabase(assignment, courseId: courseId, action: .delete)
-        
-        print("📚 CourseOperationsManager: Deleted assignment: \(assignment.name)")
     }
     
     // MARK: - Database Sync Operations
     
     private func syncCourseToDatabase(_ course: Course, action: SyncAction) {
         guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
-            print("🔄 CourseOperationsManager: Cannot sync - user not authenticated")
             return
         }
         
@@ -418,19 +447,12 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             
             realtimeSyncManager.queueSyncOperation(operation)
         } catch {
-            print("🔄 CourseOperationsManager: Failed to prepare course sync: \(error)")
         }
     }
     
     private func syncAssignmentToDatabase(_ assignment: Assignment, courseId: UUID, action: SyncAction) {
-        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
-            print("🔄 CourseOperationsManager: Cannot sync - user not authenticated")
-            return
-        }
-        
         let dbAssignment = DatabaseAssignment(
-            from: assignment, 
-            userId: userId, 
+            from: assignment,
             courseId: courseId.uuidString
         )
         
@@ -446,7 +468,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             
             realtimeSyncManager.queueSyncOperation(operation)
         } catch {
-            print("🔄 CourseOperationsManager: Failed to prepare assignment sync: \(error)")
         }
     }
     

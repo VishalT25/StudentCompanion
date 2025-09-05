@@ -17,7 +17,7 @@ class AcademicCalendarManager: ObservableObject {
                 let decoder = JSONDecoder()
                 academicCalendars = try decoder.decode([AcademicCalendar].self, from: data)
             } catch {
-                print("Error loading academic calendars: \(error)")
+                 ("Error loading academic calendars: \(error)")
                 academicCalendars = []
             }
         }
@@ -29,7 +29,7 @@ class AcademicCalendarManager: ObservableObject {
             let data = try encoder.encode(academicCalendars)
             UserDefaults.standard.set(data, forKey: calendarsKey)
         } catch {
-            print("Error saving academic calendars: \(error)")
+             ("Error saving academic calendars: \(error)")
         }
     }
     

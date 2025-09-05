@@ -22,7 +22,7 @@ struct AIImportTutorialView: View {
             title: "Take a Screenshot",
             description: "Capture a clear image of your class schedule. Make sure all class names, times, and days are visible.",
             icon: "camera.fill",
-            detail: "Your schedule can be from any source - student portal, PDF, or even a printed schedule."
+            detail: "Your schedule can be from any source - student portal, PDF, or even a  ed schedule."
         ),
         TutorialStep(
             title: "Use AI to Parse",

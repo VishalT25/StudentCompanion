@@ -10,7 +10,7 @@ class SupabaseService: ObservableObject {
     // MARK: - Security Configuration
     private let supabaseURL: URL
     private let supabaseAnonKey: String
-    private let client: SupabaseClient
+    let client: SupabaseClient
     private let keychainService = SecureKeychainService.shared
     
     // Authentication state
@@ -56,14 +56,14 @@ class SupabaseService: ObservableObject {
             
             // Validate token structure
             guard keychainService.validateJWTStructure(accessToken) else {
-                print("🔒 SECURITY WARNING: Invalid token structure detected")
+                 ("🔒 SECURITY WARNING: Invalid token structure detected")
                 await signOut()
                 return
             }
             
             // Check if token is expired
             if keychainService.isTokenExpired(accessToken) {
-                print("🔒 Token expired, attempting refresh...")
+                 ("🔒 Token expired, attempting refresh...")
                 await refreshAuthenticationToken(refreshToken: refreshToken)
             } else {
                 // Restore session
@@ -82,9 +82,9 @@ class SupabaseService: ObservableObject {
                     await loadUserProfile()
                     await loadUserSubscription()
                     
-                    print("🔒 Session restored successfully")
+                     ("🔒 Session restored successfully")
                 } catch {
-                    print("🔒 SECURITY ERROR: Failed to restore session: \(error)")
+                     ("🔒 SECURITY ERROR: Failed to restore session: \(error)")
                     await signOut()
                 }
             }
@@ -116,7 +116,7 @@ class SupabaseService: ObservableObject {
             )
             
             guard success else {
-                print("🔒 SECURITY CRITICAL: Failed to store authentication tokens")
+                 ("🔒 SECURITY CRITICAL: Failed to store authentication tokens")
                 return .failure(AuthError.storageError)
             }
             
@@ -130,10 +130,10 @@ class SupabaseService: ObservableObject {
             await loadUserProfile()
             await loadUserSubscription()
             
-            print("🔒 User authenticated successfully")
+             ("🔒 User authenticated successfully")
             return .success(response.user)
         } catch {
-            print("🔒 SECURITY: Authentication failed: \(error)")
+             ("🔒 SECURITY: Authentication failed: \(error)")
             return .failure(AuthError.authenticationFailed)
         }
     }
@@ -190,10 +190,10 @@ class SupabaseService: ObservableObject {
                 await loadUserSubscription()
             }
             
-            print("🔒 User registered successfully")
+             ("🔒 User registered successfully")
             return .success(response.user)
         } catch {
-            print("🔒 SECURITY: Registration failed: \(error)")
+             ("🔒 SECURITY: Registration failed: \(error)")
             return .failure(AuthError.registrationFailed)
         }
     }
@@ -203,7 +203,7 @@ class SupabaseService: ObservableObject {
         do {
             try await client.auth.signOut()
         } catch {
-            print("🔒 SECURITY WARNING: Server sign out failed: \(error)")
+             ("🔒 SECURITY WARNING: Server sign out failed: \(error)")
         }
         
         // 🔒 SECURITY: Always clear local tokens regardless of server response
@@ -216,7 +216,7 @@ class SupabaseService: ObservableObject {
             self.userSubscription = nil
         }
         
-        print("🔒 User signed out and tokens cleared")
+         ("🔒 User signed out and tokens cleared")
     }
     
     // MARK: - Profile Management
@@ -241,7 +241,7 @@ class SupabaseService: ObservableObject {
                 self.userProfile = profile
             }
         } catch {
-            print("Failed to load user profile: \(error)")
+             ("Failed to load user profile: \(error)")
             // Create default profile if none exists
             if let user = currentUser {
                 await createDefaultProfile(for: user)
@@ -267,7 +267,7 @@ class SupabaseService: ObservableObject {
             // Reload profile data
             await loadUserProfile()
         } catch {
-            print("Failed to create default profile: \(error)")
+             ("Failed to create default profile: \(error)")
         }
     }
     
@@ -297,7 +297,7 @@ class SupabaseService: ObservableObject {
             
             return .success(())
         } catch {
-            print("Failed to update profile: \(error)")
+             ("Failed to update profile: \(error)")
             return .failure(AuthError.authenticationFailed)
         }
     }
@@ -329,7 +329,7 @@ class SupabaseService: ObservableObject {
                 self.userSubscription = subscription
             }
         } catch {
-            print("Failed to load user subscription: \(error)")
+             ("Failed to load user subscription: \(error)")
             // Create default subscription if none exists
             await createDefaultSubscriber(for: currentUser!)
         }
@@ -362,7 +362,7 @@ class SupabaseService: ObservableObject {
             // Reload subscription data
             await loadUserSubscription()
         } catch {
-            print("Failed to create default subscriber: \(error)")
+             ("Failed to create default subscriber: \(error)")
         }
     }
     
@@ -423,13 +423,13 @@ class SupabaseService: ObservableObject {
                 await MainActor.run {
                     self.lastTokenRefresh = Date()
                 }
-                print("🔒 Token refreshed successfully")
+                 ("🔒 Token refreshed successfully")
             } else {
-                print("🔒 SECURITY CRITICAL: Failed to store refreshed tokens")
+                 ("🔒 SECURITY CRITICAL: Failed to store refreshed tokens")
                 await signOut()
             }
         } catch {
-            print("🔒 SECURITY ERROR: Token refresh failed: \(error)")
+             ("🔒 SECURITY ERROR: Token refresh failed: \(error)")
             await signOut()
         }
     }
@@ -496,7 +496,7 @@ class SupabaseService: ObservableObject {
                 .execute()
             return true
         } catch {
-            print("🔒 Database connection check failed: \(error)")
+             ("🔒 Database connection check failed: \(error)")
             return false
         }
     }
@@ -554,7 +554,7 @@ class SupabaseService: ObservableObject {
                 categoriesCount: categoriesCount?.count ?? 0
             )
         } catch {
-            print("🔒 Failed to get sync stats: \(error)")
+             ("🔒 Failed to get sync stats: \(error)")
             return nil
         }
     }

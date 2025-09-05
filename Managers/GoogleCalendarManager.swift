@@ -23,7 +23,7 @@ class GoogleCalendarManager: ObservableObject {
     @Published var selectedCalendarIDs: Set<String> {
         didSet {
             saveSelectedCalendarIDs()
-            print("Selected calendar IDs changed: \(selectedCalendarIDs)")
+             ("Selected calendar IDs changed: \(selectedCalendarIDs)")
             if isSignedIn {
                 syncEventsForSelectedCalendars()
             }
@@ -66,7 +66,7 @@ class GoogleCalendarManager: ObservableObject {
             if let error {
                 self.error = error
                 self.isSignedIn = false
-                print("Sign-in error: \(error.localizedDescription)")
+                 ("Sign-in error: \(error.localizedDescription)")
                 return
             }
             
@@ -82,14 +82,14 @@ class GoogleCalendarManager: ObservableObject {
             self.calendarService.authorizer = user.fetcherAuthorizer
             self.isSignedIn = true
             self.error = nil // Clear general errors
-            print("Successfully signed in as \(user.profile?.name ?? "Unknown User")")
+             ("Successfully signed in as \(user.profile?.name ?? "Unknown User")")
             
             self.loadCalendarList { success in
                 if success && !self.selectedCalendarIDs.isEmpty {
                     self.syncEventsForSelectedCalendars()
                 } else if success && self.selectedCalendarIDs.isEmpty {
                     // No calendars pre-selected, or list is empty. Do nothing for events yet.
-                    print("Calendar list loaded, no calendars were pre-selected or found for event sync.")
+                     ("Calendar list loaded, no calendars were pre-selected or found for event sync.")
                 }
             }
         }
@@ -107,7 +107,7 @@ class GoogleCalendarManager: ObservableObject {
         self.isLoadingEvents = false
         self.eventFetchError = nil
         
-        print("Successfully signed out")
+         ("Successfully signed out")
     }
 
     func loadCalendarList(completion: ((_ success: Bool) -> Void)? = nil) {
@@ -130,19 +130,19 @@ class GoogleCalendarManager: ObservableObject {
                 if let error {
                     self.error = error
                     self.fetchedCalendars = []
-                    print("Error fetching calendar list: \(error.localizedDescription)")
+                     ("Error fetching calendar list: \(error.localizedDescription)")
                     completion?(false)
                     return
                 }
                 
                 if let calendarList = result as? GTLRCalendar_CalendarList, let items = calendarList.items {
                     self.fetchedCalendars = items
-                    print("Successfully fetched \(items.count) calendars.")
+                     ("Successfully fetched \(items.count) calendars.")
                     completion?(true)
                 } else {
                     self.error = NSError(domain: "GoogleCalendarManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to parse calendar list or no items found"])
                     self.fetchedCalendars = []
-                    print("Failed to parse calendar list or no items found.")
+                     ("Failed to parse calendar list or no items found.")
                     completion?(false)
                 }
             }
@@ -176,12 +176,12 @@ class GoogleCalendarManager: ObservableObject {
 
     func syncEventsForSelectedCalendars() {
         guard isSignedIn else {
-            print("Cannot sync events, user not signed in.")
+             ("Cannot sync events, user not signed in.")
             return
         }
 
         guard !selectedCalendarIDs.isEmpty else {
-            print("No calendars selected for event sync.")
+             ("No calendars selected for event sync.")
             // Clear any previously fetched events if no calendars are selected anymore
             DispatchQueue.main.async {
                  self.fetchedEventsByCalendar = [:]
@@ -191,7 +191,7 @@ class GoogleCalendarManager: ObservableObject {
             return
         }
 
-        print("Starting event sync for calendars: \(selectedCalendarIDs)")
+         ("Starting event sync for calendars: \(selectedCalendarIDs)")
         DispatchQueue.main.async {
             self.isLoadingEvents = true
             self.eventFetchError = nil // Clear previous event errors
@@ -211,9 +211,9 @@ class GoogleCalendarManager: ObservableObject {
                     // ensure thread safety if necessary, though DispatchGroup should handle completions sequentially enough.
                     // For simplicity, direct assignment here. If issues, use a serial queue for writes.
                     newFetchedEvents[calendarId] = events
-                    print("Fetched \(events.count) events for calendar ID: \(calendarId)")
+                     ("Fetched \(events.count) events for calendar ID: \(calendarId)")
                 case .failure(let error):
-                    print("Error fetching events for calendar ID \(calendarId): \(error.localizedDescription)")
+                     ("Error fetching events for calendar ID \(calendarId): \(error.localizedDescription)")
                     if firstErrorEncountered == nil {
                         firstErrorEncountered = error
                     }
@@ -227,13 +227,13 @@ class GoogleCalendarManager: ObservableObject {
             self.fetchedEventsByCalendar = newFetchedEvents // Update with all fetched events
             if let error = firstErrorEncountered {
                 self.eventFetchError = error
-                print("Event sync completed with error(s). First error: \(error.localizedDescription)")
+                 ("Event sync completed with error(s). First error: \(error.localizedDescription)")
             } else {
                 self.eventFetchError = nil
-                print("Event sync completed successfully for all selected calendars.")
-                // For debugging, print a summary
+                 ("Event sync completed successfully for all selected calendars.")
+                // For debugging,   a summary
                 for (calId, events) in self.fetchedEventsByCalendar {
-                    print("Calendar: \(self.fetchedCalendars.first(where: {$0.identifier == calId})?.summary ?? calId), Events: \(events.count)")
+                     ("Calendar: \(self.fetchedCalendars.first(where: {$0.identifier == calId})?.summary ?? calId), Events: \(events.count)")
                 }
             }
             // Send notification to EventViewModel to process the fetched events

@@ -1,5 +1,5 @@
 import ActivityKit
-import SwiftUI // For Color and other UI related types if needed
+import SwiftUI 
 
 class LiveActivityManager {
     static let shared = LiveActivityManager()
@@ -7,12 +7,39 @@ class LiveActivityManager {
         // Observe activities if needed (e.g. for dismissal)
         Task {
             for await activityState in Activity<ClassActivityAttributes>.activityUpdates {
-                 print("Live Activity \(activityState.id) changed state: \(activityState.activityState)")
+                  ("Live Activity \(activityState.id) changed state: \(activityState.activityState)")
             }
         }
     }
 
     private var currentActivities: [String: Activity<ClassActivityAttributes>] = [:]
+    
+    
+    func getActiveActivities() -> [LiveActivityInfo] {
+        return Activity<ClassActivityAttributes>.activities.map { activity in
+            let state = activity.content.state
+            let components = state.eventColorComponents
+            let color: Color
+            if components.count == 4 {
+                color = Color(red: components[0], green: components[1], blue: components[2], opacity: components[3])
+            } else {
+                color = .gray // Fallback color
+            }
+            
+            let timeFormatter = DateFormatter()
+            timeFormatter.dateStyle = .none
+            timeFormatter.timeStyle = .short
+            
+            return LiveActivityInfo(
+                id: activity.id,
+                title: state.eventName,
+                subtitle: "Class in session",
+                timeRange: timeFormatter.string(from: state.endTime),
+                location: nil,
+                color: color
+            )
+        }
+    }
 
     // Helper to get today's specific date instance for a schedule item's time
     func getAbsoluteTime(for itemTime: Date, on targetDate: Date = Date()) -> Date {
@@ -31,13 +58,13 @@ class LiveActivityManager {
     @MainActor
     func startActivity(for item: ScheduleItem, themeManager: ThemeManager) {
         guard item.isLiveActivityEnabled else {
-            print("Live Activity is disabled for item \(item.title).")
+             ("Live Activity is disabled for item \(item.title).")
             return
         }
 
         // Ensure no duplicate activity for the same item
         guard currentActivities[item.id.uuidString] == nil else {
-            print("Activity for item \(item.title) already exists.")
+             ("Activity for item \(item.title) already exists.")
             // Optionally, update it here if needed
             // updateActivity(for: item, themeManager: themeManager)
             return
@@ -49,7 +76,7 @@ class LiveActivityManager {
         let itemEndTimeToday = getAbsoluteTime(for: item.endTime, on: now)
 
         guard now < itemEndTimeToday else {
-            print("Cannot start activity for \(item.title) as it has already ended for today.")
+             ("Cannot start activity for \(item.title) as it has already ended for today.")
             return
         }
 
@@ -68,24 +95,24 @@ class LiveActivityManager {
                 pushType: nil // No remote push updates for now
             )
             currentActivities[item.id.uuidString] = activity
-            print("Live Activity started for \(item.title) with ID: \(activity.id)")
+             ("Live Activity started for \(item.title) with ID: \(activity.id)")
             
             // Observe state changes for this specific activity
             Task {
                 for await stateUpdate in activity.contentUpdates {
-                    print("Activity \(activity.id) for \(stateUpdate.state.eventName) updated its content.")
+                     ("Activity \(activity.id) for \(stateUpdate.state.eventName) updated its content.")
                 }
             }
 
         } catch {
-            print("Error requesting Live Activity for \(item.title): \(error.localizedDescription)")
+             ("Error requesting Live Activity for \(item.title): \(error.localizedDescription)")
         }
     }
 
     @MainActor
     func updateActivity(for item: ScheduleItem, themeManager: ThemeManager) {
         guard let activity = currentActivities[item.id.uuidString] else {
-            print("No activity found to update for item \(item.title).")
+             ("No activity found to update for item \(item.title).")
             return
         }
         
@@ -100,20 +127,20 @@ class LiveActivityManager {
         
         Task {
             await activity.update(using: updatedState, alertConfiguration: nil)
-            print("Live Activity updated for \(item.title)")
+             ("Live Activity updated for \(item.title)")
         }
     }
 
     @MainActor
     func endActivity(for itemID: String) {
         guard let activity = currentActivities[itemID] else {
-            print("No activity found to end for item ID \(itemID).")
+             ("No activity found to end for item ID \(itemID).")
             return
         }
         Task {
             await activity.end(nil, dismissalPolicy: .default) // Dismiss immediately or after a short period
             currentActivities.removeValue(forKey: itemID)
-            print("Live Activity ended for item ID \(itemID)")
+             ("Live Activity ended for item ID \(itemID)")
         }
     }
     
@@ -122,7 +149,7 @@ class LiveActivityManager {
         for (id, activity) in currentActivities {
             Task {
                 await activity.end(nil, dismissalPolicy: .immediate)
-                print("Ended activity: \(id)")
+                 ("Ended activity: \(id)")
             }
         }
         currentActivities.removeAll()
@@ -143,7 +170,7 @@ class LiveActivityManager {
             
             let itemEndTimeToday = getAbsoluteTime(for: item.endTime, on: now)
             if now >= itemEndTimeToday {
-                print("Cleaning up ended activity for \(item.title)")
+                 ("Cleaning up ended activity for \(item.title)")
                 Task { await activity.end(nil, dismissalPolicy: .default) }
                 currentActivities.removeValue(forKey: id)
             } else if activity.activityState == .ended || activity.activityState == .dismissed {

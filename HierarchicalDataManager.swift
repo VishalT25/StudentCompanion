@@ -343,7 +343,7 @@ class HierarchicalDataManager: ObservableObject {
     
     private func syncWithSupabase() async {
         guard supabaseService.isAuthenticated else {
-            print("🔄 Not authenticated, skipping sync")
+             ("🔄 Not authenticated, skipping sync")
             return
         }
         
@@ -365,13 +365,13 @@ class HierarchicalDataManager: ObservableObject {
             
             await MainActor.run {
                 lastSyncTime = Date()
-                print("🔄 Successfully synced all data to Supabase")
+                 ("🔄 Successfully synced all data to Supabase")
             }
         } catch {
             await MainActor.run {
                 syncError = "Sync failed: \(error.localizedDescription)"
             }
-            print("🔄 Sync failed: \(error)")
+             ("🔄 Sync failed: \(error)")
         }
         
         await MainActor.run {
@@ -504,7 +504,7 @@ class HierarchicalDataManager: ObservableObject {
     
     func performFullSync() async {
         guard supabaseService.isAuthenticated else {
-            print("🔄 Not authenticated, skipping full sync")
+             ("🔄 Not authenticated, skipping full sync")
             return
         }
         
@@ -538,13 +538,13 @@ class HierarchicalDataManager: ObservableObject {
                 saveToLocal()
                 
                 lastSyncTime = Date()
-                print("🔄 Successfully loaded data from Supabase")
+                 ("🔄 Successfully loaded data from Supabase")
             }
         } catch {
             await MainActor.run {
                 syncError = "Load failed: \(error.localizedDescription)"
             }
-            print("🔄 Load from Supabase failed: \(error)")
+             ("🔄 Load from Supabase failed: \(error)")
         }
         
         await MainActor.run {

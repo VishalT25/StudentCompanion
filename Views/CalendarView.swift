@@ -22,7 +22,6 @@ struct CalendarView: View {
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color(.systemBackground))
                 .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
-                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 16)
         )
     }
     
@@ -35,7 +34,6 @@ struct CalendarView: View {
                     .background(
                         Circle()
                             .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
-                            .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
                     )
             }
             
@@ -54,7 +52,6 @@ struct CalendarView: View {
                     .background(
                         Circle()
                             .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
-                            .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
                     )
             }
         }
@@ -128,7 +125,6 @@ struct CalendarView: View {
                         isToday ? themeManager.currentTheme.primaryColor.opacity(0.1) :
                         Color.clear
                     )
-                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
             )
         }
         .buttonStyle(.plain)
@@ -148,7 +144,6 @@ struct CalendarView: View {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
-                    .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 8)
             )
             .foregroundColor(themeManager.currentTheme.primaryColor)
             
@@ -162,7 +157,6 @@ struct CalendarView: View {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(themeManager.currentTheme.primaryColor)
-                    .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 8)
             )
             .foregroundColor(.white)
         }

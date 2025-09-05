@@ -37,13 +37,13 @@ class SecureKeychainService {
     func storeToken(_ token: String, forKey key: String) -> Bool {
         // Input validation
         guard !token.isEmpty, !key.isEmpty else {
-            print("🔒 SecurityError: Empty token or key provided")
+             ("🔒 SecurityError: Empty token or key provided")
             return false
         }
         
         // Convert to data
         guard let tokenData = token.data(using: .utf8) else {
-            print("🔒 SecurityError: Failed to convert token to data")
+             ("🔒 SecurityError: Failed to convert token to data")
             return false
         }
         
@@ -59,10 +59,10 @@ class SecureKeychainService {
         let status = SecItemAdd(query as CFDictionary, nil)
         
         if status == errSecSuccess {
-            print("🔒 Token securely stored for key: \(key)")
+             ("🔒 Token securely stored for key: \(key)")
             return true
         } else {
-            print("🔒 SecurityError: Failed to store token. Status: \(status)")
+             ("🔒 SecurityError: Failed to store token. Status: \(status)")
             return false
         }
     }
@@ -73,7 +73,7 @@ class SecureKeychainService {
     func retrieveToken(forKey key: String) -> String? {
         // Input validation
         guard !key.isEmpty else {
-            print("🔒 SecurityError: Empty key provided")
+             ("🔒 SecurityError: Empty key provided")
             return nil
         }
         
@@ -92,13 +92,13 @@ class SecureKeychainService {
                let token = String(data: data, encoding: .utf8) {
                 return token
             } else {
-                print("🔒 SecurityError: Failed to decode retrieved token")
+                 ("🔒 SecurityError: Failed to decode retrieved token")
                 return nil
             }
         } else if status == errSecItemNotFound {
             return nil // Token doesn't exist
         } else {
-            print("🔒 SecurityError: Failed to retrieve token. Status: \(status)")
+             ("🔒 SecurityError: Failed to retrieve token. Status: \(status)")
             return nil
         }
     }
@@ -152,7 +152,7 @@ class SecureKeychainService {
                 return Date().timeIntervalSince1970 >= exp
             }
         } catch {
-            print("🔒 SecurityError: Failed to decode JWT payload")
+             ("🔒 SecurityError: Failed to decode JWT payload")
         }
         
         return true // Assume expired if we can't decode

@@ -1,11 +1,51 @@
 import SwiftUI
 
-struct AddCourseView: View {
+struct EnhancedAddCourseView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var themeManager: ThemeManager
     @EnvironmentObject var scheduleManager: ScheduleManager
-    @Binding var courses: [Course]
-
+    @ObservedObject var courseManager: CourseOperationsManager
+    
+    // Add optional existing course parameter for editing
+    let existingCourse: Course?
+    
+    // Initialize with existing course if editing
+    init(courseManager: CourseOperationsManager, existingCourse: Course? = nil) {
+        self.courseManager = courseManager
+        self.existingCourse = existingCourse
+        
+        // Pre-populate fields if editing
+        if let course = existingCourse {
+            _courseName = State(initialValue: course.name)
+            _courseCode = State(initialValue: course.courseCode)
+            _section = State(initialValue: course.section)
+            _instructor = State(initialValue: course.instructor)
+            _location = State(initialValue: course.location)
+            _creditHours = State(initialValue: course.creditHours)
+            _selectedIconName = State(initialValue: course.iconName)
+            _selectedColor = State(initialValue: course.color)
+            _startTime = State(initialValue: course.startTime ?? Date())
+            _endTime = State(initialValue: course.endTime ?? Date().addingTimeInterval(3600))
+            _selectedDays = State(initialValue: Set(course.daysOfWeek))
+            _reminderTime = State(initialValue: course.reminderTime)
+            _isLiveActivityEnabled = State(initialValue: course.isLiveActivityEnabled)
+        } else {
+            _courseName = State(initialValue: "")
+            _courseCode = State(initialValue: "")
+            _section = State(initialValue: "")
+            _instructor = State(initialValue: "")
+            _location = State(initialValue: "")
+            _creditHours = State(initialValue: 3.0)
+            _selectedIconName = State(initialValue: "book.closed.fill")
+            _selectedColor = State(initialValue: .blue)
+            _startTime = State(initialValue: Date())
+            _endTime = State(initialValue: Date().addingTimeInterval(3600))
+            _selectedDays = State(initialValue: [])
+            _reminderTime = State(initialValue: .fifteenMinutes)
+            _isLiveActivityEnabled = State(initialValue: true)
+        }
+    }
+    
     @State private var courseName: String = ""
     @State private var courseCode: String = ""
     @State private var section: String = ""
@@ -23,19 +63,31 @@ struct AddCourseView: View {
     @State private var isLiveActivityEnabled = true
     
     @State private var currentStep = 1
+    @State private var isSaving = false
     private let totalSteps = 3
 
     private var canProceed: Bool {
         switch currentStep {
-        case 1: return !courseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case 2: return !selectedDays.isEmpty
-        case 3: return true
-        default: return false
+        case 1: 
+            let hasName = !courseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+             ("Step 1 - Course name: '\(courseName)', hasName: \(hasName)")
+            return hasName
+        case 2: 
+            let hasDays = !selectedDays.isEmpty
+             ("Step 2 - Selected days: \(selectedDays), hasDays: \(hasDays)")
+            return hasDays
+        case 3: 
+             ("Step 3 - Always can proceed")
+            return true
+        default: 
+            return false
         }
     }
     
     private var canSave: Bool {
-        return canProceed && currentStep == totalSteps
+        let result = canProceed && currentStep == totalSteps && !isSaving
+         ("canSave: canProceed=\(canProceed), currentStep=\(currentStep), totalSteps=\(totalSteps), isSaving=\(isSaving), result=\(result)")
+        return result
     }
     
     let sfSymbolNames: [String] = [
@@ -76,15 +128,45 @@ struct AddCourseView: View {
                 // Navigation Buttons
                 navigationButtons
             }
-            .navigationTitle("Add Course")
+            .navigationTitle(existingCourse != nil ? "Edit Course" : "Add Course")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .disabled(isSaving)
                 }
             }
+            .overlay {
+                if isSaving {
+                    savingOverlay
+                }
+            }
+        }
+    }
+    
+    // MARK: - Saving Overlay
+    private var savingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.3)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 16) {
+                ProgressView()
+                    .scaleEffect(1.2)
+                    .progressViewStyle(CircularProgressViewStyle(tint: themeManager.currentTheme.primaryColor))
+                
+                Text("Creating Course...")
+                    .font(.forma(.subheadline, weight: .semibold))
+                    .foregroundColor(.primary)
+            }
+            .padding(32)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(.regularMaterial)
+                    .shadow(radius: 20)
+            )
         }
     }
     
@@ -108,7 +190,7 @@ struct AddCourseView: View {
             }
             
             Text("Step \(currentStep) of \(totalSteps)")
-                .font(.subheadline.weight(.medium))
+                .font(.forma(.subheadline, weight: .medium))
                 .foregroundColor(.secondary)
         }
         .padding(.horizontal, 24)
@@ -121,11 +203,11 @@ struct AddCourseView: View {
             VStack(spacing: 24) {
                 VStack(spacing: 8) {
                     Text("Course Information")
-                        .font(.title2.bold())
+                        .font(.forma(.title2, weight: .bold))
                         .foregroundColor(.primary)
                     
-                    Text("Let's start with the basic course details")
-                        .font(.subheadline)
+                    Text(existingCourse != nil ? "Edit course information" : "Let's start with the basic course details")
+                        .font(.forma(.subheadline))
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -135,7 +217,7 @@ struct AddCourseView: View {
                     // Course Name
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Course Name *")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         TextField("e.g., Introduction to Computer Science", text: $courseName)
@@ -146,7 +228,7 @@ struct AddCourseView: View {
                         // Course Code
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Course Code")
-                                .font(.subheadline.weight(.semibold))
+                                .font(.forma(.subheadline, weight: .semibold))
                                 .foregroundColor(.primary)
                             
                             TextField("e.g., CS 101", text: $courseCode)
@@ -156,7 +238,7 @@ struct AddCourseView: View {
                         // Section
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Section")
-                                .font(.subheadline.weight(.semibold))
+                                .font(.forma(.subheadline, weight: .semibold))
                                 .foregroundColor(.primary)
                             
                             TextField("e.g., A", text: $section)
@@ -167,7 +249,7 @@ struct AddCourseView: View {
                     // Instructor
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Instructor")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         TextField("e.g., Dr. Smith", text: $instructor)
@@ -177,7 +259,7 @@ struct AddCourseView: View {
                     // Credit Hours
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Credit Hours")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         HStack {
@@ -187,7 +269,7 @@ struct AddCourseView: View {
                                 step: 0.5
                             ) {
                                 Text("\(String(format: creditHours.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", creditHours)) credits")
-                                    .font(.subheadline.weight(.medium))
+                                    .font(.forma(.subheadline, weight: .medium))
                                     .foregroundColor(.primary)
                             }
                         }
@@ -202,7 +284,7 @@ struct AddCourseView: View {
                     // Icon Selection
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Course Icon")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
@@ -227,7 +309,7 @@ struct AddCourseView: View {
                     // Color Selection
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Course Color")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
@@ -261,11 +343,11 @@ struct AddCourseView: View {
             VStack(spacing: 24) {
                 VStack(spacing: 8) {
                     Text("Schedule Details")
-                        .font(.title2.bold())
+                        .font(.forma(.title2, weight: .bold))
                         .foregroundColor(.primary)
                     
-                    Text("When does this course meet?")
-                        .font(.subheadline)
+                    Text(existingCourse != nil ? "Update schedule details" : "When does this course meet?")
+                        .font(.forma(.subheadline))
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -275,7 +357,7 @@ struct AddCourseView: View {
                     // Days of Week
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Days of the Week *")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 12) {
@@ -298,14 +380,14 @@ struct AddCourseView: View {
                     // Time Selection
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Class Time")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         VStack(spacing: 16) {
                             HStack(spacing: 16) {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Start Time")
-                                        .font(.caption.weight(.medium))
+                                        .font(.forma(.caption, weight: .medium))
                                         .foregroundColor(.secondary)
                                     
                                     DatePicker(
@@ -322,7 +404,7 @@ struct AddCourseView: View {
                                 
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("End Time")
-                                        .font(.caption.weight(.medium))
+                                        .font(.forma(.caption, weight: .medium))
                                         .foregroundColor(.secondary)
                                     
                                     DatePicker(
@@ -339,7 +421,7 @@ struct AddCourseView: View {
                             if duration > 0 {
                                 HStack {
                                     Text("Duration: \(formatDuration(duration))")
-                                        .font(.subheadline.weight(.medium))
+                                        .font(.forma(.subheadline, weight: .medium))
                                         .foregroundColor(selectedColor)
                                     
                                     Spacer()
@@ -356,7 +438,7 @@ struct AddCourseView: View {
                     // Location
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Location")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         TextField("e.g., Room 101, Science Building", text: $location)
@@ -376,11 +458,11 @@ struct AddCourseView: View {
             VStack(spacing: 24) {
                 VStack(spacing: 8) {
                     Text("Final Settings")
-                        .font(.title2.bold())
+                        .font(.forma(.title2, weight: .bold))
                         .foregroundColor(.primary)
                     
-                    Text("Configure reminders and notifications")
-                        .font(.subheadline)
+                    Text(existingCourse != nil ? "Update settings and preferences" : "Configure reminders and notifications")
+                        .font(.forma(.subheadline))
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -390,7 +472,7 @@ struct AddCourseView: View {
                     // Reminder Settings
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Reminders")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         Picker("Reminder Time", selection: $reminderTime) {
@@ -405,16 +487,16 @@ struct AddCourseView: View {
                     // Live Activity Toggle
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Live Activities")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         Toggle(isOn: $isLiveActivityEnabled) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Show on Lock Screen")
-                                    .font(.subheadline)
+                                    .font(.forma(.subheadline))
                                 
                                 Text("Display class progress on your lock screen during class time")
-                                    .font(.caption)
+                                    .font(.forma(.caption))
                                     .foregroundColor(.secondary)
                             }
                         }
@@ -429,7 +511,7 @@ struct AddCourseView: View {
                     // Course Summary
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Course Summary")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
                             .foregroundColor(.primary)
                         
                         VStack(spacing: 12) {
@@ -470,7 +552,7 @@ struct AddCourseView: View {
                         currentStep -= 1
                     }
                 }
-                .font(.subheadline.weight(.semibold))
+                .font(.forma(.subheadline, weight: .semibold))
                 .foregroundColor(themeManager.currentTheme.primaryColor)
                 .frame(maxWidth: .infinity)
                 .frame(height: 50)
@@ -478,75 +560,95 @@ struct AddCourseView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(themeManager.currentTheme.primaryColor, lineWidth: 1.5)
                 )
+                .disabled(isSaving)
             }
             
-            Button(currentStep < totalSteps ? "Next" : "Create Course") {
+            Button(currentStep < totalSteps ? "Next" : (existingCourse != nil ? "Save Changes" : "Create Course")) {
+                 ("Button tapped - currentStep: \(currentStep), totalSteps: \(totalSteps)")
                 if currentStep < totalSteps {
+                     ("Moving to next step")
                     withAnimation(.easeInOut) {
                         currentStep += 1
                     }
                 } else {
-                    saveCourse()
-                    dismiss()
+                     ("Saving course")
+                    Task {
+                        await saveCourse()
+                    }
                 }
             }
-            .font(.subheadline.weight(.semibold))
+            .font(.forma(.subheadline, weight: .semibold))
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)
             .frame(height: 50)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(canProceed ? themeManager.currentTheme.primaryColor : Color(.systemGray3))
+                    .fill(
+                        (currentStep < totalSteps ? canProceed : canSave) 
+                            ? themeManager.currentTheme.primaryColor 
+                            : Color(.systemGray3)
+                    )
             )
-            .disabled(!canProceed)
+            .disabled(currentStep < totalSteps ? !canProceed : !canSave)
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 32)
     }
     
     // MARK: - Helper Methods
-    private func saveCourse() {
+    private func saveCourse() async {
         guard !courseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard let activeScheduleId = scheduleManager.activeScheduleID else { return }
         
-        // Ensure there's an active schedule - create one if needed
-        var activeScheduleId: UUID
-        if let existingScheduleId = scheduleManager.activeScheduleID {
-            activeScheduleId = existingScheduleId
+        isSaving = true
+        
+        if let existingCourse = existingCourse {
+            // Edit existing course
+            existingCourse.name = courseName.trimmingCharacters(in: .whitespacesAndNewlines)
+            existingCourse.courseCode = courseCode.trimmingCharacters(in: .whitespacesAndNewlines)
+            existingCourse.section = section.trimmingCharacters(in: .whitespacesAndNewlines)
+            existingCourse.instructor = instructor.trimmingCharacters(in: .whitespacesAndNewlines)
+            existingCourse.location = location.trimmingCharacters(in: .whitespacesAndNewlines)
+            existingCourse.creditHours = creditHours
+            existingCourse.iconName = selectedIconName
+            existingCourse.colorHex = selectedColor.toHex() ?? Color.blue.toHex()!
+            existingCourse.startTime = startTime
+            existingCourse.endTime = endTime
+            existingCourse.daysOfWeek = Array(selectedDays)
+            existingCourse.reminderTime = reminderTime
+            existingCourse.isLiveActivityEnabled = isLiveActivityEnabled
+            
+            // Update the course through the manager
+            courseManager.updateCourse(existingCourse)
         } else {
-            // Create a default schedule if none exists
-            let defaultSchedule = ScheduleCollection(
-                name: "My Schedule", 
-                semester: "Fall 2025"
+            // Create new course
+            let newCourse = Course(
+                scheduleId: activeScheduleId,
+                name: courseName.trimmingCharacters(in: .whitespacesAndNewlines),
+                iconName: selectedIconName,
+                colorHex: selectedColor.toHex() ?? Color.blue.toHex()!,
+                startTime: startTime,
+                endTime: endTime,
+                daysOfWeek: Array(selectedDays),
+                location: location.trimmingCharacters(in: .whitespacesAndNewlines),
+                instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+                creditHours: creditHours,
+                courseCode: courseCode.trimmingCharacters(in: .whitespacesAndNewlines),
+                section: section.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             
-            scheduleManager.addSchedule(defaultSchedule)
-            scheduleManager.setActiveSchedule(defaultSchedule.id)
-            activeScheduleId = defaultSchedule.id
-             ("🔧 Created default schedule for course sync: \(defaultSchedule.id)")
+            newCourse.reminderTime = reminderTime
+            newCourse.isLiveActivityEnabled = isLiveActivityEnabled
+            
+            // Use the CourseOperationsManager to properly save the course
+            courseManager.addCourse(newCourse)
         }
         
-        let newCourse = Course(
-            scheduleId: activeScheduleId,
-            name: courseName.trimmingCharacters(in: .whitespacesAndNewlines),
-            iconName: selectedIconName,
-            colorHex: selectedColor.toHex() ?? Color.blue.toHex()!,
-            startTime: startTime,
-            endTime: endTime,
-            daysOfWeek: Array(selectedDays),
-            location: location.trimmingCharacters(in: .whitespacesAndNewlines),
-            instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
-            creditHours: creditHours,
-            courseCode: courseCode.trimmingCharacters(in: .whitespacesAndNewlines),
-            section: section.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
+        // Small delay to show the saving state
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
         
-        newCourse.reminderTime = reminderTime
-        newCourse.isLiveActivityEnabled = isLiveActivityEnabled
-        
-        // Add to local array AND trigger proper sync
-        courses.append(newCourse)
-        
-         ("✅ Course created successfully: \(newCourse.name) with scheduleId: \(activeScheduleId)")
+        isSaving = false
+        dismiss()
     }
     
     private func formatDuration(_ duration: TimeInterval) -> String {
@@ -561,71 +663,8 @@ struct AddCourseView: View {
     }
 }
 
-// MARK: - Supporting Views
-struct ModernTextFieldStyle: TextFieldStyle {
-    func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration
-            .font(.subheadline)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemGray6))
-            )
-    }
-}
-
-struct CourseCreationDayToggle: View {
-    let day: DayOfWeek
-    let isSelected: Bool
-    let color: Color
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Text(day.short.prefix(1).uppercased())
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(isSelected ? .white : color)
-                
-                Text(day.short)
-                    .font(.caption2)
-                    .foregroundColor(isSelected ? .white : color.opacity(0.7))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected ? color : color.opacity(0.15))
-            )
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
-    }
-}
-
-struct SummaryRow: View {
-    let title: String
-    let value: String
-    
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline.weight(.medium))
-                .foregroundColor(.secondary)
-            
-            Spacer()
-            
-            Text(value)
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(.primary)
-                .multilineTextAlignment(.trailing)
-        }
-    }
-}
-
 #Preview {
-    AddCourseView(courses: .constant([]))
+    EnhancedAddCourseView(courseManager: CourseOperationsManager())
         .environmentObject(ThemeManager())
         .environmentObject(ScheduleManager())
 }

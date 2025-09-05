@@ -190,7 +190,7 @@ struct GoogleCalendarSettingsView: View {
                         if let presentingViewController = getRootViewController() {
                             calendarSyncManager.signInWithGoogle(presentingViewController: presentingViewController)
                         } else {
-                            print("Error: Could not get presenting view controller for Google Sign-In.")
+                             ("Error: Could not get presenting view controller for Google Sign-In.")
                         }
                     } label: {
                         HStack(spacing: 12) {

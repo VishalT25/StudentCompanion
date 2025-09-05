@@ -3,8 +3,8 @@ import SwiftUI
 struct TodayScheduleView: View {
     @EnvironmentObject var viewModel: EventViewModel
     @EnvironmentObject var themeManager: ThemeManager
-    @EnvironmentObject var academicCalendarManager: AcademicCalendarManager // NEW
-    @StateObject private var scheduleManager = ScheduleManager()
+    @EnvironmentObject var academicCalendarManager: AcademicCalendarManager
+    @EnvironmentObject private var scheduleManager: ScheduleManager
     @State private var showingAddSchedule = false
     @State private var selectedSchedule: ScheduleItem?
     
@@ -15,25 +15,22 @@ struct TodayScheduleView: View {
     }()
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("Today's Schedule")
-                    .font(.forma(.title3, weight: .bold))
+                    .font(.forma(.title2, weight: .bold))
                     .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
                 
                 Spacer()
                 
                 NavigationLink(value: AppRoute.schedule) {
                     Image(systemName: "arrow.right.circle.fill")
                         .foregroundColor(.white)
-                        .font(.forma(.title2))
-                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                        .font(.forma(.title3))
+                        .frame(width: 32, height: 32)
                         .background(
                             Circle()
-                                .fill(.white.opacity(0.15))
-                                .frame(width: 36, height: 36)
-                                .shadow(color: themeManager.currentTheme.darkModeAccentHue.opacity(0.3), radius: 4, x: 0, y: 2)
+                                .fill(.white.opacity(0.2))
                         )
                 }
             }
@@ -42,15 +39,23 @@ struct TodayScheduleView: View {
             let events = viewModel.todaysEvents()
             
             if schedule.isEmpty && events.isEmpty {
-                VStack(spacing: 6) {
+                VStack(spacing: 12) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 24))
+                        .foregroundColor(.white.opacity(0.7))
+                    
                     Text("Nothing scheduled for today")
-                        .font(.forma(.subheadline))
+                        .font(.forma(.body))
                         .foregroundColor(.white.opacity(0.8))
-                        .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                    
+                    Text("Enjoy your free day!")
+                        .font(.forma(.caption))
+                        .foregroundColor(.white.opacity(0.6))
                 }
-                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
             } else {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 12) {
                     if !schedule.isEmpty {
                         ForEach(schedule) { item in
                             CompactScheduleItemView(item: item, scheduleID: activeScheduleID())
@@ -62,14 +67,9 @@ struct TodayScheduleView: View {
                     if !events.isEmpty {
                         if !schedule.isEmpty {
                             Divider()
-                                .background(.white.opacity(0.4))
-                                .padding(.vertical, 4)
+                                .background(.white.opacity(0.3))
+                                .padding(.vertical, 8)
                         }
-                        
-                        Text("Today's Events")
-                            .font(.forma(.title3, weight: .bold))
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
                         
                         ForEach(events) { event in
                             CompactEventItemView(event: event)
@@ -79,32 +79,32 @@ struct TodayScheduleView: View {
                 }
             }
         }
-        .padding(20)
+        .padding(24)
         .background(
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    themeManager.currentTheme.primaryColor.opacity(0.95),
-                    themeManager.currentTheme.primaryColor
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            RoundedRectangle(cornerRadius: 24)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            themeManager.currentTheme.primaryColor,
+                            themeManager.currentTheme.primaryColor.opacity(0.8)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        // ADAPTIVE DARK MODE EFFECTS WITH INTENSITY CONTROL
-        .adaptiveWidgetDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 16)
+        .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.3), radius: 20, x: 0, y: 10)
+        .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
     }
     
-    // Helper method to get today's schedule items from ScheduleManager
     private func todaysScheduleItems() -> [ScheduleItem] {
         guard let activeSchedule = scheduleManager.activeSchedule else {
             return []
         }
-        let academicCalendar = scheduleManager.getAcademicCalendar(for: activeSchedule, from: academicCalendarManager) // NEW
-        return activeSchedule.getScheduleItems(for: Date(), usingCalendar: academicCalendar) // UPDATED
+        let academicCalendar = scheduleManager.getAcademicCalendar(for: activeSchedule, from: academicCalendarManager)
+        return activeSchedule.getScheduleItems(for: Date(), usingCalendar: academicCalendar)
     }
     
-    // Helper method to get active schedule ID
     private func activeScheduleID() -> UUID? {
         return scheduleManager.activeScheduleID
     }
@@ -146,32 +146,57 @@ struct CompactScheduleItemView: View {
     }
     
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(timeFormatter.string(from: item.startTime))
-                .font(.forma(.callout, weight: .medium))
-                .foregroundColor(.white)
-                .shadow(color: .black.opacity(0.4), radius: 1, x: 0, y: 1)
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(timeFormatter.string(from: item.startTime))
+                    .font(.forma(.subheadline, weight: .semibold))
+                    .foregroundColor(.white)
+                
+                if let endTime = timeFormatter.string(from: item.endTime) != timeFormatter.string(from: item.startTime) ? timeFormatter.string(from: item.endTime) : nil {
+                    Text(endTime)
+                        .font(.forma(.caption))
+                        .foregroundColor(.white.opacity(0.7))
+                }
+            }
+            .frame(width: 60, alignment: .leading)
             
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Text(item.title)
-                        .font(.forma(.callout, weight: .semibold))
+                        .font(.forma(.body, weight: .semibold))
                         .foregroundColor(.white)
-                        .shadow(color: .black.opacity(0.4), radius: 1, x: 0, y: 1)
+                        .lineLimit(1)
                     
                     if item.reminderTime != .none {
                         Image(systemName: "bell.fill")
+                            .font(.forma(.caption2))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                }
+                
+                if !item.location.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "location")
+                            .font(.forma(.caption2))
+                            .foregroundColor(.white.opacity(0.6))
+                        
+                        Text(item.location)
                             .font(.forma(.caption))
-                            .foregroundColor(.white.opacity(0.8))
-                            .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                            .foregroundColor(.white.opacity(0.7))
+                            .lineLimit(1)
                     }
                 }
                 
                 if item.isSkipped(onDate: Date()) {
-                    Text("SKIPPED TODAY")
-                        .font(.forma(.caption2, weight: .bold))
-                        .foregroundColor(.orange)
-                        .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
+                    HStack(spacing: 4) {
+                        Image(systemName: "pause.circle.fill")
+                            .font(.forma(.caption2))
+                            .foregroundColor(.orange)
+                        
+                        Text("SKIPPED")
+                            .font(.forma(.caption2, weight: .bold))
+                            .foregroundColor(.orange)
+                    }
                 }
             }
             
@@ -179,22 +204,18 @@ struct CompactScheduleItemView: View {
             
             if let displayText = scheduleDisplayText {
                 Text(displayText)
-                    .font(.forma(.caption2, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
+                    .font(.forma(.caption, weight: .medium))
+                    .foregroundColor(.white.opacity(0.8))
+                    .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(.white.opacity(0.2))
-                    .cornerRadius(8)
-                    .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
+                    .background(
+                        Capsule()
+                            .fill(.white.opacity(0.2))
+                    )
             }
-            
-            RoundedRectangle(cornerRadius: 3)
-                .fill(item.isSkipped(onDate: Date()) ? .white.opacity(0.4) : item.color)
-                .frame(width: 4, height: 24)
-                .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
         }
-        .padding(.vertical, 6)
-        .opacity(item.isSkipped(onDate: Date()) ? 0.7 : 1.0)
+        .padding(.vertical, 8)
+        .opacity(item.isSkipped(onDate: Date()) ? 0.6 : 1.0)
         .contextMenu {
             Button {
                 if let scheduleID = scheduleID {
@@ -219,19 +240,20 @@ struct CompactEventItemView: View {
     }()
     
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 16) {
             Text(timeFormatter.string(from: event.date))
-                .font(.forma(.callout))
+                .font(.forma(.subheadline, weight: .medium))
                 .foregroundColor(.white.opacity(0.9))
+                .frame(width: 60, alignment: .leading)
             
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Text(event.title)
-                    .font(.forma(.callout))
+                    .font(.forma(.body))
                     .foregroundColor(.white)
                 
                 if event.reminderTime != .none {
                     Image(systemName: "bell.fill")
-                        .font(.forma(.caption))
+                        .font(.forma(.caption2))
                         .foregroundColor(.white.opacity(0.7))
                 }
             }
@@ -241,13 +263,13 @@ struct CompactEventItemView: View {
             Button(action: {
                 viewModel.markEventCompleted(event)
             }) {
-                Image(systemName: "checkmark.circle")
-                    .font(.forma(.title2))
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.forma(.title3))
                     .foregroundColor(.white.opacity(0.8))
             }
             .buttonStyle(.plain)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
     }
 }
 

@@ -102,7 +102,7 @@ class FontManager {
             return Font.custom(fontName, size: size)
         } else {
             // Fallback to system font if custom font is not available
-            print("⚠️ Font '\(fontName)' not found, using system font")
+             ("⚠️ Font '\(fontName)' not found, using system font")
             return Font.system(size: size, weight: weight)
         }
     }
@@ -167,18 +167,18 @@ class FontManager {
     // MARK: - List Available Fonts (for debugging)
     
     static func listAvailableFonts() {
-        print("📝 Available Font Families:")
+         ("📝 Available Font Families:")
         for family in UIFont.familyNames.sorted() {
             let names = UIFont.fontNames(forFamilyName: family)
-            print("Family: \(family)")
+             ("Family: \(family)")
             for name in names {
-                print("  - \(name)")
+                 ("  - \(name)")
             }
         }
     }
     
     static func checkFormaFonts() {
-        print("🔍 Checking Forma DJR Font Availability:")
+         ("🔍 Checking Forma DJR Font Availability:")
         let formaFonts = [
             FontNames.textRegular,
             FontNames.textMedium,
@@ -192,7 +192,7 @@ class FontManager {
         
         for fontName in formaFonts {
             let isAvailable = UIFont(name: fontName, size: 16) != nil
-            print("  \(fontName): \(isAvailable ? "✅ Available" : "❌ Not Found")")
+             ("  \(fontName): \(isAvailable ? "✅ Available" : "❌ Not Found")")
         }
     }
 }

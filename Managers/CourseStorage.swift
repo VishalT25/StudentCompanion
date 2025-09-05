@@ -13,7 +13,7 @@ struct CourseStorage {
 
         debounceTimer?.invalidate()
         debounceTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in
-            print("🔔 Posting debounced courseDataDidChange notification.")
+             ("🔔 Posting debounced courseDataDidChange notification.")
         }
     }
 

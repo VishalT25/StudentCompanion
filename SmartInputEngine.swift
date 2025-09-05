@@ -239,15 +239,15 @@ public final class SmartInputEngine {
     
     private func loadModel(named modelName: String) -> MLModel? {
         guard let url = Bundle.main.url(forResource: modelName, withExtension: "mlmodelc") else {
-            print("❌ Error: Could not find \(modelName).mlmodelc in bundle.")
+             ("❌ Error: Could not find \(modelName).mlmodelc in bundle.")
             return nil
         }
         do {
             let model = try MLModel(contentsOf: url)
-            print("✅ Successfully loaded \(modelName).")
+             ("✅ Successfully loaded \(modelName).")
             return model
         } catch {
-            print("❌ Error loading model \(modelName): \(error)")
+             ("❌ Error loading model \(modelName): \(error)")
             return nil
         }
     }
@@ -261,7 +261,7 @@ public final class SmartInputEngine {
             let probability = prediction.featureValue(for: "labelProbability")?.dictionaryValue[label] as? Double ?? 0.0
             return (label, probability)
         } catch {
-            print("❌ Intent classification failed: \(error)"); return ("unknown", 0.0)
+             ("❌ Intent classification failed: \(error)"); return ("unknown", 0.0)
         }
     }
 
@@ -285,7 +285,7 @@ public final class SmartInputEngine {
             
             return entitiesFromBIO(tokensAndLabels: Array(zip(tokens, labels)), labelMapping: labelMapping)
         } catch {
-            print("❌ Entity extraction for intent '\(intent)' failed: \(error)"); return [:]
+             ("❌ Entity extraction for intent '\(intent)' failed: \(error)"); return [:]
         }
     }
 
@@ -376,7 +376,7 @@ public final class SmartInputEngine {
     private func scheduleLabelToKeyMap() -> [String: String] { ["EVENT": "EVENT", "REC_FREQ": "REC_FREQ", "DAY_OF_WEEK": "DAY_OF_WEEK", "TIME_START": "TIME_START", "REM_OFFSET": "REM_OFFSET", "CATEGORY": "CATEGORY", "REM_NEEDED": "REM_NEEDED", "TIME_END": "TIME_END", "INTERVAL": "INTERVAL"] }
 
     // MARK: - Diagnostics
-    public func debugBundleContents() { if let path = Bundle.main.resourcePath { do { let files = try FileManager.default.contentsOfDirectory(atPath: path); let ml = files.filter { $0.hasSuffix(".mlmodelc") }; print("🔎 Bundle ML files: \(ml.isEmpty ? "None found" : ml.joined(separator: ", "))") } catch { print("❌ Bundle read error: \(error)") } } }
+    public func debugBundleContents() { if let path = Bundle.main.resourcePath { do { let files = try FileManager.default.contentsOfDirectory(atPath: path); let ml = files.filter { $0.hasSuffix(".mlmodelc") };  ("🔎 Bundle ML files: \(ml.isEmpty ? "None found" : ml.joined(separator: ", "))") } catch {  ("❌ Bundle read error: \(error)") } } }
 }
 
 // MARK: - Default alias dictionaries

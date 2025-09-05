@@ -19,367 +19,315 @@ struct SettingsView: View {
     @State private var showingFeedbackAlert = false
     @State private var showingSyncStats = false
     @State private var syncStats: SyncStats?
+    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
-        NavigationView {
-            List {
-                // Account
-                Section(header: Text("Account").font(.forma(.footnote, weight: .medium))) {
-                    if supabaseService.isAuthenticated {
-                        Button {
-                            showingAccountManagement = true
-                        } label: {
-                            HStack(spacing: 12) {
-                                ZStack {
-                                    Circle()
-                                        .fill(subscriptionGradient)
-                                        .frame(width: 44, height: 44)
-                                }
-                                
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 8) {
-                                        Text(displayName)
-                                            .font(.forma(.body, weight: .semibold))
-                                        
-                                        // Subscription Badge
-                                        Text(subscriptionDisplayName)
-                                            .font(.forma(.caption, weight: .bold))
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 2)
-                                            .background(subscriptionColor.opacity(0.2))
-                                            .foregroundColor(subscriptionColor)
-                                            .clipShape(Capsule())
+        ZStack {
+            SpectacularBackground(themeManager: themeManager)
+            
+            VStack(spacing: 0) {
+                headerView
+                    .padding(.horizontal)
+                    .padding(.bottom, 12)
+                
+                List {
+                    // Account
+                    Section(header: Text("Account").font(.forma(.footnote, weight: .medium))) {
+                        if supabaseService.isAuthenticated {
+                            Button {
+                                showingAccountManagement = true
+                            } label: {
+                                HStack(spacing: 12) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(subscriptionGradient)
+                                            .frame(width: 44, height: 44)
                                     }
                                     
-                                    Text(supabaseService.currentUser?.email ?? "")
-                                        .font(.forma(.subheadline))
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                    
-                                    if let subscription = supabaseService.userSubscription,
-                                       subscription.isActive && subscription.subscriptionTier != .free {
-                                        if let endDate = subscription.subscriptionEndDate {
-                                            Text("Active until \(endDate.formatted(date: .abbreviated, time: .omitted))")
-                                                .font(.forma(.caption))
-                                                .foregroundColor(.secondary)
-                                        } else {
-                                            Text("Lifetime Access")
-                                                .font(.forma(.caption))
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack(spacing: 8) {
+                                            Text(displayName)
+                                                .font(.forma(.body, weight: .semibold))
+                                            
+                                            // Subscription Badge
+                                            Text(subscriptionDisplayName)
+                                                .font(.forma(.caption, weight: .bold))
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 2)
+                                                .background(subscriptionColor.opacity(0.2))
                                                 .foregroundColor(subscriptionColor)
+                                                .clipShape(Capsule())
+                                        }
+                                        
+                                        Text(supabaseService.currentUser?.email ?? "")
+                                            .font(.forma(.subheadline))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                        
+                                        if let subscription = supabaseService.userSubscription,
+                                           subscription.isActive && subscription.subscriptionTier != .free {
+                                            if let endDate = subscription.subscriptionEndDate {
+                                                Text("Active until \(endDate.formatted(date: .abbreviated, time: .omitted))")
+                                                    .font(.forma(.caption))
+                                                    .foregroundColor(.secondary)
+                                            } else {
+                                                Text("Lifetime Access")
+                                                    .font(.forma(.caption))
+                                                    .foregroundColor(subscriptionColor)
+                                            }
                                         }
                                     }
-                                }
-                                
-                                Spacer()
-                                
-                                Image(systemName: "chevron.right")
-                                    .font(.forma(.footnote, weight: .semibold))
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Button {
-                            showingAuthSheet = true
-                        } label: {
-                            HStack(spacing: 12) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(themeManager.currentTheme.primaryColor.opacity(0.15))
-                                        .frame(width: 32, height: 32)
-                                }
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Connect Your Account")
-                                        .font(.forma(.body, weight: .semibold))
-                                    Text("Sync your data across devices")
-                                        .font(.forma(.subheadline))
+                                    
+                                    Spacer()
+                                    
+                                    Image(systemName: "chevron.right")
+                                        .font(.forma(.footnote, weight: .semibold))
                                         .foregroundColor(.secondary)
                                 }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.forma(.footnote, weight: .semibold))
-                                    .foregroundColor(.secondary)
                             }
+                            .buttonStyle(.plain)
+                        } else {
+                            Button {
+                                showingAuthSheet = true
+                            } label: {
+                                HStack(spacing: 12) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(themeManager.currentTheme.primaryColor.opacity(0.15))
+                                            .frame(width: 32, height: 32)
+                                    }
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Connect Your Account")
+                                            .font(.forma(.body, weight: .semibold))
+                                        Text("Sync your data across devices")
+                                            .font(.forma(.subheadline))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.forma(.footnote, weight: .semibold))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
-                    }
-                }
-                
-                // NEW: Sync & Data Section
-                Section {
-                    // Real-time Sync Status
-                    HStack {
-                        Image(systemName: "cloud.bolt")
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
-                            .frame(width: 24, height: 24)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Real-time Sync")
-                                .font(.forma(.body))
-                            
-                            Text(realtimeSyncManager.syncStatus.displayName)
-                                .font(.forma(.caption))
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        SyncStatusIndicator()
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        // Tapping opens sync status details
                     }
                     
-                    // Manual Sync Button
-                    Button(action: {
-                        Task {
-                            await realtimeSyncManager.refreshAllData()
-                        }
-                    }) {
+                    // NEW: Sync & Data Section
+                    Section {
+                        // Real-time Sync Status
                         HStack {
-                            Image(systemName: "arrow.clockwise")
-                                .foregroundColor(themeManager.currentTheme.primaryColor)
-                                .frame(width: 24, height: 24)
-                            
-                            Text("Refresh All Data")
-                                .font(.forma(.body))
-                                .foregroundColor(.primary)
-                            
-                            Spacer()
-                            
-                            if realtimeSyncManager.syncStatus.isActive {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            }
-                        }
-                    }
-                    .disabled(realtimeSyncManager.syncStatus.isActive)
-                    
-                    if let lastSync = realtimeSyncManager.lastSyncTime {
-                        HStack {
-                            Image(systemName: "clock")
+                            Image(systemName: "cloud.bolt")
                                 .foregroundColor(themeManager.currentTheme.primaryColor)
                                 .frame(width: 24, height: 24)
                             
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Last Sync")
+                                Text("Real-time Sync")
                                     .font(.forma(.body))
                                 
-                                Text(lastSync.formatted(.relative(presentation: .numeric)))
+                                Text(realtimeSyncManager.syncStatus.displayName)
                                     .font(.forma(.caption))
                                     .foregroundColor(.secondary)
                             }
                             
                             Spacer()
+                            
+                            SyncStatusIndicator()
                         }
-                    }
-                } header: {
-                    Text("Sync & Data")
-                } footer: {
-                    Text("Real-time synchronization keeps your data updated across all devices. Pending operations: \(realtimeSyncManager.pendingSyncCount)")
-                }
-                
-                // Data Sync (only show when authenticated)
-                if supabaseService.isAuthenticated {
-                    Section(header: Text("Data Sync").font(.forma(.footnote, weight: .medium))) {
-                        // Sync Status
-                        HStack(spacing: 12) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(syncStatusColor.opacity(0.15))
-                                    .frame(width: 32, height: 32)
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Sync Status")
-                                    .font(.forma(.body, weight: .semibold))
-                                Text(syncStatusText)
-                                    .font(.forma(.subheadline))
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            if realtimeSyncManager.syncStatus.isActive {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            // Tapping opens sync status details
                         }
                         
                         // Manual Sync Button
-                        Button {
+                        Button(action: {
                             Task {
                                 await realtimeSyncManager.refreshAllData()
                             }
-                        } label: {
-                            SettingsRow(
-                                icon: "arrow.triangle.2.circlepath",
-                                iconColor: .blue,
-                                title: "Sync Now",
-                                subtitle: "Update data from cloud"
-                            )
-                        }
-                        .disabled(realtimeSyncManager.syncStatus.isActive)
-                        
-                        // Sync Statistics
-                        Button {
-                            showingSyncStats = true
-                            Task {
-                                syncStats = await supabaseService.getSyncStats()
-                            }
-                        } label: {
-                            SettingsRow(
-                                icon: "chart.bar.fill",
-                                iconColor: .green,
-                                title: "Sync Statistics",
-                                subtitle: "View cloud data summary"
-                            )
-                        }
-                    }
-                }
-                
-                // Appearance
-                Section(header: Text("Appearance").font(.forma(.footnote, weight: .medium))) {
-                    Button {
-                        showingThemeSelector = true
-                    } label: {
-                        SettingsRow(
-                            icon: "paintbrush.pointed", 
-                            iconColor: themeManager.currentTheme.primaryColor, 
-                            title: "Theme & Appearance", 
-                            subtitle: "\(themeManager.currentTheme.rawValue) • \(themeManager.appearanceMode.displayName)"
-                        )
-                    }
-                    
-                    Menu {
-                        ForEach(AppearanceMode.allCases) { mode in
-                            Button {
-                                themeManager.setAppearanceMode(mode)
-                            } label: {
-                                HStack {
-                                    Text(mode.displayName)
-                                    if themeManager.appearanceMode == mode {
-                                        Image(systemName: "checkmark")
-                                    }
+                        }) {
+                            HStack {
+                                Image(systemName: "arrow.clockwise")
+                                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                                    .frame(width: 24, height: 24)
+                            
+                                Text("Refresh All Data")
+                                    .font(.forma(.body))
+                                    .foregroundColor(.primary)
+                            
+                                Spacer()
+                            
+                                if realtimeSyncManager.syncStatus.isActive {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
                                 }
                             }
                         }
-                    } label: {
-                        SettingsRow(
-                            icon: "circle.righthalf.filled", 
-                            iconColor: .orange, 
-                            title: "Appearance Mode", 
-                            subtitle: themeManager.appearanceMode.displayName
-                        )
-                    }
-                }
-                
-                // Notifications
-                Section(header: Text("Notifications").font(.forma(.footnote, weight: .medium))) {
-                    Button {
-                        showingNotificationSettings = true
-                    } label: {
-                        SettingsRow(icon: "bell.badge", iconColor: .orange, title: "Notification Settings", subtitle: "Manage alerts and reminders")
-                    }
-                }
-                
-                // Calendar Integration
-                Section(header: Text("Calendar Integration").font(.forma(.footnote, weight: .medium))) {
-                    Button {
-                        showingGoogleCalendarSettings = true
-                    } label: {
-                        SettingsRow(icon: "globe", iconColor: .blue, title: "Google Calendar", subtitle: "Sync with Google services")
-                    }
-                    
-                    Button {
-                        showingAppleCalendarSettings = true
-                    } label: {
-                        SettingsRow(icon: "applelogo", iconColor: .primary, title: "Apple Calendar", subtitle: "Native iOS integration")
-                    }
-                    
-                    Button {
-                        showingAcademicCalendarManagement = true
-                    } label: {
-                        SettingsRow(icon: "graduationcap.fill", iconColor: .purple, title: "Academic Calendars", subtitle: "School schedule management")
-                    }
-                }
-                
-                // Support & Feedback
-                Section(header: Text("Support & Feedback").font(.forma(.footnote, weight: .medium))) {
-                    Button {
-                        if MFMailComposeViewController.canSendMail() {
-                            isShowingMailView = true
-                        } else {
-                            showingFeedbackAlert = true
+                        .disabled(realtimeSyncManager.syncStatus.isActive)
+                        
+                        if let lastSync = realtimeSyncManager.lastSyncTime {
+                            HStack {
+                                Image(systemName: "clock")
+                                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                                    .frame(width: 24, height: 24)
+                            
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Last Sync")
+                                        .font(.forma(.body))
+                                    
+                                    Text(lastSync.formatted(.relative(presentation: .numeric)))
+                                        .font(.forma(.caption))
+                                        .foregroundColor(.secondary)
+                                }
+                            
+                                Spacer()
+                            }
                         }
-                    } label: {
-                        SettingsRow(icon: "envelope.fill", iconColor: .green, title: "Send Feedback", subtitle: "Help us improve the app")
+                    } header: {
+                        Text("Sync & Data")
+                    } footer: {
+                        Text("Real-time synchronization keeps your data updated across all devices. Pending operations: \(realtimeSyncManager.pendingSyncCount)")
                     }
                     
-                    Button {
-                        guard let url = URL(string: "https://apps.apple.com/app/id123456789") else { return }
-                        UIApplication.shared.open(url)
-                    } label: {
-                        SettingsRow(icon: "star.fill", iconColor: .yellow, title: "Rate on App Store", subtitle: "Share your experience")
+                    // Data Sync (only show when authenticated)
+                    if supabaseService.isAuthenticated {
+                        Section(header: Text("Data Sync").font(.forma(.footnote, weight: .medium))) {
+                            // Sync Status
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(syncStatusColor.opacity(0.15))
+                                        .frame(width: 32, height: 32)
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Sync Status")
+                                        .font(.forma(.body, weight: .semibold))
+                                    Text(syncStatusText)
+                                        .font(.forma(.subheadline))
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Spacer()
+                                
+                                if realtimeSyncManager.syncStatus.isActive {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                }
+                            }
+                            
+                            // Manual Sync Button
+                            Button {
+                                Task {
+                                    await realtimeSyncManager.refreshAllData()
+                                }
+                            } label: {
+                                SettingsRow(
+                                    icon: "arrow.triangle.2.circlepath",
+                                    iconColor: .blue,
+                                    title: "Sync Now",
+                                    subtitle: "Update data from cloud"
+                                )
+                            }
+                            .disabled(realtimeSyncManager.syncStatus.isActive)
+                            
+                            // Sync Statistics
+                            Button {
+                                showingSyncStats = true
+                                Task {
+                                    syncStats = await supabaseService.getSyncStats()
+                                }
+                            } label: {
+                                SettingsRow(
+                                    icon: "chart.bar.fill",
+                                    iconColor: .green,
+                                    title: "Sync Statistics",
+                                    subtitle: "View cloud data summary"
+                                )
+                            }
+                        }
                     }
-                }
-                
-                // About
-                Section(header: Text("About").font(.forma(.footnote, weight: .medium))) {
-                    HStack {
-                        Text("StuCo")
-                            .font(.forma(.body, weight: .semibold))
-                        Spacer()
-                        Text("Version 1.0.0")
+                    
+                    // Appearance
+                    Section(header: Text("Appearance").font(.forma(.footnote, weight: .medium))) {
+                        Button {
+                            showingThemeSelector = true
+                        } label: {
+                            SettingsRow(
+                                icon: "paintbrush.pointed",
+                                iconColor: themeManager.currentTheme.primaryColor,
+                                title: "Theme & Appearance",
+                                subtitle: "\(themeManager.currentTheme.rawValue) • \(themeManager.appearanceMode.displayName)"
+                            )
+                        }
+                    }
+                    
+                    // Notifications
+                    Section(header: Text("Notifications").font(.forma(.footnote, weight: .medium))) {
+                        Button {
+                            showingNotificationSettings = true
+                        } label: {
+                            SettingsRow(icon: "bell.badge", iconColor: .orange, title: "Notification Settings", subtitle: "Manage alerts and reminders")
+                        }
+                    }
+                    
+                    // Calendar Integration
+                    Section(header: Text("Calendar Integration").font(.forma(.footnote, weight: .medium))) {
+                        Button {
+                            showingGoogleCalendarSettings = true
+                        } label: {
+                            SettingsRow(icon: "globe", iconColor: .blue, title: "Google Calendar", subtitle: "Sync with Google services")
+                        }
+                        
+                        Button {
+                            showingAppleCalendarSettings = true
+                        } label: {
+                            SettingsRow(icon: "applelogo", iconColor: .primary, title: "Apple Calendar", subtitle: "Native iOS integration")
+                        }
+                        
+                        Button {
+                            showingAcademicCalendarManagement = true
+                        } label: {
+                            SettingsRow(icon: "graduationcap.fill", iconColor: .purple, title: "Academic Calendars", subtitle: "School schedule management")
+                        }
+                    }
+                    
+                    // Support & Feedback
+                    Section(header: Text("Support & Feedback").font(.forma(.footnote, weight: .medium))) {
+                        Button {
+                            if MFMailComposeViewController.canSendMail() {
+                                isShowingMailView = true
+                            } else {
+                                showingFeedbackAlert = true
+                            }
+                        } label: {
+                            SettingsRow(icon: "envelope.fill", iconColor: .green, title: "Send Feedback", subtitle: "Help us improve the app")
+                        }
+                        
+                        Button {
+                            guard let url = URL(string: "https://apps.apple.com/app/id123456789") else { return }
+                            UIApplication.shared.open(url)
+                        } label: {
+                            SettingsRow(icon: "star.fill", iconColor: .yellow, title: "Rate on App Store", subtitle: "Share your experience")
+                        }
+                    }
+                    
+                    // About
+                    Section(header: Text("About").font(.forma(.footnote, weight: .medium))) {
+                        HStack {
+                            Text("StuCo")
+                                .font(.forma(.body, weight: .semibold))
+                            Spacer()
+                            Text("Version 1.0.0")
+                                .font(.forma(.subheadline))
+                                .foregroundColor(.secondary)
+                        }
+                        Text("Your intelligent student companion for academic success.")
                             .font(.forma(.subheadline))
                             .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text("Your intelligent student companion for academic success.")
-                        .font(.forma(.subheadline))
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showingAuthSheet) {
-                AuthenticationSheet()
-                    .environmentObject(supabaseService)
-            }
-            .sheet(isPresented: $showingAccountManagement) {
-                AccountManagementView()
-                    .environmentObject(supabaseService)
-                    .environmentObject(themeManager)
-            }
-            .sheet(isPresented: $showingThemeSelector) {
-                ThemeSelectorView()
-            }
-            .sheet(isPresented: $showingNotificationSettings) {
-                NotificationSettingsView()
-            }
-            .sheet(isPresented: $showingGoogleCalendarSettings) {
-                GoogleCalendarSettingsView()
-            }
-            .sheet(isPresented: $showingAppleCalendarSettings) {
-                AppleCalendarSettingsView()
-            }
-            .sheet(isPresented: $showingAcademicCalendarManagement) {
-                AcademicCalendarManagementView()
-            }
-            .sheet(isPresented: $isShowingMailView) {
-                MailView(result: $result)
-            }
-            .sheet(isPresented: $showingSyncStats) {
-                SyncStatsView(syncStats: $syncStats)
-                    .environmentObject(themeManager)
-            }
-            .alert("Mail Not Available", isPresented: $showingFeedbackAlert) {
-                Button("OK") { }
-            } message: {
-                Text("Mail is not available on this device. Please configure mail in Settings.")
-                    .font(.forma(.body))
+                .listStyle(.insetGrouped)
             }
         }
         .onAppear {
@@ -387,8 +335,75 @@ struct SettingsView: View {
                 await supabaseService.refreshSubscription()
             }
         }
+        .sheet(isPresented: $showingThemeSelector) {
+            ThemeSelectorView()
+                .environmentObject(themeManager)
+        }
+        .sheet(isPresented: $showingNotificationSettings) {
+            NotificationSettingsView()
+                .environmentObject(NotificationManager.shared)
+        }
+        .sheet(isPresented: $showingGoogleCalendarSettings) {
+            GoogleCalendarSettingsView()
+        }
+        .sheet(isPresented: $showingAppleCalendarSettings) {
+            AppleCalendarSettingsView()
+        }
+        .sheet(isPresented: $showingAcademicCalendarManagement) {
+            AcademicCalendarManagementView()
+        }
+        .sheet(isPresented: $showingAuthSheet) {
+            AuthenticationSheet()
+                .environmentObject(supabaseService)
+        }
+        .sheet(isPresented: $showingAccountManagement) {
+            AccountManagementView()
+                .environmentObject(supabaseService)
+                .environmentObject(themeManager)
+        }
+        .sheet(isPresented: $showingSyncStats) {
+            SyncStatsView(syncStats: $syncStats)
+                .environmentObject(themeManager)
+        }
+        .sheet(isPresented: $isShowingMailView) {
+            MailView(result: $result)
+        }
+        .alert("Cannot Send Email", isPresented: $showingFeedbackAlert) {
+            Button("OK") { }
+        } message: {
+            Text("Please configure Mail app on your device to send feedback.")
+        }
     }
     
+    private var headerView: some View {
+        HStack {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.forma(.subheadline, weight: .bold))
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                    .frame(width: 36, height: 36)
+                    .background(themeManager.currentTheme.primaryColor.opacity(0.2))
+                    .clipShape(Circle())
+            }
+            
+            Spacer()
+            
+            Text("Settings")
+                .font(.forma(.title, weight: .bold))
+            
+            Spacer()
+            
+            // This view is for spacing only, to ensure the title remains centered.
+            // It takes up the same space as the button on the left.
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: 36, height: 36)
+        }
+        .padding(.horizontal)
+    }
+
     // MARK: - Computed Properties for Sync Status
     
     private var syncStatusColor: Color {
@@ -1361,9 +1376,8 @@ struct SyncStatusIndicator: View {
 }
 
 #Preview {
-    NavigationView {
-        SettingsView()
-            .environmentObject(ThemeManager())
-            .environmentObject(NotificationManager.shared)
-    }
+    SettingsView()
+        .environmentObject(ThemeManager())
+        .environmentObject(SupabaseService.shared)
+        .environmentObject(RealtimeSyncManager.shared)
 }

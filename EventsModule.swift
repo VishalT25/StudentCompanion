@@ -1,8 +1,5 @@
 import SwiftUI
 import Combine
-import UserNotifications
-import ActivityKit
-import EventKit
 
 // MARK: - Extensions at file scope
 extension Notification.Name {
@@ -252,8 +249,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
     
     private func updateSmartEngineWithCourses() {
         let courseNames = courses.map { $0.name }
-        print(" EventViewModel: Updating SmartEngine with courses: \(courseNames)")
-        print(" [SmartInput] Updating SmartInputEngine with courses: \(courseNames)")
     }
     
     init() {
@@ -280,16 +275,19 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
         NotificationCenter.default.publisher(for: .googleCalendarEventsFetched)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                print("EventViewModel received googleCalendarEventsFetched notification.")
                 Task {
                     await self?.processFetchedGoogleCalendarEvents()
                 }
             }
             .store(in: &cancellables)
+        
+        Task {
+            await realtimeSyncManager.ensureStarted()
+            await self.refreshLiveData()
+        }
     }
     
     private func loadData() {
-        print(" EventViewModel: Loading local data...")
         if let data = UserDefaults.standard.data(forKey: categoriesKey),
            let decodedCategories = try? JSONDecoder().decode([Category].self, from: data) {
             categories = decodedCategories
@@ -304,17 +302,13 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
            let decodedScheduleItems = try? JSONDecoder().decode([ScheduleItem].self, from: data) {
             scheduleItems = decodedScheduleItems
         }
-        
-        print(" EventViewModel: Loaded \(categories.count) categories, \(events.count) events, \(scheduleItems.count) schedule items")
     }
     
     private func loadCourses() {
-        print(" EventViewModel: Loading courses...")
         if let data = UserDefaults.standard.data(forKey: coursesKey),
            let decodedCourses = try? JSONDecoder().decode([Course].self, from: data) {
             courses = decodedCourses
         }
-        print(" EventViewModel: Loaded \(courses.count) courses")
     }
     
     private func registerDefaultIntegrationToggles() {
@@ -337,7 +331,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
     }
     
     private func processFetchedGoogleCalendarEvents() async {
-        print(" EventViewModel: Processing fetched Google Calendar events")
         await refreshLiveData()
     }
     
@@ -414,8 +407,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
     }
     
     func didReceiveRealtimeUpdate(_ data: [String: Any], action: String, table: String) {
-        print(" EventViewModel: Received real-time update for table: \(table), action: \(action)")
-        
         switch (table, action) {
         case ("events", "SYNC"):
             if let eventsData = data["events"] as? [DatabaseEvent] {
@@ -456,12 +447,11 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
             }
             
         default:
-            print(" EventViewModel: Unhandled real-time update: \(table) - \(action)")
+            break
         }
     }
     
     private func syncEventsFromDatabase(_ events: [DatabaseEvent]) {
-        print(" EventViewModel: Syncing \(events.count) events from database")
         let localEvents = events.map { $0.toLocal() }
         
         self.events = localEvents
@@ -469,12 +459,9 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
         if !isInitialLoad {
             saveDataLocally() 
         }
-        
-        print(" EventViewModel: Events sync complete - \(self.events.count) total events")
     }
     
     private func syncCategoriesFromDatabase(_ categories: [DatabaseCategory]) {
-        print(" EventViewModel: Syncing \(categories.count) categories from database")
         let localCategories = categories.map { $0.toLocal() }
         
         self.categories = localCategories
@@ -482,8 +469,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
         if !isInitialLoad {
             saveDataLocally() 
         }
-        
-        print(" EventViewModel: Categories sync complete - \(self.categories.count) total categories")
     }
     
     private func handleEventInsert(_ dbEvent: DatabaseEvent) {
@@ -492,7 +477,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
         if !events.contains(where: { $0.id == localEvent.id }) {
             events.append(localEvent)
             saveDataLocally()
-            print(" EventViewModel: Added new event from real-time: \(localEvent.title)")
         }
     }
     
@@ -502,7 +486,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
         if let index = events.firstIndex(where: { $0.id == localEvent.id }) {
             events[index] = localEvent
             saveDataLocally()
-            print(" EventViewModel: Updated event from real-time: \(localEvent.title)")
         }
     }
     
@@ -511,7 +494,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
            let index = events.firstIndex(where: { $0.id == uuid }) {
             let removedEvent = events.remove(at: index)
             saveDataLocally()
-            print(" EventViewModel: Deleted event from real-time: \(removedEvent.title)")
         }
     }
     
@@ -521,7 +503,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
         if !categories.contains(where: { $0.id == localCategory.id }) {
             categories.append(localCategory)
             saveDataLocally()
-            print(" EventViewModel: Added new category from real-time: \(localCategory.name)")
         }
     }
     
@@ -531,7 +512,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
         if let index = categories.firstIndex(where: { $0.id == localCategory.id }) {
             categories[index] = localCategory
             saveDataLocally()
-            print(" EventViewModel: Updated category from real-time: \(localCategory.name)")
         }
     }
     
@@ -540,7 +520,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
            let index = categories.firstIndex(where: { $0.id == uuid }) {
             let removedCategory = categories.remove(at: index)
             saveDataLocally()
-            print(" EventViewModel: Deleted category from real-time: \(removedCategory.name)")
         }
     }
     
@@ -619,7 +598,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
     
     private func syncEventToDatabase(_ event: Event, action: SyncAction) {
         guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
-            print(" EventViewModel: Cannot sync - user not authenticated")
             return
         }
         
@@ -637,13 +615,11 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
             
             realtimeSyncManager.queueSyncOperation(operation)
         } catch {
-            print(" EventViewModel: Failed to prepare event sync: \(error)")
         }
     }
     
     private func syncCategoryToDatabase(_ category: Category, action: SyncAction) {
         guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
-            print(" EventViewModel: Cannot sync - user not authenticated")
             return
         }
         
@@ -661,7 +637,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
             
             realtimeSyncManager.queueSyncOperation(operation)
         } catch {
-            print(" EventViewModel: Failed to prepare category sync: \(error)")
         }
     }
     
@@ -699,14 +674,12 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
             UserDefaults.standard.set(scheduleData, forKey: scheduleKey)
             UserDefaults.standard.set(coursesData, forKey: coursesKey)
         } catch {
-            print("Error saving data locally: \(error)")
         }
     }
     
     private func handleCalendarSyncForNewEvent(_ event: Event) {
         if event.syncToAppleCalendar || event.syncToGoogleCalendar {
             guard let calendarSyncManager = calendarSyncManager else {
-                print("CalendarSyncManager is nil when trying to add an event.")
                 return
             }
             
@@ -741,346 +714,6 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
     }
     
     func manageLiveActivities(themeManager: ThemeManager) {
-        print(" EventViewModel: Managing live activities")
-    }
-}
-
-struct CategoryRow: View {
-    let category: Category
-    @EnvironmentObject var themeManager: ThemeManager
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(category.color)
-                .frame(width: 28, height: 28)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(.systemBackground), lineWidth: 2)
-                )
-                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 6)
-            
-            Text(category.name)
-                .font(.forma(.subheadline, weight: .medium))
-            
-            Spacer()
-        }
-        .padding(.vertical, 2)
-        .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
-    }
-}
-
-struct EnhancedEventRow: View {
-    @EnvironmentObject var viewModel: EventViewModel
-    @EnvironmentObject var themeManager: ThemeManager
-    let event: Event
-    var isPast: Bool = false
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            VStack(spacing: 2) {
-                Text("\(Calendar.current.component(.day, from: event.date))")
-                    .font(.forma(.title3, weight: .bold))
-                    .foregroundColor(isPast || event.isCompleted ? .secondary : themeManager.currentTheme.primaryColor)
-                Text(monthShort(from: event.date))
-                    .font(.forma(.caption2, weight: .medium))
-                    .foregroundColor(.secondary)
-            }
-            .frame(width: 45)
-            .padding(.vertical, 6)
-            .background(backgroundColor)
-            .cornerRadius(8)
-            .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 8)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(event.title)
-                    .font(.forma(.headline))
-                    .foregroundColor(isPast || event.isCompleted ? .secondary : .primary)
-                    .strikethrough(event.isCompleted)
-                
-                HStack(spacing: 8) {
-                    Label(timeString(from: event.date), systemImage: "clock")
-                        .font(.forma(.caption))
-                        .foregroundColor(.secondary)
-                    
-                    Spacer()
-                    
-                    Text(event.category(from: viewModel.categories).name)
-                        .font(.forma(.caption, weight: .medium))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(event.category(from: viewModel.categories).color.opacity(0.2))
-                        .foregroundColor(event.category(from: viewModel.categories).color)
-                        .cornerRadius(8)
-                        .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 8)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-        .opacity(isPast || event.isCompleted ? 0.7 : 1.0)
-        .adaptiveDarkModeEnhanced(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
-    }
-    
-    private var backgroundColor: Color {
-        if isPast || event.isCompleted {
-            return Color(.systemGray6)
-        } else {
-            return themeManager.currentTheme.primaryColor.opacity(0.1)
-        }
-    }
-    
-    private func monthShort(from date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM"
-        return formatter.string(from: date)
-    }
-    
-    private func timeString(from date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-}
-
-struct AddEventView: View {
-    @Binding var isPresented: Bool
-    @EnvironmentObject var viewModel: EventViewModel
-    @EnvironmentObject var themeManager: ThemeManager
-
-    @State private var title: String = ""
-    @State private var date: Date = Date()
-    @State private var categoryId: UUID?
-    @State private var reminderTime: ReminderTime = .none
-    @State private var syncToApple = false
-    @State private var syncToGoogle = false
-
-    var body: some View {
-        NavigationView {
-            Form {
-                Section(header: Text("Details").font(.forma(.caption, weight: .medium))) {
-                    TextField("Title", text: $title)
-                        .textInputAutocapitalization(.sentences)
-                        .disableAutocorrection(false)
-                    DatePicker("Date & Time", selection: $date)
-                }
-
-                Section(header: Text("Category").font(.forma(.caption, weight: .medium))) {
-                    if viewModel.categories.isEmpty {
-                        Text("No categories yet. Create one from the Reminders screen.")
-                            .font(.forma(.footnote))
-                            .foregroundColor(.secondary)
-                    } else {
-                        Picker("Category", selection: Binding(
-                            get: { categoryId ?? viewModel.categories.first?.id },
-                            set: { categoryId = $0 }
-                        )) {
-                            ForEach(viewModel.categories) { cat in
-                                HStack {
-                                    Circle().fill(cat.color).frame(width: 10, height: 10)
-                                    Text(cat.name)
-                                }.tag(Optional(cat.id))
-                            }
-                        }
-                    }
-                }
-
-                Section(header: Text("Reminder").font(.forma(.caption, weight: .medium))) {
-                    Picker("Notify", selection: $reminderTime) {
-                        ForEach(ReminderTime.allCases, id: \.self) { rt in
-                            Text(rt.displayName).tag(rt)
-                        }
-                    }
-                }
-
-                Section(header: Text("Calendar Sync").font(.forma(.caption, weight: .medium))) {
-                    Toggle("Sync to Apple Calendar", isOn: $syncToApple)
-                    Toggle("Sync to Google Calendar", isOn: $syncToGoogle)
-                }
-            }
-            .navigationTitle("Add Reminder")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isPresented = false }
-                        .font(.forma(.body))
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        guard let catId = (categoryId ?? viewModel.categories.first?.id),
-                              !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                        let newEvent = Event(
-                            title: title.trimmingCharacters(in: .whitespacesAndNewlines), date: date,
-                            categoryId: catId,
-                            reminderTime: reminderTime,
-                            isCompleted: false,
-                            externalIdentifier: nil,
-                            sourceName: nil,
-                            syncToAppleCalendar: syncToApple,
-                            syncToGoogleCalendar: syncToGoogle
-                        )
-                        viewModel.addEvent(newEvent)
-                        isPresented = false
-                    }
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (viewModel.categories.isEmpty && categoryId == nil))
-                    .font(.forma(.body))
-                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                }
-            }
-            .onAppear {
-                if categoryId == nil {
-                    categoryId = viewModel.categories.first?.id
-                }
-            }
-        }
-    }
-}
-
-struct AddCategoryView: View {
-    @Binding var isPresented: Bool
-    @EnvironmentObject var viewModel: EventViewModel
-    @EnvironmentObject var themeManager: ThemeManager
-
-    @State private var name: String = ""
-    @State private var color: Color = .blue
-
-    var body: some View {
-        NavigationView {
-            Form {
-                Section(header: Text("Category").font(.forma(.caption, weight: .medium))) {
-                    TextField("Name", text: $name)
-                    ColorPicker("Color", selection: $color, supportsOpacity: false)
-                }
-            }
-            .navigationTitle("Add Category")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isPresented = false }
-                        .font(.forma(.body))
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let newCategory = Category(name: name.trimmingCharacters(in: .whitespacesAndNewlines), color: color)
-                        viewModel.addCategory(newCategory)
-                        isPresented = false
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .font(.forma(.body))
-                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                }
-            }
-        }
-    }
-}
-
-struct EventEditView: View {
-    let event: Event
-    let isNew: Bool
-    @EnvironmentObject var viewModel: EventViewModel
-    @EnvironmentObject var themeManager: ThemeManager
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var title: String = ""
-    @State private var date: Date = Date()
-    @State private var categoryId: UUID?
-    @State private var reminderTime: ReminderTime = .none
-    @State private var isCompleted: Bool = false
-    @State private var syncToApple = false
-    @State private var syncToGoogle = false
-    @State private var showDeleteAlert = false
-
-    var body: some View {
-        Form {
-            Section(header: Text("Details")) {
-                TextField("Title", text: $title)
-                DatePicker("Date & Time", selection: $date)
-                Toggle("Completed", isOn: $isCompleted)
-            }
-
-            Section(header: Text("Category")) {
-                if viewModel.categories.isEmpty {
-                    Text("No categories yet. Create one from the Reminders screen.")
-                        .font(.forma(.footnote))
-                        .foregroundColor(.secondary)
-                } else {
-                    Picker("Category", selection: Binding(
-                        get: { categoryId ?? event.categoryId },
-                        set: { categoryId = $0 }
-                    )) {
-                        ForEach(viewModel.categories) { cat in
-                            HStack {
-                                Circle().fill(cat.color).frame(width: 10, height: 10)
-                                Text(cat.name)
-                            }.tag(Optional(cat.id))
-                        }
-                    }
-                }
-            }
-
-            Section(header: Text("Reminder")) {
-                Picker("Notify", selection: $reminderTime) {
-                    ForEach(ReminderTime.allCases, id: \.self) { rt in
-                        Text(rt.displayName).tag(rt)
-                    }
-                }
-            }
-
-            Section(header: Text("Calendar Sync")) {
-                Toggle("Sync to Apple Calendar", isOn: $syncToApple)
-                Toggle("Sync to Google Calendar", isOn: $syncToGoogle)
-            }
-
-            Section {
-                Button(role: .destructive) {
-                    showDeleteAlert = true
-                } label: {
-                    HStack {
-                        Spacer()
-                        Text("Delete Reminder")
-                        Spacer()
-                    }
-                }
-            }
-        }
-        .navigationTitle(isNew ? "Add Reminder" : "Edit Reminder")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Save") {
-                    guard let catId = (categoryId ?? event.categoryId) as UUID? else { return }
-                    var updated = event
-                    updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                    updated.date = date
-                    updated.categoryId = catId
-                    updated.reminderTime = reminderTime
-                    updated.isCompleted = isCompleted
-                    updated.syncToAppleCalendar = syncToApple
-                    updated.syncToGoogleCalendar = syncToGoogle
-                    viewModel.updateEvent(updated)
-                    dismiss()
-                }
-                .foregroundColor(themeManager.currentTheme.primaryColor)
-                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .alert("Delete Reminder?", isPresented: $showDeleteAlert) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                viewModel.deleteEvent(event)
-                dismiss()
-            }
-        } message: {
-            Text("This will delete the reminder and cancel its notifications.")
-        }
-        .onAppear {
-            title = event.title
-            date = event.date
-            categoryId = event.categoryId
-            reminderTime = event.reminderTime
-            isCompleted = event.isCompleted
-            syncToApple = event.syncToAppleCalendar
-            syncToGoogle = event.syncToGoogleCalendar
-        }
     }
 }
 
@@ -1144,8 +777,9 @@ private struct CalendarMonthView: View {
         return HStack {
             ForEach(0..<7, id: \.self) { idx in
                 Text(symbols[idx])
-                    .font(.caption2.weight(.semibold))
+                    .font(.forma(.caption2))
                     .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -1190,7 +824,7 @@ private struct CalendarMonthView: View {
         } label: {
             VStack(spacing: 4) {
                 Text("\(calendar.component(.day, from: date))")
-                    .font(.subheadline.weight(.medium))
+                    .font(.forma(.subheadline))
                     .foregroundColor(isSelected ? .white : .primary)
                     .frame(maxWidth: .infinity, minHeight: 24)
 
@@ -1233,6 +867,358 @@ private struct CalendarMonthView: View {
     }
 }
 
+struct CategoryRow: View {
+    let category: Category
+    @EnvironmentObject var themeManager: ThemeManager
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(category.color)
+                .frame(width: 28, height: 28)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(.systemBackground), lineWidth: 2)
+                )
+            
+            Text(category.name)
+                .font(.forma(.subheadline))
+            
+            Spacer()
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+struct EnhancedEventRow: View {
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+    let event: Event
+    var isPast: Bool = false
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(spacing: 2) {
+                Text("\(Calendar.current.component(.day, from: event.date))")
+                    .font(.forma(.title3))
+                    .foregroundColor(isPast || event.isCompleted ? .secondary : themeManager.currentTheme.primaryColor)
+                Text(monthShort(from: event.date))
+                    .font(.forma(.caption2))
+                    .foregroundColor(.secondary)
+            }
+            .frame(width: 45)
+            .padding(.vertical, 6)
+            .background(backgroundColor)
+            .cornerRadius(8)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(event.title)
+                    .font(.forma(.headline))
+                    .foregroundColor(isPast || event.isCompleted ? .secondary : .primary)
+                    .strikethrough(event.isCompleted)
+                
+                HStack(spacing: 8) {
+                    Label(timeString(from: event.date), systemImage: "clock")
+                        .font(.forma(.caption))
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Text(event.category(from: viewModel.categories).name)
+                        .font(.forma(.caption))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(event.category(from: viewModel.categories).color.opacity(0.2))
+                        .foregroundColor(event.category(from: viewModel.categories).color)
+                        .cornerRadius(8)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .opacity(isPast || event.isCompleted ? 0.7 : 1.0)
+    }
+    
+    private var backgroundColor: Color {
+        if isPast || event.isCompleted {
+            return Color(.systemGray6)
+        } else {
+            return themeManager.currentTheme.primaryColor.opacity(0.1)
+        }
+    }
+    
+    private func monthShort(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM"
+        return formatter.string(from: date)
+    }
+    
+    private func timeString(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+}
+
+struct AddEventView: View {
+    @Binding var isPresented: Bool
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+
+    @State private var title: String = ""
+    @State private var date: Date = Date()
+    @State private var categoryId: UUID?
+    @State private var reminderTime: ReminderTime = .none
+    @State private var syncToApple = false
+    @State private var syncToGoogle = false
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Details").font(.forma(.caption))) {
+                    TextField("Title", text: $title)
+                        .font(.forma(.body))
+                    DatePicker("Date & Time", selection: $date)
+                        .font(.forma(.body))
+                }
+
+                Section(header: Text("Category").font(.forma(.caption))) {
+                    if viewModel.categories.isEmpty {
+                        Text("No categories yet. Create one from the Reminders screen.")
+                            .font(.forma(.footnote))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Picker("Category", selection: Binding(
+                            get: { categoryId ?? viewModel.categories.first?.id },
+                            set: { categoryId = $0 }
+                        )) {
+                            ForEach(viewModel.categories) { cat in
+                                HStack {
+                                    Circle().fill(cat.color).frame(width: 10, height: 10)
+                                    Text(cat.name)
+                                        .font(.forma(.body))
+                                }.tag(Optional(cat.id))
+                            }
+                        }
+                    }
+                }
+
+                Section(header: Text("Reminder").font(.forma(.caption))) {
+                    Picker("Notify", selection: $reminderTime) {
+                        ForEach(ReminderTime.allCases, id: \.self) { rt in
+                            Text(rt.displayName)
+                                .font(.forma(.body))
+                                .tag(rt)
+                        }
+                    }
+                    .font(.forma(.body))
+                }
+
+                Section(header: Text("Calendar Sync").font(.forma(.caption))) {
+                    Toggle("Sync to Apple Calendar", isOn: $syncToApple)
+                        .font(.forma(.body))
+                    Toggle("Sync to Google Calendar", isOn: $syncToGoogle)
+                        .font(.forma(.body))
+                }
+            }
+            .navigationTitle("Add Reminder")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                        .font(.forma(.body))
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard let catId = (categoryId ?? viewModel.categories.first?.id),
+                              !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                        let newEvent = Event(
+                            title: title.trimmingCharacters(in: .whitespacesAndNewlines), date: date,
+                            categoryId: catId,
+                            reminderTime: reminderTime,
+                            isCompleted: false,
+                            externalIdentifier: nil,
+                            sourceName: nil,
+                            syncToAppleCalendar: syncToApple,
+                            syncToGoogleCalendar: syncToGoogle
+                        )
+                        viewModel.addEvent(newEvent)
+                        isPresented = false
+                    }
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (viewModel.categories.isEmpty && categoryId == nil))
+                    .font(.forma(.body))
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                }
+            }
+            .onAppear {
+                if categoryId == nil {
+                    categoryId = viewModel.categories.first?.id
+                }
+            }
+        }
+    }
+}
+
+struct AddCategoryView: View {
+    @Binding var isPresented: Bool
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+
+    @State private var name: String = ""
+    @State private var color: Color = .blue
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Category").font(.forma(.caption))) {
+                    TextField("Name", text: $name)
+                        .font(.forma(.body))
+                    ColorPicker("Color", selection: $color, supportsOpacity: false)
+                }
+            }
+            .navigationTitle("Add Category")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                        .font(.forma(.body))
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let newCategory = Category(name: name.trimmingCharacters(in: .whitespacesAndNewlines), color: color)
+                        viewModel.addCategory(newCategory)
+                        isPresented = false
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .font(.forma(.body))
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                }
+            }
+        }
+    }
+}
+
+struct EventEditView: View {
+    let event: Event
+    let isNew: Bool
+    @EnvironmentObject var viewModel: EventViewModel
+    @EnvironmentObject var themeManager: ThemeManager
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var title: String = ""
+    @State private var date: Date = Date()
+    @State private var categoryId: UUID?
+    @State private var reminderTime: ReminderTime = .none
+    @State private var isCompleted: Bool = false
+    @State private var syncToApple = false
+    @State private var syncToGoogle = false
+    @State private var showDeleteAlert = false
+
+    var body: some View {
+        Form {
+            Section(header: Text("Details").font(.forma(.caption))) {
+                TextField("Title", text: $title)
+                    .font(.forma(.body))
+                DatePicker("Date & Time", selection: $date)
+                    .font(.forma(.body))
+                Toggle("Completed", isOn: $isCompleted)
+                    .font(.forma(.body))
+            }
+
+            Section(header: Text("Category").font(.forma(.caption))) {
+                if viewModel.categories.isEmpty {
+                    Text("No categories yet. Create one from the Reminders screen.")
+                        .font(.forma(.footnote))
+                        .foregroundColor(.secondary)
+                } else {
+                    Picker("Category", selection: Binding(
+                        get: { categoryId ?? event.categoryId },
+                        set: { categoryId = $0 }
+                    )) {
+                        ForEach(viewModel.categories) { cat in
+                            HStack {
+                                Circle().fill(cat.color).frame(width: 10, height: 10)
+                                Text(cat.name)
+                                    .font(.forma(.body))
+                            }.tag(Optional(cat.id))
+                        }
+                    }
+                }
+            }
+
+            Section(header: Text("Reminder").font(.forma(.caption))) {
+                Picker("Notify", selection: $reminderTime) {
+                    ForEach(ReminderTime.allCases, id: \.self) { rt in
+                        Text(rt.displayName)
+                            .font(.forma(.body))
+                            .tag(rt)
+                    }
+                }
+                .font(.forma(.body))
+            }
+
+            Section(header: Text("Calendar Sync").font(.forma(.caption))) {
+                Toggle("Sync to Apple Calendar", isOn: $syncToApple)
+                    .font(.forma(.body))
+                Toggle("Sync to Google Calendar", isOn: $syncToGoogle)
+                    .font(.forma(.body))
+            }
+
+            Section {
+                Button(role: .destructive) {
+                    showDeleteAlert = true
+                } label: {
+                    HStack {
+                        Spacer()
+                        Text("Delete Reminder")
+                            .font(.forma(.body, weight: .semibold))
+                        Spacer()
+                    }
+                }
+            }
+        }
+        .navigationTitle(isNew ? "Add Reminder" : "Edit Reminder")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    guard let catId = (categoryId ?? event.categoryId) as UUID? else { return }
+                    var updated = event
+                    updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    updated.date = date
+                    updated.categoryId = catId
+                    updated.reminderTime = reminderTime
+                    updated.isCompleted = isCompleted
+                    updated.syncToAppleCalendar = syncToApple
+                    updated.syncToGoogleCalendar = syncToGoogle
+                    viewModel.updateEvent(updated)
+                    dismiss()
+                }
+                .font(.forma(.body, weight: .semibold))
+                .foregroundColor(themeManager.currentTheme.primaryColor)
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .alert("Delete Reminder?", isPresented: $showDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                viewModel.deleteEvent(event)
+                dismiss()
+            }
+        } message: {
+            Text("This will delete the reminder and cancel its notifications.")
+        }
+        .onAppear {
+            title = event.title
+            date = event.date
+            categoryId = event.categoryId
+            reminderTime = event.reminderTime
+            isCompleted = event.isCompleted
+            syncToApple = event.syncToAppleCalendar
+            syncToGoogle = event.syncToGoogleCalendar
+        }
+    }
+}
+
 struct EventsListView: View {
     @EnvironmentObject var viewModel: EventViewModel
     @EnvironmentObject var themeManager: ThemeManager
@@ -1251,6 +1237,10 @@ struct EventsListView: View {
     @State private var showAllUpcoming = false
     @State private var showAllPast = false
     
+    @State private var animationOffset: CGFloat = 0
+    @State private var pulseAnimation: Double = 1.0
+    @Environment(\.colorScheme) var colorScheme
+    
     var sortedUpcomingEvents: [Event] {
         viewModel.upcomingEvents()
     }
@@ -1268,14 +1258,30 @@ struct EventsListView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            headerView
-            
-            if showCalendarView {
-                calendarView
-            } else {
-                listView
+        ZStack {
+            VStack(spacing: 0) {
+                enhancedHeaderView
+                
+                if showCalendarView {
+                    calendarView
+                } else {
+                    if sortedUpcomingEvents.isEmpty && sortedPastEvents.isEmpty && !showCategories {
+                        ScrollView {
+                            spectacularEmptyState
+                                .padding(.top, 20)
+                                .padding(.horizontal, 20)
+                        }
+                    } else {
+                        listView
+                    }
+                }
             }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            magicalFloatingButton
+        }
+        .onAppear {
+            startAnimations()
         }
         .sheet(isPresented: $showingAddEvent) {
             AddEventView(isPresented: $showingAddEvent)
@@ -1287,193 +1293,171 @@ struct EventsListView: View {
                 .environmentObject(viewModel)
                 .environmentObject(themeManager)
         }
-        .refreshable {
-            await viewModel.refreshLiveData()
+    }
+    
+    private func startAnimations() {
+        withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
+            pulseAnimation = 1.15
         }
-        .overlay(alignment: .bottomTrailing) {
-            if !bulkSelectionManager.isSelecting {
-                VStack(spacing: 12) {
-                    Button(action: { showingAddCategory = true }) {
-                        Image(systemName: "tag.fill")
-                            .font(.headline.bold())
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
-                            .padding(14)
-                            .background(Circle().fill(themeManager.currentTheme.secondaryColor.opacity(0.2)))
-                            .overlay(Circle().stroke(themeManager.currentTheme.secondaryColor.opacity(0.4), lineWidth: 1))
-                            .shadow(color: themeManager.currentTheme.secondaryColor.opacity(0.2), radius: 6, x: 0, y: 3)
+    }
+
+    var enhancedHeaderView: some View {
+        VStack(spacing: 12) {
+            HStack(alignment: .center) {
+                Text("My Reminders")
+                    .font(.forma(.title2, weight: .bold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                themeManager.currentTheme.primaryColor,
+                                themeManager.currentTheme.secondaryColor
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                
+                Spacer()
+                
+                HStack(spacing: 6) {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showCalendarView = false
+                        }
+                    }) {
+                        Image(systemName: "list.bullet")
+                            .font(.forma(.callout, weight: .medium))
+                            .foregroundColor(!showCalendarView ? .white : themeManager.currentTheme.primaryColor)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                Circle()
+                                    .fill(!showCalendarView ? themeManager.currentTheme.primaryColor : .clear)
+                            )
+                            .overlay(
+                                Circle()
+                                    .stroke(themeManager.currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
+                                    .opacity(!showCalendarView ? 0 : 1)
+                            )
                     }
-                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
+                    .buttonStyle(.plain)
                     
-                    Button(action: { showingAddEvent = true }) {
-                        Image(systemName: "plus")
-                            .font(.title2.bold())
-                            .foregroundColor(.white)
-                            .padding(20)
-                            .background(Circle().fill(themeManager.currentTheme.primaryColor))
-                            .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showCalendarView = true
+                        }
+                    }) {
+                        Image(systemName: "calendar")
+                            .font(.forma(.callout, weight: .medium))
+                            .foregroundColor(showCalendarView ? .white : themeManager.currentTheme.primaryColor)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                Circle()
+                                    .fill(showCalendarView ? themeManager.currentTheme.primaryColor : .clear)
+                            )
+                            .overlay(
+                                Circle()
+                                    .stroke(themeManager.currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
+                                    .opacity(showCalendarView ? 0 : 1)
+                            )
                     }
-                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
+                    .buttonStyle(.plain)
                 }
-                .padding(.trailing, 20)
-                .padding(.bottom, 20)
+                .padding(3)
+                .background(
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Capsule()
+                                .stroke(themeManager.currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                        )
+                )
             }
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .navigationBarLeading) {
-                if bulkSelectionManager.isSelecting {
-                    Button("Cancel") {
-                        bulkSelectionManager.endSelection()
+            
+            HStack {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showCategories.toggle()
                     }
-                    .foregroundColor(.secondary)
-                }
-            }
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                if bulkSelectionManager.isSelecting {
-                    Button(selectionAllButtonTitle()) {
-                        toggleSelectAll()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "tag")
+                            .font(.forma(.subheadline))
+                        Text("Categories")
+                            .font(.forma(.subheadline, weight: .medium))
+                        Image(systemName: showCategories ? "chevron.up" : "chevron.down")
+                            .font(.forma(.caption))
                     }
                     .foregroundColor(themeManager.currentTheme.primaryColor)
-                    
-                    Button(role: .destructive) {
-                        showBulkDeleteAlert = true
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .disabled(bulkSelectionManager.selectedCount() == 0)
-                    .foregroundColor(bulkSelectionManager.selectedCount() == 0 ? .secondary : .red)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(themeManager.currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                }
+                
+                Spacer()
+                
+                if bulkSelectionManager.isSelecting {
+                    Text("\(bulkSelectionManager.selectedCount()) selected")
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .animation(.easeInOut(duration: 0.2), value: bulkSelectionManager.selectedCount())
                 }
             }
         }
-        .alert("Delete Selected?", isPresented: $showBulkDeleteAlert) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                performBulkDelete()
-            }
-        } message: {
-            Text("This will permanently delete \(bulkSelectionManager.selectedCount()) item(s).")
-        }
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+        .padding(.bottom, 8)
+        .background(Color.clear)
     }
-    
-    private func selectionAllButtonTitle() -> String {
-        switch bulkSelectionManager.selectionContext {
-        case .events:
-            let total = upcomingVisible.count + pastVisible.count
-            let selected = bulkSelectionManager.selectedCount()
-            return selected == total && total > 0 ? "Deselect All" : "Select All"
-        case .categories:
-            let total = viewModel.categories.count
-            let selected = bulkSelectionManager.selectedCount()
-            return selected == total && total > 0 ? "Deselect All" : "Select All"
-        default:
-            return "Select All"
-        }
-    }
-    
-    private func toggleSelectAll() {
-        switch bulkSelectionManager.selectionContext {
-        case .events:
-            let visibleEvents = upcomingVisible + pastVisible
-            let allIDs = Set(visibleEvents.map { $0.id })
-            if bulkSelectionManager.selectedEventIDs == allIDs {
-                bulkSelectionManager.deselectAll()
-            } else {
-                bulkSelectionManager.selectedEventIDs = allIDs
-            }
-        case .categories:
-            let allIDs = Set(viewModel.categories.map { $0.id })
-            if bulkSelectionManager.selectedCategoryIDs.count == allIDs.count {
-                bulkSelectionManager.deselectAll()
-            } else {
-                bulkSelectionManager.selectedCategoryIDs = allIDs
-            }
-        default:
-            break
-        }
-    }
-    
-    private func performBulkDelete() {
-        switch bulkSelectionManager.selectionContext {
-        case .events:
-            viewModel.bulkDeleteEvents(bulkSelectionManager.selectedEventIDs)
-        case .categories:
-            viewModel.bulkDeleteCategories(bulkSelectionManager.selectedCategoryIDs)
-        case .scheduleItems:
-            viewModel.bulkDeleteScheduleItems(bulkSelectionManager.selectedScheduleItemIDs, themeManager: themeManager)
-        case .none:
-            break
-        }
-        bulkSelectionManager.endSelection()
-    }
-    
-    private var headerView: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Picker("View Mode", selection: $showCalendarView) {
-                    Text("List").tag(false)
-                    Text("Calendar").tag(true)
-                }
-                .pickerStyle(SegmentedPickerStyle())
-                .padding(.horizontal)
-            }
-            .padding(.top, 8)
-            
-            if !showCalendarView {
-                HStack {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            showCategories.toggle()
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "tag")
-                                .font(.forma(.subheadline))
-                            Text("Categories")
-                                .font(.forma(.subheadline, weight: .medium))
-                            Image(systemName: showCategories ? "chevron.up" : "chevron.down")
-                                .font(.forma(.caption))
-                        }
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(themeManager.currentTheme.primaryColor.opacity(0.1))
-                        .cornerRadius(8)
-                    }
-                    
-                    Spacer()
-                    
-                    if bulkSelectionManager.isSelecting {
-                        Text("\(bulkSelectionManager.selectedCount()) selected")
-                            .font(.forma(.subheadline, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .animation(.easeInOut(duration: 0.2), value: bulkSelectionManager.selectedCount())
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-        }
-        .padding(.vertical, 8)
-        .background(Color(.systemGroupedBackground))
-    }
-    
-    private var calendarView: some View {
+
+    var calendarView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 CalendarMonthView(selectedDate: $selectedDate)
                     .environmentObject(viewModel)
                     .environmentObject(themeManager)
-                    .padding(.horizontal)
+                    .padding(.horizontal, 16)
 
                 let dayEvents = viewModel.events(for: selectedDate)
                 if dayEvents.isEmpty {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 16) {
+                        Image(systemName: "star.circle")
+                            .font(.forma(.title2))
+                            .foregroundColor(themeManager.currentTheme.primaryColor.opacity(0.6))
+                        
                         Text("No reminders on this date")
-                            .font(.subheadline)
+                            .font(.forma(.subheadline, weight: .medium))
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    .padding(.vertical, 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(.regularMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(
+                                        LinearGradient(
+                                            colors: [
+                                                themeManager.currentTheme.primaryColor.opacity(0.3),
+                                                themeManager.currentTheme.secondaryColor.opacity(0.2)
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        ),
+                                        lineWidth: 2
+                                    )
+                            )
+                    )
+                    .padding(.horizontal, 16)
                 } else {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 12) {
                         ForEach(dayEvents) { event in
                             NavigationLink {
                                 EventEditView(event: event, isNew: false)
@@ -1485,17 +1469,16 @@ struct EventsListView: View {
                                     .environmentObject(themeManager)
                             }
                             .buttonStyle(.plain)
-                            .padding(.horizontal)
+                            .padding(.horizontal, 16)
                         }
                     }
                 }
             }
-            .padding(.top, 12)
+            .padding(.top, 20)
         }
-        .background(Color(.systemGroupedBackground))
     }
     
-    private var listView: some View {
+    var listView: some View {
         List {
             if showCategories {
                 Section {
@@ -1504,7 +1487,10 @@ struct EventsListView: View {
                             HStack {
                                 CategoryRow(category: category)
                                 Spacer()
-                                selectionIndicator(isSelected: bulkSelectionManager.isSelected(category.id))
+                                Image(systemName: bulkSelectionManager.isSelected(category.id) ? "checkmark.circle.fill" : "circle")
+                                    .font(.forma(.title3))
+                                    .foregroundColor(bulkSelectionManager.isSelected(category.id) ? themeManager.currentTheme.primaryColor : .secondary)
+                                    .animation(.easeInOut(duration: 0.2), value: bulkSelectionManager.isSelected(category.id))
                             }
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -1535,7 +1521,17 @@ struct EventsListView: View {
                         }
                     }
                 } header: {
-                    Text("Categories")
+                    HStack {
+                        Image(systemName: "tag.fill")
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                        Text("Categories")
+                        Spacer()
+                        Button("Add Category", systemImage: "plus") {
+                            showingAddCategory = true
+                        }
+                        .font(.forma(.caption, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                    }
                 }
             }
             
@@ -1546,7 +1542,10 @@ struct EventsListView: View {
                             HStack {
                                 EnhancedEventRow(event: event)
                                 Spacer()
-                                selectionIndicator(isSelected: bulkSelectionManager.isSelected(event.id))
+                                Image(systemName: bulkSelectionManager.isSelected(event.id) ? "checkmark.circle.fill" : "circle")
+                                    .font(.forma(.title3))
+                                    .foregroundColor(bulkSelectionManager.isSelected(event.id) ? themeManager.currentTheme.primaryColor : .secondary)
+                                    .animation(.easeInOut(duration: 0.2), value: bulkSelectionManager.isSelected(event.id))
                             }
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -1594,7 +1593,7 @@ struct EventsListView: View {
                                         .font(.forma(.caption))
                                         .foregroundColor(themeManager.currentTheme.primaryColor)
                                     Image(systemName: showAllUpcoming ? "chevron.up" : "chevron.down")
-                                        .font(.forma(.caption, weight: .bold))
+                                        .font(.forma(.caption))
                                 }
                                 .foregroundColor(themeManager.currentTheme.primaryColor)
                                 .padding(.horizontal, 12)
@@ -1626,7 +1625,10 @@ struct EventsListView: View {
                             HStack {
                                 EnhancedEventRow(event: event, isPast: true)
                                 Spacer()
-                                selectionIndicator(isSelected: bulkSelectionManager.isSelected(event.id))
+                                Image(systemName: bulkSelectionManager.isSelected(event.id) ? "checkmark.circle.fill" : "circle")
+                                    .font(.forma(.title3))
+                                    .foregroundColor(bulkSelectionManager.isSelected(event.id) ? themeManager.currentTheme.primaryColor : .secondary)
+                                    .animation(.easeInOut(duration: 0.2), value: bulkSelectionManager.isSelected(event.id))
                             }
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -1674,7 +1676,7 @@ struct EventsListView: View {
                                         .font(.forma(.caption))
                                         .foregroundColor(themeManager.currentTheme.primaryColor)
                                     Image(systemName: showAllPast ? "chevron.up" : "chevron.down")
-                                        .font(.forma(.caption, weight: .bold))
+                                        .font(.forma(.caption))
                                 }
                                 .foregroundColor(themeManager.currentTheme.primaryColor)
                                 .padding(.horizontal, 12)
@@ -1698,18 +1700,9 @@ struct EventsListView: View {
                     }
                 }
             }
-            
-            if sortedUpcomingEvents.isEmpty && sortedPastEvents.isEmpty && !showCategories {
-                Section {
-                    VStack(spacing: 12) {
-                        Text("No reminders found. Tap '+' to add a new reminder.")
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
-                }
-            }
         }
         .listStyle(InsetGroupedListStyle())
+        .scrollContentBackground(.hidden)
         .alert("Delete Category?", isPresented: $showDeleteCategoryAlert) {
             Button("Cancel", role: .cancel) { pendingCategoryDeletion = nil }
             Button("Delete", role: .destructive) {
@@ -1734,11 +1727,186 @@ struct EventsListView: View {
         }
     }
     
-    private func selectionIndicator(isSelected: Bool) -> some View {
-        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-            .font(.forma(.title3))
-            .foregroundColor(isSelected ? themeManager.currentTheme.primaryColor : .secondary)
-            .animation(.easeInOut(duration: 0.2), value: isSelected)
+    var spectacularEmptyState: some View {
+        VStack(spacing: 32) {
+            ZStack {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    themeManager.currentTheme.primaryColor.opacity(0.1 - Double(index) * 0.03),
+                                    Color.clear
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: 60 + CGFloat(index * 20)
+                            )
+                        )
+                        .frame(width: 120 + CGFloat(index * 40), height: 120 + CGFloat(index * 40))
+                        .scaleEffect(pulseAnimation + Double(index) * 0.1)
+                        .animation(
+                            .easeInOut(duration: 3.0 + Double(index) * 0.5)
+                                .repeatForever(autoreverses: true),
+                            value: pulseAnimation
+                        )
+                }
+                
+                Image(systemName: "star.circle")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                themeManager.currentTheme.primaryColor,
+                                themeManager.currentTheme.secondaryColor
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .scaleEffect(pulseAnimation * 0.95 + 0.05)
+            }
+            
+            VStack(spacing: 16) {
+                Text("Stay on top of everything")
+                    .font(.forma(.title, weight: .bold))
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.center)
+            }
+            
+            Button("Add Your First Reminder") {
+                showingAddEvent = true
+            }
+            .font(.forma(.headline, weight: .semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 16)
+            .background(
+                ZStack {
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    themeManager.currentTheme.primaryColor,
+                                    themeManager.currentTheme.secondaryColor
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.3),
+                                    Color.clear
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                }
+                .shadow(
+                    color: themeManager.currentTheme.primaryColor.opacity(0.4),
+                    radius: 16, x: 0, y: 8
+                )
+                .shadow(
+                    color: themeManager.currentTheme.primaryColor.opacity(0.2),
+                    radius: 8, x: 0, y: 4
+                )
+            )
+            .buttonStyle(EnhancedButtonStyle())
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+        .padding(.horizontal, 40)
+        .background(
+            RoundedRectangle(cornerRadius: 32)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 32)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    themeManager.currentTheme.primaryColor.opacity(0.3),
+                                    themeManager.currentTheme.secondaryColor.opacity(0.2)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                )
+                .shadow(
+                    color: themeManager.currentTheme.primaryColor.opacity(0.1),
+                    radius: 24, x: 0, y: 12
+                )
+        )
+    }
+    
+    var magicalFloatingButton: some View {
+        Button(action: { showingAddEvent = true }) {
+            Image(systemName: "plus")
+                .font(.forma(.title2, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 64, height: 64)
+                .background(
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        themeManager.currentTheme.primaryColor,
+                                        themeManager.currentTheme.secondaryColor
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                        
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        themeManager.currentTheme.darkModeAccentHue.opacity(0.6),
+                                        Color.clear
+                                    ],
+                                    center: .center,
+                                    startRadius: 0,
+                                    endRadius: 40
+                                )
+                            )
+                            .scaleEffect(pulseAnimation * 0.3 + 0.7)
+                            .opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity : 0.3)
+                        
+                        Circle()
+                            .fill(
+                                AngularGradient(
+                                    colors: [
+                                        Color.clear,
+                                        Color.white.opacity(0.4),
+                                        Color.clear,
+                                        Color.clear
+                                    ],
+                                    center: .center,
+                                    angle: .degrees(animationOffset * 0.5)
+                                )
+                            )
+                    }
+                    .shadow(
+                        color: themeManager.currentTheme.primaryColor.opacity(0.4),
+                        radius: 20, x: 0, y: 10
+                    )
+                    .shadow(
+                        color: themeManager.currentTheme.darkModeAccentHue.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.6 : 0.2),
+                        radius: 12, x: 0, y: 6
+                    )
+                )
+        }
+        .buttonStyle(MagicalButtonStyle())
+        .padding(.trailing, 24)
+        .padding(.bottom, 32)
     }
 }
 

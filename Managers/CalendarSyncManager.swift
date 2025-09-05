@@ -53,23 +53,19 @@ class CalendarSyncManager: ObservableObject {
         GIDSignIn.sharedInstance.signIn(withPresenting: presentingViewController) { [weak self] signInResult, error in
             guard let self else { return }
             if let error {
-                print("Google Sign-In error: \(error.localizedDescription)")
                 self.isGoogleCalendarAccessGranted = false
                 return
             }
             guard let user = signInResult?.user else {
-                print("Google Sign-In error: User not found.")
                 self.isGoogleCalendarAccessGranted = false
                 return
             }
 
-            print("Google Sign-In successful for user: \(user.profile?.name ?? "Unknown")")
             self.signedInGoogleUser = user
             
             let grantedScopes = user.grantedScopes
             let calendarScope = kGTLRAuthScopeCalendar
             if grantedScopes?.contains(calendarScope) == true {
-                print("Google Calendar scope granted.")
                 self.isGoogleCalendarAccessGranted = true
                 self.googleCalendarService.authorizer = user.fetcherAuthorizer
                 Task {
@@ -77,23 +73,19 @@ class CalendarSyncManager: ObservableObject {
                     await self.fetchGoogleCalendarEvents()
                 }
             } else {
-                print("Google Calendar scope NOT granted. Requesting...")
                 let additionalScopes = [kGTLRAuthScopeCalendar]
                 user.addScopes(additionalScopes, presenting: presentingViewController) { [weak self] signInResult, error in
                     guard let self else { return }
                      if let error {
-                        print("Error adding Google Calendar scope: \(error.localizedDescription)")
                         self.isGoogleCalendarAccessGranted = false
                         return
                     }
                     guard let updatedUser = signInResult?.user,
                           let grantedScopes = updatedUser.grantedScopes,
                           grantedScopes.contains(kGTLRAuthScopeCalendar) else {
-                        print("Google Calendar scope still not granted after request.")
                         self.isGoogleCalendarAccessGranted = false
                         return
                     }
-                    print("Google Calendar scope granted after additional request.")
                     self.signedInGoogleUser = updatedUser
                     self.isGoogleCalendarAccessGranted = true
                     self.googleCalendarService.authorizer = updatedUser.fetcherAuthorizer
@@ -110,17 +102,14 @@ class CalendarSyncManager: ObservableObject {
         GIDSignIn.sharedInstance.restorePreviousSignIn { [weak self] user, error in
             guard let self else { return }
             if let error {
-                print("Google Restore Sign-In error: \(error.localizedDescription)")
                 self.isGoogleCalendarAccessGranted = false
                 return
             }
             guard let user else {
-                print("No previous Google Sign-In found.")
                 self.isGoogleCalendarAccessGranted = false
                 return
             }
 
-            print("Restored Google Sign-In for user: \(user.profile?.name ?? "Unknown")")
             self.signedInGoogleUser = user
             
             let grantedScopes = user.grantedScopes
@@ -133,7 +122,6 @@ class CalendarSyncManager: ObservableObject {
                     await self.fetchGoogleCalendarEvents()
                 }
             } else {
-                print("Restored user does not have calendar scope.")
                 self.isGoogleCalendarAccessGranted = false
             }
         }
@@ -146,41 +134,33 @@ class CalendarSyncManager: ObservableObject {
         self.googleCalendars = []
         self.googleCalendarEvents = []
         self.googleCalendarService.authorizer = nil
-        print("Signed out from Google.")
     }
 
     func fetchGoogleCalendarList() async {
         guard isGoogleCalendarAccessGranted, let authorizer = googleCalendarService.authorizer else {
-            print("CalendarSyncManager: Cannot fetch Google Calendar list: Not signed in or no authorizer. isGoogleCalendarAccessGranted = \(isGoogleCalendarAccessGranted), authorizer is nil = \(googleCalendarService.authorizer == nil)")
             self.googleCalendars = []
             return
         }
         
-        print("CalendarSyncManager: Fetching Google Calendar list...")
         let query = GTLRCalendarQuery_CalendarListList.query()
         query.showHidden = true
         query.showDeleted = false
         
-        print("CalendarSyncManager: Querying for all available calendars (including hidden) without access role restriction")
 
         do {
-            print("CalendarSyncManager: About to execute query for calendar list using withCheckedThrowingContinuation. Authorizer: \(String(describing: googleCalendarService.authorizer))")
             
             let calendarList: GTLRCalendar_CalendarList = try await withCheckedThrowingContinuation { continuation in
                 googleCalendarService.executeQuery(query) { (ticket: GTLRServiceTicket?, object: Any?, error: Error?) in
                     if let error = error {
-                        print("CalendarSyncManager.fetchGoogleCalendarList: Error executing query: \(error.localizedDescription)")
                         continuation.resume(throwing: error)
                     } else if let list = object as? GTLRCalendar_CalendarList {
                         continuation.resume(returning: list)
                     } else {
-                        print("CalendarSyncManager.fetchGoogleCalendarList: Unexpected response object type or nil. Expected GTLRCalendar_CalendarList, got \(type(of: object ?? "nil")).")
                         continuation.resume(throwing: NSError(domain: "CalendarSyncManagerError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unexpected response object type or nil for calendar list."]))
                     }
                 }
             }
             
-            print("CalendarSyncManager: Successfully fetched GTLRCalendar_CalendarList. Type: \(type(of: calendarList))")
 
             if let items = calendarList.items, !items.isEmpty {
                 let visibleCalendars = items.filter { calendar in
@@ -189,44 +169,36 @@ class CalendarSyncManager: ObservableObject {
                     let accessRole = calendar.accessRole ?? "No Access"
                     let hidden = calendar.hidden?.boolValue ?? false
                     
-                    print("Calendar: \(summary) - Access: \(accessRole) - Hidden: \(hidden) - Deleted: \(isDeleted)")
                     
                     return !isDeleted // Only filter out deleted calendars
                 }
                 
                 self.googleCalendars = visibleCalendars
-                print("CalendarSyncManager: Successfully populated \(visibleCalendars.count) Google Calendars (filtered \(items.count - visibleCalendars.count) deleted calendars).")
                 
                 let existingCalendarIDs = visibleCalendars.compactMap { $0.identifier }
                 self.selectedGoogleCalendarIDs = self.selectedGoogleCalendarIDs.filter { existingCalendarIDs.contains($0) }
             } else {
                 self.googleCalendars = []
                 if calendarList.items == nil {
-                    print("CalendarSyncManager: No Google Calendars found - calendarList.items is nil.")
                 } else if calendarList.items?.isEmpty == true {
-                     print("CalendarSyncManager: No Google Calendars found - calendarList.items is empty.")
                 }
             }
         } catch {
-            print("CalendarSyncManager: Error executing fetchGoogleCalendarList query: \(error.localizedDescription)")
             self.googleCalendars = []
         }
     }
 
     func fetchGoogleCalendarEvents() async {
         guard isGoogleCalendarAccessGranted, let authorizer = googleCalendarService.authorizer else {
-            print("Cannot fetch Google Calendar events: Not signed in or no authorizer.")
             self.googleCalendarEvents = []
             return
         }
 
         guard !selectedGoogleCalendarIDs.isEmpty else {
-            print("No Google Calendars selected to fetch events from.")
             self.googleCalendarEvents = []
             return
         }
 
-        print("Fetching Google Calendar events for selected calendars: \(selectedGoogleCalendarIDs)...")
         var allFetchedEvents: [GTLRCalendar_Event] = []
         let group = DispatchGroup()
 
@@ -246,12 +218,10 @@ class CalendarSyncManager: ObservableObject {
                 guard self != nil else { return }
 
                 if let error = error {
-                    print("Error fetching events for calendar \(calendarId): \(error.localizedDescription)")
                     return
                 }
 
                 if let events = (object as? GTLRCalendar_Events)?.items {
-                    print("Fetched \(events.count) events from calendar: \(calendarId)")
                     allFetchedEvents.append(contentsOf: events)
                 }
             }
@@ -266,7 +236,6 @@ class CalendarSyncManager: ObservableObject {
                 }
                 return date1 < date2
             }
-            print("Finished fetching all Google Calendar events. Total: \(self.googleCalendarEvents.count)")
             NotificationCenter.default.post(name: .googleCalendarEventsFetched, object: nil)
         }
     }
@@ -276,14 +245,11 @@ class CalendarSyncManager: ObservableObject {
             let granted = try await eventStore.requestFullAccessToEvents()
             self.isCalendarAccessGranted = granted
             if granted {
-                print("Calendar access granted.")
                 await fetchEventsAndUpdatePublishedProperty()
             } else {
-                print("Calendar access denied.")
                 self.appleCalendarEvents = []
             }
         } catch {
-            print("Error requesting calendar access: \(error.localizedDescription)")
             self.isCalendarAccessGranted = false
             self.appleCalendarEvents = []
         }
@@ -294,16 +260,12 @@ class CalendarSyncManager: ObservableObject {
         switch status {
         case .fullAccess, .writeOnly:
             self.isCalendarAccessGranted = true
-            print("Calendar access is granted.")
         case .denied, .restricted:
             self.isCalendarAccessGranted = false
-            print("Calendar access is denied or restricted.")
         case .notDetermined:
             self.isCalendarAccessGranted = false
-            print("Calendar access not yet requested.")
         @unknown default:
             self.isCalendarAccessGranted = false
-            print("Unknown calendar authorization status.")
         }
         return status
     }
@@ -313,14 +275,11 @@ class CalendarSyncManager: ObservableObject {
             let granted = try await eventStore.requestFullAccessToReminders()
             self.isRemindersAccessGranted = granted
             if granted {
-                print("Reminders access granted.")
                 await fetchRemindersAndUpdatePublishedProperty()
             } else {
-                print("Reminders access denied.")
                 self.appleReminders = []
             }
         } catch {
-            print("Error requesting reminders access: \(error.localizedDescription)")
             self.isRemindersAccessGranted = false
             self.appleReminders = []
         }
@@ -331,28 +290,22 @@ class CalendarSyncManager: ObservableObject {
         switch status {
         case .fullAccess:
             self.isRemindersAccessGranted = true
-            print("Reminders access is granted.")
         case .denied, .restricted:
             self.isRemindersAccessGranted = false
-            print("Reminders access is denied or restricted.")
         case .notDetermined:
             self.isRemindersAccessGranted = false
-            print("Reminders access not yet requested.")
         @unknown default:
             self.isRemindersAccessGranted = false
-            print("Unknown reminders authorization status.")
         }
         return status
     }
     
     func fetchEventsAndUpdatePublishedProperty() async {
         guard UserDefaults.standard.bool(forKey: "appleCalendarIntegrationEnabled") else {
-            print("Apple Calendar integration is disabled by user toggle. Skipping fetch.")
             return
         }
 
         guard isCalendarAccessGranted else {
-            print("Cannot fetch events, calendar access not granted.")
             self.appleCalendarEvents = []
             return
         }
@@ -364,18 +317,15 @@ class CalendarSyncManager: ObservableObject {
         let predicate = eventStore.predicateForEvents(withStart: oneMonthAgo, end: oneYearLater, calendars: calendars.filter { !$0.title.contains("Holidays") })
         
         let events = eventStore.events(matching: predicate)
-        print("Fetched \(events.count) calendar events.")
         self.appleCalendarEvents = events
     }
     
     func fetchRemindersAndUpdatePublishedProperty() async {
         guard UserDefaults.standard.bool(forKey: "appleRemindersIntegrationEnabled") else {
-            print("Apple Reminders integration is disabled by user toggle. Skipping fetch.")
             return
         }
 
         guard isRemindersAccessGranted else {
-            print("Cannot fetch reminders, reminders access not granted.")
             self.appleReminders = []
             return
         }
@@ -387,23 +337,19 @@ class CalendarSyncManager: ObservableObject {
                 continuation.resume(returning: reminders ?? [])
             }
         }
-        print("Fetched \(fetchedReminders.count) reminders.")
         self.appleReminders = fetchedReminders
     }
     
     func clearAppleCalendarEventsData() {
         self.appleCalendarEvents = []
-        print("Cleared cached Apple Calendar events in CalendarSyncManager.")
     }
 
     func clearAppleRemindersData() {
         self.appleReminders = []
-        print("Cleared cached Apple Reminders data in CalendarSyncManager.")
     }
 
     func createAppleCalendarEvent(from event: Event) async -> String? {
         guard isCalendarAccessGranted else {
-            print("Cannot create Apple Calendar event, access not granted.")
             return nil
         }
         
@@ -415,10 +361,8 @@ class CalendarSyncManager: ObservableObject {
         
         do {
             try eventStore.save(newEKEvent, span: .thisEvent, commit: true)
-            print("Successfully created Apple Calendar event with identifier: \(newEKEvent.eventIdentifier ?? "N/A")")
             return newEKEvent.eventIdentifier
         } catch {
-            print("Error creating Apple Calendar event: \(error.localizedDescription)")
             return nil
         }
     }
@@ -426,7 +370,6 @@ class CalendarSyncManager: ObservableObject {
     func updateAppleCalendarEvent(from event: Event) async -> Bool {
         guard isCalendarAccessGranted, let eventIdentifier = event.appleCalendarIdentifier,
               let ekEvent = eventStore.event(withIdentifier: eventIdentifier) else {
-            print("Cannot update Apple Calendar event, access denied or event not found.")
             return false
         }
         
@@ -436,26 +379,21 @@ class CalendarSyncManager: ObservableObject {
         
         do {
             try eventStore.save(ekEvent, span: .thisEvent, commit: true)
-            print("Successfully updated Apple Calendar event with identifier: \(ekEvent.eventIdentifier ?? "N/A")")
             return true
         } catch {
-            print("Error updating Apple Calendar event: \(error.localizedDescription)")
             return false
         }
     }
 
     func deleteAppleCalendarEvent(withIdentifier identifier: String) async -> Bool {
         guard isCalendarAccessGranted, let ekEvent = eventStore.event(withIdentifier: identifier) else {
-            print("Cannot delete Apple Calendar event, access denied or event not found.")
             return false
         }
         
         do {
             try eventStore.remove(ekEvent, span: .thisEvent, commit: true)
-            print("Successfully deleted Apple Calendar event with identifier: \(identifier)")
             return true
         } catch {
-            print("Error deleting Apple Calendar event: \(error.localizedDescription)")
             return false
         }
     }
@@ -466,27 +404,22 @@ class CalendarSyncManager: ObservableObject {
         }
         
         let query = GTLRCalendarQuery_EventsInsert.query(withObject: event, calendarId: calendarId)
-        print("Creating Google Calendar event: \(event.summary ?? "Untitled") on calendar: \(calendarId)")
         do {
             let createdEvent: GTLRCalendar_Event = try await withCheckedThrowingContinuation { continuation in
                 googleCalendarService.executeQuery(query) { (ticket: GTLRServiceTicket?, object: Any?, error: Error?) in
                     if let error = error {
-                        print("CalendarSyncManager.createGoogleCalendarEvent: Error: \(error.localizedDescription)")
                         continuation.resume(throwing: error)
                     } else if let evt = object as? GTLRCalendar_Event {
                         continuation.resume(returning: evt)
                     } else {
-                        print("CalendarSyncManager.createGoogleCalendarEvent: Unexpected response object type or nil. Expected GTLRCalendar_Event, got \(type(of: object ?? "nil")).")
                         continuation.resume(throwing: NSError(domain: "CalendarSyncManagerError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unexpected response type for create event."]))
                     }
                 }
             }
 
-            print("Successfully created Google event with ID: \(createdEvent.identifier ?? "N/A")")
             await fetchGoogleCalendarEvents()
             return createdEvent
         } catch {
-            print("Error creating Google Calendar event: \(error.localizedDescription)")
             throw error
         }
     }
@@ -496,27 +429,22 @@ class CalendarSyncManager: ObservableObject {
             throw NSError(domain: "CalendarSyncManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not signed into Google, no authorizer, or event ID missing."])
         }
         let query = GTLRCalendarQuery_EventsUpdate.query(withObject: event, calendarId: calendarId, eventId: eventId)
-        print("Updating Google Calendar event: \(event.summary ?? "Untitled") (ID: \(eventId)) on calendar: \(calendarId)")
         do {
             let updatedEvent: GTLRCalendar_Event = try await withCheckedThrowingContinuation { continuation in
                 googleCalendarService.executeQuery(query) { (ticket: GTLRServiceTicket?, object: Any?, error: Error?) in
                     if let error = error {
-                        print("CalendarSyncManager.updateGoogleCalendarEvent: Error: \(error.localizedDescription)")
                         continuation.resume(throwing: error)
                     } else if let evt = object as? GTLRCalendar_Event {
                         continuation.resume(returning: evt)
                     } else {
-                         print("CalendarSyncManager.updateGoogleCalendarEvent: Unexpected response type or nil. Expected GTLRCalendar_Event, got \(type(of: object ?? "nil")).")
                         continuation.resume(throwing: NSError(domain: "CalendarSyncManagerError", code: 3, userInfo: [NSLocalizedDescriptionKey: "Unexpected response type for update event."]))
                     }
                 }
             }
 
-            print("Successfully updated Google event with ID: \(updatedEvent.identifier ?? "N/A")")
             await fetchGoogleCalendarEvents()
             return updatedEvent
         } catch {
-            print("Error updating Google Calendar event: \(error.localizedDescription)")
             throw error
         }
     }
@@ -526,12 +454,10 @@ class CalendarSyncManager: ObservableObject {
             throw NSError(domain: "CalendarSyncManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not signed into Google or no authorizer."])
         }
         let query = GTLRCalendarQuery_EventsDelete.query(withCalendarId: calendarId, eventId: eventId)
-        print("Deleting Google Calendar event ID: \(eventId) from calendar: \(calendarId)")
         do {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) -> Void in
                 googleCalendarService.executeQuery(query) { (ticket: GTLRServiceTicket?, object: Any?, error: Error?) in
                     if let error = error {
-                        print("CalendarSyncManager.deleteGoogleCalendarEvent: Error: \(error.localizedDescription)")
                         continuation.resume(throwing: error)
                     } else {
                         continuation.resume(returning: ())
@@ -539,10 +465,8 @@ class CalendarSyncManager: ObservableObject {
                 }
             }
             
-            print("Successfully deleted Google event with ID: \(eventId)")
             await fetchGoogleCalendarEvents() // Refresh local cache
         } catch {
-            print("Error deleting Google Calendar event: \(error.localizedDescription)")
             throw error
         }
     }
@@ -561,7 +485,6 @@ class CalendarSyncManager: ObservableObject {
             let createdEvent = try await createGoogleCalendarEvent(event: googleEvent, calendarId: calendarId)
             return createdEvent?.identifier
         } catch {
-            print("Failed to create Google Calendar event from App Event: \(error)")
             return nil
         }
     }
@@ -571,7 +494,6 @@ class CalendarSyncManager: ObservableObject {
                                    calendarId: String = "primary") async -> Bool {
 
         guard let eventId = event.googleCalendarIdentifier else {
-            print("Cannot update Google event without an identifier.")
             return false
         }
 
@@ -594,7 +516,6 @@ class CalendarSyncManager: ObservableObject {
             }
             return true
         } catch {
-            print("Failed to update Google Calendar event: \(error)")
             return false
         }
     }
@@ -602,14 +523,12 @@ class CalendarSyncManager: ObservableObject {
 
     func deleteGoogleCalendarEvent(from event: Event, calendarId: String = "primary") async -> Bool {
         guard let eventId = event.googleCalendarIdentifier else {
-            print("Cannot delete Google event without an identifier.")
             return false
         }
         do {
             try await deleteGoogleCalendarEvent(eventId: eventId, calendarId: calendarId)
             return true
         } catch {
-            print("Failed to delete Google Calendar event from App Event: \(error)")
             return false
         }
     }

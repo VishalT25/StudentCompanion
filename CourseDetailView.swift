@@ -96,16 +96,13 @@ struct CourseDetailView: View {
             }
         }
         .onAppear {
-            print("🔍 UI Debug - CourseDetailView appeared")
             autoFillCalculatorValues()
         }
         .onChange(of: course.assignments) { oldValue, newValue in
-            print("🔍 UI Debug - Course assignments changed")
             autoFillCalculatorValues()
             requestSave()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            print("🔍 UI Debug - App became active, checking for course updates")
             reloadCourseData()
         }
         .alert("Delete Selected Assignments?", isPresented: $showBulkDeleteAlert) {
@@ -125,12 +122,12 @@ struct CourseDetailView: View {
                 .foregroundColor(textColor)
                 .frame(height: 50)
             Text(course.name)
-                .font(.title2.bold())
+                .font(.forma(.title2, weight: .bold))
                 .foregroundColor(textColor)
                 .multilineTextAlignment(.center)
             VStack(spacing: 4) {
                 Text("Current Grade")
-                    .font(.subheadline)
+                    .font(.forma(.subheadline))
                     .foregroundColor(textColor.opacity(0.8))
                 let grade = calculateCurrentGrade()
                 if grade != "N/A" {
@@ -139,7 +136,7 @@ struct CourseDetailView: View {
                         .foregroundColor(textColor)
                 } else {
                     Text("Enter grades to calculate")
-                        .font(.subheadline)
+                        .font(.forma(.subheadline))
                         .foregroundColor(textColor.opacity(0.7))
                 }
             }
@@ -147,24 +144,31 @@ struct CourseDetailView: View {
         .padding()
         .frame(maxWidth: .infinity)
         .background(
-            LinearGradient(
-                gradient: Gradient(colors: [course.color.opacity(0.9), course.color]),
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            RoundedRectangle(cornerRadius: 16)
+                .fill(
+                    LinearGradient(
+                        gradient: Gradient(colors: [
+                            course.color.opacity(0.9),
+                            course.color,
+                            course.color.opacity(0.8)
+                        ]),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .shadow(color: course.color.opacity(0.3), radius: 12, x: 0, y: 6)
         )
-        .cornerRadius(16)
     }
     
     private var assignmentsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("Assignments & Exams")
-                    .font(.title3.bold())
+                    .font(.forma(.title3, weight: .bold))
                 Spacer()
                 if bulkSelectionManager.isSelecting {
                     Text("\(bulkSelectionManager.selectedCount()) selected")
-                        .font(.subheadline.weight(.medium))
+                        .font(.forma(.subheadline, weight: .medium))
                         .foregroundColor(.secondary)
                 } else {
                     Button(action: {
@@ -185,16 +189,16 @@ struct CourseDetailView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.red)
-                            .font(.subheadline)
+                            .font(.forma(.subheadline))
                         
                         Text(validation.message)
-                            .font(.subheadline)
+                            .font(.forma(.subheadline))
                             .foregroundColor(.red)
                         
                         Spacer()
                         
                         Text("Total: \(String(format: "%.1f", validation.total))%")
-                            .font(.caption)
+                            .font(.forma(.caption))
                             .foregroundColor(.white)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
@@ -221,13 +225,13 @@ struct CourseDetailView: View {
                         .font(.system(size: 40))
                         .foregroundColor(.secondary)
                     Text("No assignments added yet")
-                        .font(.subheadline)
+                        .font(.forma(.subheadline))
                         .foregroundColor(.secondary)
                     Button("Add your first assignment") {
                         course.assignments.append(Assignment(courseId: course.id))
                         requestSave()
                     }
-                    .font(.caption)
+                    .font(.forma(.caption))
                     .foregroundColor(course.color)
                 }
                 .frame(maxWidth: .infinity)
@@ -280,8 +284,14 @@ struct CourseDetailView: View {
             }
         }
         .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(course.color.opacity(0.3), lineWidth: 1)
+                )
+        )
     }
     
     private func selectionIndicator(isSelected: Bool) -> some View {
@@ -318,28 +328,34 @@ struct CourseDetailView: View {
     private var finalGradeCalculatorSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Final Grade Calculator")
-                .font(.title3.bold())
+                .font(.forma(.title3, weight: .bold))
             
             VStack(spacing: 12) {
                 CalculatorInputRow(
                     title: "Your current grade:",
                     value: $currentGradeInput,
                     suffix: "%",
-                    placeholder: "e.g. 88"
+                    placeholder: "e.g. 88",
+                    courseColor: course.color,
+                    themeManager: themeManager
                 )
                 
                 CalculatorInputRow(
                     title: "Grade you want:",
                     value: $desiredGradeInput,
                     suffix: "%",
-                    placeholder: "e.g. 85"
+                    placeholder: "85",
+                    courseColor: course.color,
+                    themeManager: themeManager
                 )
                 
                 CalculatorInputRow(
                     title: "Final exam weight:",
                     value: $finalWorthInput,
                     suffix: "%",
-                    placeholder: "e.g. 40"
+                    placeholder: "100",
+                    courseColor: course.color,
+                    themeManager: themeManager
                 )
             }
             
@@ -351,22 +367,31 @@ struct CourseDetailView: View {
                     neededOnFinalOutput = ""
                     autoFillCalculatorValues()
                 }
-                .font(.subheadline.weight(.medium))
+                .font(.forma(.subheadline, weight: .medium))
                 .foregroundColor(course.color)
                 .frame(maxWidth: .infinity)
                 .frame(height: 44)
-                .background(course.color.opacity(0.15))
-                .cornerRadius(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(.regularMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(course.color.opacity(0.3), lineWidth: 1)
+                        )
+                )
                 
                 Button("Calculate") {
                     calculateNeededOnFinal()
                 }
-                .font(.subheadline.weight(.medium))
-                .foregroundColor(course.color.isDark ? .white : .black)
+                .font(.forma(.subheadline, weight: .medium))
+                .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
                 .frame(height: 44)
-                .background(course.color)
-                .cornerRadius(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(course.color)
+                        .shadow(color: course.color.opacity(0.3), radius: 8, x: 0, y: 4)
+                )
             }
             
             if !neededOnFinalOutput.isEmpty {
@@ -374,8 +399,14 @@ struct CourseDetailView: View {
             }
         }
         .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(course.color.opacity(0.3), lineWidth: 1)
+                )
+        )
     }
     
     private var finalGradeResultView: some View {
@@ -383,7 +414,7 @@ struct CourseDetailView: View {
             if let neededGrade = Double(neededOnFinalOutput) {
                 VStack(spacing: 8) {
                     Text(getMotivationalMessage(for: neededGrade))
-                        .font(.subheadline.weight(.medium))
+                        .font(.forma(.subheadline, weight: .medium))
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                     
@@ -392,28 +423,25 @@ struct CourseDetailView: View {
                         .foregroundColor(getGradeColor(for: neededGrade))
                     
                     Text("needed on your final exam")
-                        .font(.subheadline)
+                        .font(.forma(.subheadline))
                         .foregroundColor(.secondary)
                 }
             } else {
                 Text(neededOnFinalOutput)
-                    .font(.subheadline.weight(.medium))
+                    .font(.forma(.subheadline, weight: .medium))
                     .foregroundColor(.red)
             }
         }
         .frame(maxWidth: .infinity)
         .padding()
         .background(
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    course.color.opacity(0.1),
-                    course.color.opacity(0.05)
-                ]),
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(course.color.opacity(0.2), lineWidth: 1)
+                )
         )
-        .cornerRadius(12)
     }
     
     func calculateCurrentGrade() -> String {
@@ -516,42 +544,12 @@ struct CourseDetailView: View {
     }
     
     private func reloadCourseData() {
-        print("🔍 UI Debug - ⭐ RELOADING COURSE DATA ⭐")
-        
-        // Use CourseStorage instead of direct UserDefaults to stay consistent
         let allCourses = CourseStorage.load()
-        print("🔍 UI Debug - Loaded \(allCourses.count) total courses from storage")
         
         if let updatedCourse = allCourses.first(where: { $0.id == course.id }) {
-            print("🔍 UI Debug - ✅ Found updated course '\(updatedCourse.name)' with \(updatedCourse.assignments.count) assignments")
-            
-            for (index, assignment) in updatedCourse.assignments.enumerated() {
-                print("🔍 UI Debug - Assignment \(index): name='\(assignment.name)', grade='\(assignment.grade)', weight='\(assignment.weight)'")
-            }
-            
-            // Force UI update on main thread
             DispatchQueue.main.async {
-                print("🔍 UI Debug - 🔄 UPDATING UI ON MAIN THREAD")
-                
-                // Check if assignments actually changed
-                let oldCount = course.assignments.count
-                let newCount = updatedCourse.assignments.count
-                print("🔍 UI Debug - Assignment count: \(oldCount) -> \(newCount)")
-                
-                // Force update the course assignments
                 course.assignments = updatedCourse.assignments
-                
-                // Trigger view refresh
                 autoFillCalculatorValues()
-                
-                print("🔍 UI Debug - ✅ UI UPDATE COMPLETE")
-            }
-        } else {
-            print("🔍 UI Debug - ❌ Failed to find course with ID: \(course.id)")
-            
-            // Debug: Print all course IDs to see what's available
-            for (index, debugCourse) in allCourses.enumerated() {
-                print("🔍 UI Debug - Available course \(index): '\(debugCourse.name)' ID: \(debugCourse.id)")
             }
         }
     }
@@ -673,30 +671,38 @@ struct CalculatorInputRow: View {
     @Binding var value: String
     let suffix: String
     let placeholder: String
+    let courseColor: Color
+    let themeManager: ThemeManager
     
     var body: some View {
         HStack {
             Text(title)
-                .font(.subheadline)
+                .font(.forma(.subheadline))
                 .foregroundColor(.primary)
             
             Spacer()
             
-            HStack(spacing: 4) {
+            HStack(spacing: 8) {
                 TextField(placeholder, text: $value)
-                    .font(.subheadline.weight(.medium))
+                    .font(.forma(.subheadline, weight: .medium))
                     .keyboardType(.decimalPad)
                     .textFieldStyle(.plain)
                     .frame(width: 60)
                     .multilineTextAlignment(.trailing)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(6)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(.regularMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(courseColor.opacity(0.3), lineWidth: 1)
+                            )
+                    )
                 
                 Text(suffix)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .font(.forma(.subheadline, weight: .medium))
+                    .foregroundColor(courseColor)
             }
         }
     }

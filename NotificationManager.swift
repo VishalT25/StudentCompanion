@@ -48,11 +48,11 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
             await MainActor.run {
                 self.notificationAuthorisation = granted ? .authorized : .denied
                 self.isAuthorized = granted
-                print(granted ? "✅ Notifications enabled" : "❌ Notifications denied")
+                 (granted ? "✅ Notifications enabled" : "❌ Notifications denied")
             }
         } catch {
             await MainActor.run {
-                print("❌ Notification authorization error: \(error)")
+                 ("❌ Notification authorization error: \(error)")
                 self.notificationAuthorisation = .denied
                 self.isAuthorized = false
             }
@@ -65,7 +65,7 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
                 self.notificationAuthorisation = settings.authorizationStatus
                 self.isAuthorized = settings.authorizationStatus == .authorized
                 
-                print("🔔 Notification authorization status: \(settings.authorizationStatus.rawValue)")
+                 ("🔔 Notification authorization status: \(settings.authorizationStatus.rawValue)")
             }
         }
     }
@@ -103,7 +103,7 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
             value: -event.reminderTime.totalMinutes,
             to: event.date
         ), triggerDate > Date() else {
-            print("❌ Invalid trigger date for event: \(event.title)")
+             ("❌ Invalid trigger date for event: \(event.title)")
             return
         }
         
@@ -120,9 +120,9 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
         
         center.add(request) { error in
             if let error = error {
-                print("❌ Failed to schedule event notification: \(error)")
+                 ("❌ Failed to schedule event notification: \(error)")
             } else {
-                print("✅ Scheduled notification for \(event.title)")
+                 ("✅ Scheduled notification for \(event.title)")
             }
         }
     }
@@ -142,7 +142,7 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
             value: -item.reminderTime.totalMinutes,
             to: item.startTime
         ), triggerDate > Date() else {
-            print("❌ Invalid trigger date for schedule item: \(item.title)")
+             ("❌ Invalid trigger date for schedule item: \(item.title)")
             return
         }
         
@@ -159,9 +159,9 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
         
         center.add(request) { error in
             if let error = error {
-                print("❌ Failed to schedule schedule notification: \(error)")
+                 ("❌ Failed to schedule schedule notification: \(error)")
             } else {
-                print("✅ Scheduled notification for \(item.title)")
+                 ("✅ Scheduled notification for \(item.title)")
             }
         }
     }
@@ -186,9 +186,9 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
         
         center.add(request) { error in
             if let error = error {
-                print("❌ Failed to schedule grade notification: \(error)")
+                 ("❌ Failed to schedule grade notification: \(error)")
             } else {
-                print("✅ Scheduled notification for new grade")
+                 ("✅ Scheduled notification for new grade")
             }
         }
     }
@@ -197,19 +197,19 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
     func cancelNotification(for eventId: UUID) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: ["event-\(eventId.uuidString)"])
-        print("✅ Cancelled notification for event \(eventId)")
+         ("✅ Cancelled notification for event \(eventId)")
     }
     
     func cancelScheduleNotification(for scheduleId: UUID) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: ["schedule-\(scheduleId.uuidString)"])
-        print("✅ Cancelled notification for schedule item \(scheduleId)")
+         ("✅ Cancelled notification for schedule item \(scheduleId)")
     }
     
     func cancelAllNotifications() {
         let center = UNUserNotificationCenter.current()
         center.removeAllPendingNotificationRequests()
-        print("✅ Cancelled all notifications")
+         ("✅ Cancelled all notifications")
     }
     
     // MARK: - Utility Methods
@@ -236,7 +236,7 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                didReceive response: UNNotificationResponse,
                                withCompletionHandler completionHandler: @escaping () -> Void) {
-        print("✅ User tapped notification: \(response.notification.request.identifier)")
+         ("✅ User tapped notification: \(response.notification.request.identifier)")
         completionHandler()
     }
     
@@ -259,7 +259,7 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
             value: -reminderTime.totalMinutes,
             to: event.date
         ), triggerDate > Date() else {
-            print("❌ Invalid trigger date for event: \(event.title)")
+             ("❌ Invalid trigger date for event: \(event.title)")
             return
         }
         
@@ -276,9 +276,9 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
         
         center.add(request) { error in
             if let error = error {
-                print("❌ Failed to schedule event notification: \(error)")
+                 ("❌ Failed to schedule event notification: \(error)")
             } else {
-                print("✅ Scheduled notification for \(event.title)")
+                 ("✅ Scheduled notification for \(event.title)")
             }
         }
     }
@@ -291,7 +291,7 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
         ]
         center.removePendingNotificationRequests(withIdentifiers: identifiers)
         center.removeDeliveredNotifications(withIdentifiers: identifiers)
-        print("✅ Removed all notifications for event: \(event.title)")
+         ("✅ Removed all notifications for event: \(event.title)")
     }
 
     // MARK: - Schedule Item Notification Methods
@@ -350,9 +350,9 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
                 
                 center.add(request) { error in
                     if let error = error {
-                        print("❌ Failed to schedule schedule notification: \(error)")
+                         ("❌ Failed to schedule schedule notification: \(error)")
                     } else {
-                        print("✅ Scheduled notification for \(item.title) on \(scheduleDate)")
+                         ("✅ Scheduled notification for \(item.title) on \(scheduleDate)")
                     }
                 }
             }
@@ -375,7 +375,7 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
         
         center.removePendingNotificationRequests(withIdentifiers: identifiers)
         center.removeDeliveredNotifications(withIdentifiers: identifiers)
-        print("✅ Removed all notifications for schedule item: \(item.title)")
+         ("✅ Removed all notifications for schedule item: \(item.title)")
     }
 
     // MARK: - Alias methods for backward compatibility

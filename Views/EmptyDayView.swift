@@ -22,74 +22,73 @@ struct EmptyDayView: View {
     }
     
     var body: some View {
-        VStack(spacing: 16) {
-            // Illustration
+        VStack(spacing: 24) {
+            // Beautiful illustration
             ZStack {
                 Circle()
                     .fill(
-                        LinearGradient(
+                        RadialGradient(
                             colors: [
-                                illustrationColor.opacity(0.15),
-                                illustrationColor.opacity(0.05)
+                                illustrationColor.opacity(0.2),
+                                illustrationColor.opacity(0.1),
+                                Color.clear
                             ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 40
                         )
                     )
-                    .frame(width: 60, height: 60)
-                    .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
+                    .frame(width: 80, height: 80)
                 
                 Image(systemName: illustrationIcon)
-                    .font(.system(size: 24, weight: .light))
+                    .font(.system(size: 32, weight: .light))
                     .foregroundColor(illustrationColor)
             }
             
-            VStack(spacing: 8) {
+            VStack(spacing: 12) {
                 Text(emptyMessage)
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .font(.forma(.title3, weight: .semibold))
                     .foregroundColor(.primary)
                     .multilineTextAlignment(.center)
                 
                 Text(emptySubtitle)
-                    .font(.system(size: 14, weight: .regular))
+                    .font(.forma(.subheadline))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
             }
             
             if !isWeekend && isToday {
-                VStack(spacing: 6) {
-                    Text("Enjoy your free time!")
-                        .font(.system(size: 14, weight: .medium))
+                VStack(spacing: 8) {
+                    Text("Perfect time to relax! ✨")
+                        .font(.forma(.subheadline, weight: .medium))
                         .foregroundColor(themeManager.currentTheme.primaryColor)
                     
-                    Text("Perfect time to catch up on assignments or relax.")
-                        .font(.system(size: 12, weight: .regular))
+                    Text("Catch up on assignments or enjoy some free time.")
+                        .font(.forma(.caption))
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
-                        .lineLimit(2)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
                 .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(themeManager.currentTheme.primaryColor.opacity(0.08))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(themeManager.currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
-                        )
-                        .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 10)
+                    .ultraThinMaterial,
+                    in: RoundedRectangle(cornerRadius: 16)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(themeManager.currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
                 )
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-        .padding(.horizontal, 16)
+        .padding(.vertical, 32)
+        .padding(.horizontal, 20)
     }
     
     private var emptyMessage: String {
         if isWeekend {
-            return "Weekend Vibes ✨"
+            return "Weekend Vibes"
         } else if isToday {
             return "No Classes Today"
         } else {
@@ -99,11 +98,11 @@ struct EmptyDayView: View {
     
     private var emptySubtitle: String {
         if isWeekend {
-            return "Time to relax, recharge, and enjoy your weekend!"
+            return "Time to relax and recharge for the week ahead"
         } else if isToday {
-            return "You have a completely free day ahead of you."
+            return "You have a completely free day ahead"
         } else {
-            return "This day is free from scheduled classes."
+            return "This day is free from scheduled classes"
         }
     }
     

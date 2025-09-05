@@ -22,42 +22,39 @@ struct WeekDayCard: View {
     }
     
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             Text(dayAbbreviation)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(textColor)
-                .opacity(0.8)
+                .font(.forma(.caption2, weight: .medium))
+                .foregroundColor(textColor.opacity(0.7))
             
             Text(dayNumber)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .font(.forma(.callout, weight: .bold))
                 .foregroundColor(textColor)
             
             if classCount > 0 {
                 Text("\(classCount)")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundColor(badgeTextColor)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 14, height: 14)
                     .background(
                         Circle()
-                            .fill(badgeBackgroundColor)
-                            .adaptiveFabDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity)
+                            .fill(badgeBackgroundGradient)
                     )
             } else {
                 Circle()
                     .fill(Color.clear)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 14, height: 14)
             }
         }
-        .frame(height: 70)
+        .frame(height: 60)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(backgroundColor)
-                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 12)
+                .fill(backgroundGradient)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(borderColor, lineWidth: isSelected ? 2 : 1)
+                .stroke(borderGradient, lineWidth: isSelected ? 2 : 1)
         )
         .scaleEffect(isSelected ? 1.05 : 1.0)
         .shadow(
@@ -65,26 +62,69 @@ struct WeekDayCard: View {
             radius: shadowRadius,
             x: 0, y: shadowRadius / 2
         )
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isSelected)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isToday)
     }
     
-    private var backgroundColor: Color {
+    private var backgroundGradient: LinearGradient {
         if isSelected {
-            return themeManager.currentTheme.primaryColor.opacity(0.15)
+            return LinearGradient(
+                colors: [
+                    themeManager.currentTheme.primaryColor.opacity(0.2),
+                    themeManager.currentTheme.primaryColor.opacity(0.1)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
         } else if isToday {
-            return themeManager.currentTheme.primaryColor.opacity(0.05)
+            return LinearGradient(
+                colors: [
+                    themeManager.currentTheme.primaryColor.opacity(0.1),
+                    themeManager.currentTheme.primaryColor.opacity(0.05)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
         } else {
-            return Color(.systemBackground)
+            return LinearGradient(
+                colors: [
+                    .clear,
+                    .clear
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
         }
     }
     
-    private var borderColor: Color {
+    private var borderGradient: LinearGradient {
         if isSelected {
-            return themeManager.currentTheme.primaryColor
+            return LinearGradient(
+                colors: [
+                    themeManager.currentTheme.primaryColor,
+                    themeManager.currentTheme.primaryColor.opacity(0.7)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
         } else if isToday {
-            return themeManager.currentTheme.primaryColor.opacity(0.4)
+            return LinearGradient(
+                colors: [
+                    themeManager.currentTheme.primaryColor.opacity(0.5),
+                    themeManager.currentTheme.primaryColor.opacity(0.3)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
         } else {
-            return colorScheme == .dark ? Color(.systemGray4) : Color(.systemGray6)
+            return LinearGradient(
+                colors: [
+                    Color(.systemGray5),
+                    Color(.systemGray6)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
         }
     }
     
@@ -98,11 +138,25 @@ struct WeekDayCard: View {
         }
     }
     
-    private var badgeBackgroundColor: Color {
+    private var badgeBackgroundGradient: LinearGradient {
         if isSelected || isToday {
-            return themeManager.currentTheme.primaryColor
+            return LinearGradient(
+                colors: [
+                    themeManager.currentTheme.primaryColor,
+                    themeManager.currentTheme.primaryColor.opacity(0.8)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
         } else {
-            return themeManager.currentTheme.primaryColor.opacity(0.2)
+            return LinearGradient(
+                colors: [
+                    themeManager.currentTheme.primaryColor.opacity(0.3),
+                    themeManager.currentTheme.primaryColor.opacity(0.2)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
         }
     }
     
@@ -120,17 +174,17 @@ struct WeekDayCard: View {
         } else if isToday {
             return themeManager.currentTheme.primaryColor.opacity(0.1)
         } else {
-            return Color.black.opacity(0.03)
+            return Color.black.opacity(0.02)
         }
     }
     
     private var shadowRadius: CGFloat {
         if isSelected {
-            return 8
+            return 12
         } else if isToday {
-            return 4
+            return 6
         } else {
-            return 2
+            return 3
         }
     }
 }

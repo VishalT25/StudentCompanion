@@ -72,7 +72,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             geocoder.reverseGeocodeLocation(location) { [weak self] (placemarks, error) in
                 guard let self = self, self.manualCityOverride == nil else { return } // Check override again
                 if let error = error {
-                    print("Error reverse geocoding: \(error.localizedDescription)")
+                     ("Error reverse geocoding: \(error.localizedDescription)")
                     self.locationName = "Unknown Location"
                     return
                 }
@@ -87,7 +87,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         if manualCityOverride != nil { return } // Ignore GPS errors if manual city is set
-        print("Failed to find user's location: \(error.localizedDescription)")
+         ("Failed to find user's location: \(error.localizedDescription)")
         // Could set a default location or show an error message
         self.locationName = "Location Error"
     }

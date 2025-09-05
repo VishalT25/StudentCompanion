@@ -40,6 +40,7 @@ struct SwipePageView: View {
     @State private var selectedRoute: AppRoute?
     @State private var showingWeatherPopover = false
     @State private var servicesInitialized = false
+    @State private var animationOffset: CGFloat = 0
     @Environment(\.scenePhase) var scenePhase
     
     @Binding var navigateToPage: PageType?
@@ -51,18 +52,71 @@ struct SwipePageView: View {
     
     init(navigateToPage: Binding<PageType?> = .constant(nil)) {
         self._navigateToPage = navigateToPage
+        // This removes the default background from the PageTabView, making it transparent
+        UIScrollView.appearance().backgroundColor = .clear
     }
     
     var body: some View {
-        GeometryReader { geometry in
+        ZStack {
+            // Static background that never changes regardless of tab - this stays completely static
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(.systemGroupedBackground),
+                        themeManager.currentTheme.quaternaryColor.opacity(0.3),
+                        themeManager.currentTheme.tertiaryColor.opacity(0.2),
+                        Color(.systemBackground)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea(.all)
+                
+                // Add the animated mesh gradients here so they're also static
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    themeManager.currentTheme.primaryColor.opacity(0.15),
+                                    themeManager.currentTheme.secondaryColor.opacity(0.08),
+                                    Color.clear
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: 200
+                            )
+                        )
+                        .frame(width: 400, height: 400)
+                        .offset(
+                            x: CGFloat(index * 150 - 300) + sin(animationOffset * 0.001 + Double(index)) * 50,
+                            y: CGFloat(index * 200 - 100) + cos(animationOffset * 0.0008 + Double(index * 2)) * 30
+                        )
+                        .blur(radius: 30)
+                }
+                
+                // Subtle noise texture
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.01),
+                                Color.clear,
+                                Color.black.opacity(0.01)
+                            ],
+                            startPoint: UnitPoint(x: animationOffset * 0.0005, y: 0),
+                            endPoint: UnitPoint(x: 1 + animationOffset * 0.0005, y: 1)
+                        )
+                    )
+            }
+            
             VStack(spacing: 0) {
                 topToolbarView
-                    .zIndex(10)
                 
                 TabView(selection: $currentPage) {
                     GPAView()
                         .environmentObject(themeManager)
-                        .background(Color(.systemGroupedBackground))
+                        .background(Color.clear)
                         .tag(PageType.courses)
                     
                     HomePageView(navigateToPage: $navigateToPage)
@@ -72,27 +126,27 @@ struct SwipePageView: View {
                         .environmentObject(calendarSyncManager)
                         .environmentObject(academicCalendarManager)
                         .environmentObject(realtimeSyncManager)
-                        .background(Color(.systemGroupedBackground))
+                        .background(Color.clear)
                         .tag(PageType.home)
                     
                     ScheduleView()
                         .environmentObject(viewModel)
                         .environmentObject(themeManager)
                         .environmentObject(academicCalendarManager)
-                        .background(Color(.systemGroupedBackground))
+                        .background(Color.clear)
                         .tag(PageType.schedule)
                     
                     EventsListView()
                         .environmentObject(viewModel)
                         .environmentObject(themeManager)
-                        .background(Color(.systemGroupedBackground))
+                        .background(Color.clear)
                         .tag(PageType.reminders)
                 }
+                .background(Color.clear)
                 .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
-                .animation(.spring(response: 0.6, dampingFraction: 0.8), value: currentPage)
+                .ignoresSafeArea(edges: .bottom)
             }
         }
-        .background(Color(.systemGroupedBackground))
         .overlay {
             if showMenu {
                 ZStack {
@@ -143,24 +197,12 @@ struct SwipePageView: View {
             }
         }
         .fullScreenCover(isPresented: $showingSettings) {
-            NavigationView {
-                SettingsView()
-                    .environmentObject(themeManager)
-                    .environmentObject(calendarSyncManager)
-                    .environmentObject(weatherService)
-                    .environmentObject(viewModel)
-                    .environmentObject(realtimeSyncManager)
-                    .background(Color(.systemGroupedBackground))
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button("Done") {
-                                showingSettings = false
-                            }
-                            .font(.forma(.body))
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
-                        }
-                    }
-            }
+            SettingsView()
+                .environmentObject(themeManager)
+                .environmentObject(calendarSyncManager)
+                .environmentObject(weatherService)
+                .environmentObject(viewModel)
+                .environmentObject(realtimeSyncManager)
         }
         .fullScreenCover(isPresented: $showingResources) {
             NavigationView {
@@ -194,13 +236,14 @@ struct SwipePageView: View {
             }
         }
         .fullScreenCover(isPresented: $showingNotificationCenter) {
-            NotificationCenterView()
+            NotificationsView()
                 .environmentObject(themeManager)
                 .environmentObject(viewModel)
                 .environmentObject(NotificationManager.shared)
         }
         .onChange(of: selectedRoute) { newRoute in
             if let route = newRoute {
+                showMenu = false
                 switch route {
                 case .schedule:
                     withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
@@ -254,6 +297,13 @@ struct SwipePageView: View {
                     }
                 }
             }
+            startAnimations()
+        }
+    }
+    
+    private func startAnimations() {
+        withAnimation(.linear(duration: 20).repeatForever(autoreverses: false)) {
+            animationOffset = 360
         }
     }
     
@@ -307,7 +357,7 @@ struct SwipePageView: View {
                         .padding(5)
                         .background(
                             Circle()
-                                .fill(Color.white.opacity(0.85))
+                                .fill(.thinMaterial)
                                 .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.15), radius: 2, x: 0, y: 1)
                         )
                 }
@@ -331,7 +381,7 @@ struct SwipePageView: View {
                         .padding(5)
                         .background(
                             Circle()
-                                .fill(Color.white.opacity(0.85))
+                                .fill(.thinMaterial)
                                 .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.15), radius: 2, x: 0, y: 1)
                         )
                 }
@@ -343,23 +393,22 @@ struct SwipePageView: View {
         }
         .background(
             ZStack {
+                // The .ultraThinMaterial provides the frosted glass effect.
+                // I've removed the static gradient that was on top of it,
+                // so now it will blur the main animated background, creating a
+                // dynamic and modern textured look instead of a static gray.
                 Rectangle().fill(.ultraThinMaterial)
-                LinearGradient(
-                    colors: [Color.white.opacity(0.24), Color.white.opacity(0.10)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
             }
             .ignoresSafeArea(edges: .top)
         )
         .overlay(alignment: .bottom) {
+            // Made the separator line thinner and more subtle for a cleaner look.
             Rectangle()
-                .fill(Color.white.opacity(0.5))
-                .frame(height: 0.6)
+                .fill(Color.white.opacity(0.15))
+                .frame(height: 0.5)
                 .blendMode(.overlay)
         }
         .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 5)
-        .zIndex(50)
     }
     
     private var pageIndicatorView: some View {
@@ -410,7 +459,7 @@ struct HomePageView: View {
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var weatherService: WeatherService
     @EnvironmentObject private var calendarSyncManager: CalendarSyncManager
-    @EnvironmentObject private var academicCalendarManager: AcademicCalendarManager // NEW
+    @EnvironmentObject private var academicCalendarManager: AcademicCalendarManager
     
     @Binding var navigateToPage: PageType?
     @State private var selectedRoute: AppRoute?
@@ -473,7 +522,7 @@ struct HomePageView: View {
             }
         }
     }
-    
+
     private var quickActionsView: some View {
         VStack(spacing: 16) {
             HStack(spacing: 12) {
@@ -560,7 +609,7 @@ struct HomePageView: View {
     
     private func openCustomD2LLink() {
         guard let url = URL(string: d2lLink) else {
-            print("Invalid D2L URL: \(d2lLink)")
+             ("Invalid D2L URL: \(d2lLink)")
             return
         }
         UIApplication.shared.open(url)
@@ -596,7 +645,7 @@ struct ActionCardView: View {
         .frame(height: 100)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
+                .fill(.regularMaterial)
                 .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.12), radius: 8, x: 0, y: 4)
         )
         .adaptiveWidgetDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 12)
@@ -709,7 +758,7 @@ struct EventsPreviewView: View {
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
+                .fill(.regularMaterial)
                 .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.12), radius: 12, x: 0, y: 6)
         )
         .adaptiveWidgetDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 16)

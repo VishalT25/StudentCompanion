@@ -238,9 +238,9 @@ class ThemeManager: ObservableObject {
             if currentIconName != newIconName {
                 UIApplication.shared.setAlternateIconName(newIconName) { error in
                     if let error = error {
-                        print("Error setting alternate app icon: \(error.localizedDescription)")
+                         ("Error setting alternate app icon: \(error.localizedDescription)")
                     } else {
-                        print("App icon changed successfully to \(newIconName ?? "Primary").")
+                         ("App icon changed successfully to \(newIconName ?? "Primary").")
                     }
                 }
             }
@@ -376,6 +376,60 @@ extension View {
                             y: 5
                         )
                 }
+        } else {
+            self
+        }
+    }
+    
+    /// Adaptive card dark mode enhancement with customizable corner radius
+    @ViewBuilder
+    func adaptiveCardDarkModeHue(using theme: AppTheme, intensity: Double, cornerRadius: CGFloat = 16, isEnabled: Bool = true) -> some View {
+        if isEnabled {
+            self
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    theme.darkModeAccentHue.opacity(intensity * 0.6),
+                                    theme.darkModeHue.opacity(intensity * 0.4),
+                                    Color.clear
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1 + (intensity * 1.5)
+                        )
+                )
+                .shadow(
+                    color: theme.darkModeShadowColor.opacity(intensity * 0.3),
+                    radius: 8 + (intensity * 8),
+                    x: 0,
+                    y: 4 + (intensity * 4)
+                )
+        } else {
+            self
+        }
+    }
+    
+    /// Widget-specific dark mode enhancement for smaller components
+    @ViewBuilder
+    func adaptiveWidgetDarkModeHue(using theme: AppTheme, intensity: Double, cornerRadius: CGFloat = 12, isEnabled: Bool = true) -> some View {
+        if isEnabled {
+            self
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(
+                            theme.darkModeAccentHue.opacity(intensity * 0.4),
+                            lineWidth: 0.5 + (intensity * 1.0)
+                        )
+                )
+                .shadow(
+                    color: theme.darkModeShadowColor.opacity(intensity * 0.25),
+                    radius: 6 + (intensity * 6),
+                    x: 0,
+                    y: 3 + (intensity * 3)
+                )
         } else {
             self
         }
