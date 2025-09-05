@@ -82,7 +82,6 @@
 			membershipExceptions = (
 				AlternateAppIcons.xcassets,
 				Info.plist,
-				Views/SharedComponents/SpectacularBackground.swift,
 			);
 			target = ABA4EE802DD8389E0068853B /* StuCo */;
 		};
