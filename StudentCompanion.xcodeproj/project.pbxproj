@@ -10,6 +10,16 @@
 		AB0FB5472DF8DD0D0037ADA2 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AB0FB5462DF8DD0D0037ADA2 /* WidgetKit.framework */; };
 		AB0FB5492DF8DD0D0037ADA2 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AB0FB5482DF8DD0D0037ADA2 /* SwiftUI.framework */; };
 		AB0FB5582DF8DD0F0037ADA2 /* ClassLiveActivityExtensionExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AB0FB5442DF8DD0D0037ADA2 /* ClassLiveActivityExtensionExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AB63E0272E6B602200C82FD2 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = AB63E0262E6B602200C82FD2 /* Auth */; };
+		AB63E0292E6B602200C82FD2 /* Functions in Frameworks */ = {isa = PBXBuildFile; productRef = AB63E0282E6B602200C82FD2 /* Functions */; };
+		AB63E02B2E6B602200C82FD2 /* PostgREST in Frameworks */ = {isa = PBXBuildFile; productRef = AB63E02A2E6B602200C82FD2 /* PostgREST */; };
+		AB63E02D2E6B602200C82FD2 /* Realtime in Frameworks */ = {isa = PBXBuildFile; productRef = AB63E02C2E6B602200C82FD2 /* Realtime */; };
+		AB63E02F2E6B602200C82FD2 /* Storage in Frameworks */ = {isa = PBXBuildFile; productRef = AB63E02E2E6B602200C82FD2 /* Storage */; };
+		AB63E0372E6BAF7B00C82FD2 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = AB63E0362E6BAF7B00C82FD2 /* Auth */; };
+		AB63E0392E6BAF7B00C82FD2 /* Functions in Frameworks */ = {isa = PBXBuildFile; productRef = AB63E0382E6BAF7B00C82FD2 /* Functions */; };
+		AB63E03B2E6BAF7B00C82FD2 /* PostgREST in Frameworks */ = {isa = PBXBuildFile; productRef = AB63E03A2E6BAF7B00C82FD2 /* PostgREST */; };
+		AB63E03D2E6BAF7B00C82FD2 /* Realtime in Frameworks */ = {isa = PBXBuildFile; productRef = AB63E03C2E6BAF7B00C82FD2 /* Realtime */; };
+		AB63E03F2E6BAF7B00C82FD2 /* Storage in Frameworks */ = {isa = PBXBuildFile; productRef = AB63E03E2E6BAF7B00C82FD2 /* Storage */; };
 		ABB5F84E2E58216D00C977F3 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = ABB5F84D2E58216D00C977F3 /* Supabase */; };
 		ABC382302E15983400E4B1CD /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = ABC3822F2E15983400E4B1CD /* GoogleSignIn */; };
 		ABC382332E15985600E4B1CD /* GoogleAPIClientForREST_Calendar in Frameworks */ = {isa = PBXBuildFile; productRef = ABC382322E15985600E4B1CD /* GoogleAPIClientForREST_Calendar */; };
@@ -132,8 +142,18 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AB63E0392E6BAF7B00C82FD2 /* Functions in Frameworks */,
+				AB63E02D2E6B602200C82FD2 /* Realtime in Frameworks */,
+				AB63E02B2E6B602200C82FD2 /* PostgREST in Frameworks */,
+				AB63E03D2E6BAF7B00C82FD2 /* Realtime in Frameworks */,
+				AB63E0372E6BAF7B00C82FD2 /* Auth in Frameworks */,
+				AB63E0292E6B602200C82FD2 /* Functions in Frameworks */,
 				ABC382302E15983400E4B1CD /* GoogleSignIn in Frameworks */,
+				AB63E03B2E6BAF7B00C82FD2 /* PostgREST in Frameworks */,
+				AB63E02F2E6B602200C82FD2 /* Storage in Frameworks */,
+				AB63E03F2E6BAF7B00C82FD2 /* Storage in Frameworks */,
 				ABC382332E15985600E4B1CD /* GoogleAPIClientForREST_Calendar in Frameworks */,
+				AB63E0272E6B602200C82FD2 /* Auth in Frameworks */,
 				ABB5F84E2E58216D00C977F3 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -234,6 +254,16 @@
 				ABC3822F2E15983400E4B1CD /* GoogleSignIn */,
 				ABC382322E15985600E4B1CD /* GoogleAPIClientForREST_Calendar */,
 				ABB5F84D2E58216D00C977F3 /* Supabase */,
+				AB63E0262E6B602200C82FD2 /* Auth */,
+				AB63E0282E6B602200C82FD2 /* Functions */,
+				AB63E02A2E6B602200C82FD2 /* PostgREST */,
+				AB63E02C2E6B602200C82FD2 /* Realtime */,
+				AB63E02E2E6B602200C82FD2 /* Storage */,
+				AB63E0362E6BAF7B00C82FD2 /* Auth */,
+				AB63E0382E6BAF7B00C82FD2 /* Functions */,
+				AB63E03A2E6BAF7B00C82FD2 /* PostgREST */,
+				AB63E03C2E6BAF7B00C82FD2 /* Realtime */,
+				AB63E03E2E6BAF7B00C82FD2 /* Storage */,
 			);
 			productName = StudentCompanion;
 			productReference = ABA4EE812DD8389E0068853B /* StuCo.app */;
@@ -812,6 +842,51 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		AB63E0262E6B602200C82FD2 /* Auth */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Auth;
+		};
+		AB63E0282E6B602200C82FD2 /* Functions */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Functions;
+		};
+		AB63E02A2E6B602200C82FD2 /* PostgREST */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PostgREST;
+		};
+		AB63E02C2E6B602200C82FD2 /* Realtime */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Realtime;
+		};
+		AB63E02E2E6B602200C82FD2 /* Storage */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Storage;
+		};
+		AB63E0362E6BAF7B00C82FD2 /* Auth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABB5F8412E581D7400C977F3 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Auth;
+		};
+		AB63E0382E6BAF7B00C82FD2 /* Functions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABB5F8412E581D7400C977F3 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Functions;
+		};
+		AB63E03A2E6BAF7B00C82FD2 /* PostgREST */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABB5F8412E581D7400C977F3 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = PostgREST;
+		};
+		AB63E03C2E6BAF7B00C82FD2 /* Realtime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABB5F8412E581D7400C977F3 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Realtime;
+		};
+		AB63E03E2E6BAF7B00C82FD2 /* Storage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABB5F8412E581D7400C977F3 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Storage;
+		};
 		ABB5F84D2E58216D00C977F3 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = ABB5F8412E581D7400C977F3 /* XCRemoteSwiftPackageReference "supabase-swift" */;
