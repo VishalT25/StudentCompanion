@@ -92,6 +92,7 @@
 			membershipExceptions = (
 				AlternateAppIcons.xcassets,
 				Info.plist,
+				Services/RealtimeSyncManager.swift,
 				Views/SharedComponents/SpectacularBackground.swift,
 			);
 			target = ABA4EE802DD8389E0068853B /* StuCo */;
