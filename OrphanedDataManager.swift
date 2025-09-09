@@ -58,7 +58,7 @@ class OrphanedDataDetector {
 
 // MARK: - Conflict Resolution Types
 
-enum ConflictResolution {
+enum OrphanResolutionAction {
     case assignCourseToActiveSchedule(Course)
     case createScheduleForCourse(Course)
     case createCourseFromScheduleItem(ScheduleItemWithScheduleID)
@@ -71,14 +71,14 @@ enum ConflictResolution {
 
 struct DataConflictResolutionView: View {
     @EnvironmentObject private var themeManager: ThemeManager
-    @EnvironmentObject private var courseManager: CourseOperationsManager
+    @EnvironmentObject private var courseManager: UnifiedCourseManager
     @EnvironmentObject private var scheduleManager: ScheduleManager
     @Environment(\.dismiss) var dismiss
     
     let orphanedData: OrphanedDataResult
-    let onResolution: (ConflictResolution) -> Void
+    let onResolution: (OrphanResolutionAction) -> Void
     
-    @State private var resolutions: [ConflictResolution] = []
+    @State private var resolutions: [OrphanResolutionAction] = []
     @State private var currentStep = 0
     
     var body: some View {
@@ -293,7 +293,7 @@ struct OrphanedCourseCard: View {
     @EnvironmentObject private var scheduleManager: ScheduleManager
     
     let course: Course
-    let onResolution: (ConflictResolution) -> Void
+    let onResolution: (OrphanResolutionAction) -> Void
     
     @State private var selectedAction: CourseResolutionAction = .assignToActive
     
@@ -422,7 +422,7 @@ struct OrphanedScheduleItemCard: View {
     
     let item: ScheduleItemWithScheduleID
     let availableCourses: [Course]
-    let onResolution: (ConflictResolution) -> Void
+    let onResolution: (OrphanResolutionAction) -> Void
     
     @State private var selectedAction: ScheduleItemResolutionAction = .createCourse
     @State private var selectedCourseId: UUID?
@@ -589,9 +589,9 @@ struct OrphanedScheduleItemCard: View {
         ],
         orphanedScheduleItems: []
     )
-    
+
     DataConflictResolutionView(orphanedData: sampleOrphanedData) { _ in }
         .environmentObject(ThemeManager())
-        .environmentObject(CourseOperationsManager())
+        .environmentObject(UnifiedCourseManager())
         .environmentObject(ScheduleManager())
 }

@@ -3,13 +3,15 @@ import Combine
 
 struct CourseDetailView: View {
     @ObservedObject var course: Course
-    var courseManager: CourseOperationsManager?
+    var courseManager: UnifiedCourseManager?
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject private var themeManager: ThemeManager
     @StateObject private var bulkSelectionManager = BulkCourseSelectionManager()
     @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
     @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
     @State private var showBulkDeleteAlert = false
+    @State private var showingAddAssignmentSheet = false
+    @State private var selectedAssignment: Assignment? = nil // NEW: For editing assignments
     
     @State private var currentGradeInput: String = ""
     @State private var desiredGradeInput: String = ""
@@ -69,31 +71,16 @@ struct CourseDetailView: View {
         .navigationTitle(course.name)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
+        .sheet(isPresented: $showingAddAssignmentSheet) {
+            AddAssignmentView(course: course, courseManager: courseManager)
+                .environmentObject(themeManager)
+        }
+        .sheet(item: $selectedAssignment) { assignment in
+            EditAssignmentView(assignment: assignment, course: course, courseManager: courseManager)
+                .environmentObject(themeManager)
+        }
         .toolbar {
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                if bulkSelectionManager.isSelecting {
-                    Button(selectionAllButtonTitle()) {
-                        toggleSelectAll()
-                    }
-                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                    
-                    Button(role: .destructive) {
-                        showBulkDeleteAlert = true
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .disabled(bulkSelectionManager.selectedCount() == 0)
-                    .foregroundColor(bulkSelectionManager.selectedCount() == 0 ? .secondary : .red)
-                }
-            }
-            ToolbarItemGroup(placement: .navigationBarLeading) {
-                if bulkSelectionManager.isSelecting {
-                    Button("Cancel") {
-                        bulkSelectionManager.endSelection()
-                    }
-                    .foregroundColor(.secondary)
-                }
-            }
+            toolbarContent
         }
         .onAppear {
             autoFillCalculatorValues()
@@ -162,143 +149,220 @@ struct CourseDetailView: View {
     
     private var assignmentsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Assignments & Exams")
-                    .font(.forma(.title3, weight: .bold))
-                Spacer()
-                if bulkSelectionManager.isSelecting {
-                    Text("\(bulkSelectionManager.selectedCount()) selected")
-                        .font(.forma(.subheadline, weight: .medium))
-                        .foregroundColor(.secondary)
-                } else {
-                    Button(action: {
-                        course.assignments.append(Assignment(courseId: course.id))
-                        requestSave()
-                    }) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(course.color)
-                    }
-                }
-            }
+            assignmentsSectionHeader
             
             if !course.assignments.isEmpty {
-                let validation = weightValidation
-                
-                if !validation.isValid && !validation.message.isEmpty {
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.red)
-                            .font(.forma(.subheadline))
-                        
-                        Text(validation.message)
-                            .font(.forma(.subheadline))
-                            .foregroundColor(.red)
-                        
-                        Spacer()
-                        
-                        Text("Total: \(String(format: "%.1f", validation.total))%")
-                            .font(.forma(.caption))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(Color.red.opacity(0.7))
-                            .cornerRadius(4)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.red.opacity(0.1))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.red.opacity(0.3), lineWidth: 1)
-                            )
-                    )
-                    .animation(.easeInOut(duration: 0.3), value: validation.isValid)
-                }
+                weightValidationView
             }
             
-            if course.assignments.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 40))
-                        .foregroundColor(.secondary)
-                    Text("No assignments added yet")
-                        .font(.forma(.subheadline))
-                        .foregroundColor(.secondary)
-                    Button("Add your first assignment") {
-                        course.assignments.append(Assignment(courseId: course.id))
-                        requestSave()
-                    }
-                    .font(.forma(.caption))
-                    .foregroundColor(course.color)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
+            assignmentsList
+        }
+        .padding()
+        .background(assignmentsSectionBackground)
+    }
+    
+    // MARK: - Assignment Section Components
+    
+    private var assignmentsSectionHeader: some View {
+        HStack {
+            Text("Assignments & Exams")
+                .font(.forma(.title3, weight: .bold))
+            Spacer()
+            if bulkSelectionManager.isSelecting {
+                Text("\(bulkSelectionManager.selectedCount()) selected")
+                    .font(.forma(.subheadline, weight: .medium))
+                    .foregroundColor(.secondary)
             } else {
-                LazyVStack(spacing: 8) {
-                    ForEach(course.assignments) { assignment in
-                        if bulkSelectionManager.selectionContext == .assignments(courseID: course.id) {
-                            HStack {
-                                AssignmentRow(
-                                    assignment: assignment,
-                                    courseColor: course.color,
-                                    onEdit: { requestSave() },
-                                    onDelete: { deleteAssignment(assignment) },
-                                    isSelectionMode: true
-                                )
-                                selectionIndicator(isSelected: bulkSelectionManager.isSelected(assignment.id))
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                bulkSelectionManager.toggleSelection(assignment.id)
-                            }
-                        } else {
-                            AssignmentRow(
-                                assignment: assignment,
-                                courseColor: course.color,
-                                onEdit: { requestSave() },
-                                onDelete: { deleteAssignment(assignment) },
-                                isSelectionMode: false
-                            )
-                            .contextMenu {
-                                Button("Select Multiple", systemImage: "checkmark.circle") {
-                                    bulkSelectionManager.startSelection(.assignments(courseID: course.id), initialID: assignment.id)
-                                }
-                                Button("Delete Assignment", systemImage: "trash", role: .destructive) {
-                                    deleteAssignment(assignment)
-                                }
-                            }
-                            .simultaneousGesture(
-                                LongPressGesture(minimumDuration: 0.6)
-                                    .onEnded { _ in
-                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                        impactFeedback.impactOccurred()
-                                        bulkSelectionManager.startSelection(.assignments(courseID: course.id), initialID: assignment.id)
-                                    }
-                            )
-                        }
-                    }
+                Button(action: {
+                    showingAddAssignmentSheet = true
+                }) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(course.color)
                 }
             }
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.regularMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(course.color.opacity(0.3), lineWidth: 1)
-                )
-        )
     }
+    
+    @ViewBuilder
+    private var weightValidationView: some View {
+        let validation = weightValidation
+        
+        if !validation.isValid && !validation.message.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.red)
+                    .font(.forma(.subheadline))
+                
+                Text(validation.message)
+                    .font(.forma(.subheadline))
+                    .foregroundColor(.red)
+                
+                Spacer()
+                
+                Text("Total: \(String(format: "%.1f", validation.total))%")
+                    .font(.forma(.caption))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Color.red.opacity(0.7))
+                    .cornerRadius(4)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(weightValidationBackground)
+            .animation(.easeInOut(duration: 0.3), value: validation.isValid)
+        }
+    }
+    
+    private var weightValidationBackground: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .fill(Color.red.opacity(0.1))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.red.opacity(0.3), lineWidth: 1)
+            )
+    }
+    
+    @ViewBuilder
+    private var assignmentsList: some View {
+        if course.assignments.isEmpty {
+            emptyAssignmentsView
+        } else {
+            assignmentsListView
+        }
+    }
+    
+    private var emptyAssignmentsView: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 40))
+                .foregroundColor(.secondary)
+            Text("No assignments added yet")
+                .font(.forma(.subheadline))
+                .foregroundColor(.secondary)
+            Button("Add your first assignment") {
+                showingAddAssignmentSheet = true
+            }
+            .font(.forma(.caption))
+            .foregroundColor(course.color)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+    }
+    
+    private var assignmentsListView: some View {
+        LazyVStack(spacing: 12) {
+            ForEach(Array(course.assignments.enumerated()), id: \.offset) { index, assignment in
+                let uniqueID = "\(assignment.id.uuidString)-\(index)"
+                
+                if bulkSelectionManager.selectionContext == .assignments(courseID: course.id) {
+                    selectionModeAssignmentRow(assignment)
+                        .id(uniqueID + "-selection")
+                } else {
+                    normalModeAssignmentRow(assignment)
+                        .id(uniqueID + "-normal")
+                }
+            }
+        }
+    }
+    
+    private func selectionModeAssignmentRow(_ assignment: Assignment) -> some View {
+        HStack {
+            AssignmentDisplayRow(
+                assignment: assignment,
+                courseColor: course.color,
+                onTap: { selectedAssignment = assignment },
+                isSelectionMode: true
+            )
+            selectionIndicator(isSelected: bulkSelectionManager.isSelected(assignment.id))
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            bulkSelectionManager.toggleSelection(assignment.id)
+        }
+    }
+    
+    private func normalModeAssignmentRow(_ assignment: Assignment) -> some View {
+        AssignmentDisplayRow(
+            assignment: assignment,
+            courseColor: course.color,
+            onTap: { selectedAssignment = assignment },
+            isSelectionMode: false
+        )
+        .contextMenu {
+            assignmentContextMenu(assignment)
+        }
+    }
+    
+    @ViewBuilder
+    private func assignmentContextMenu(_ assignment: Assignment) -> some View {
+        Button(action: {
+            selectedAssignment = assignment
+        }) {
+            Label("Edit Assignment", systemImage: "pencil")
+        }
+        
+        Button(action: {
+            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+            impactFeedback.impactOccurred()
+            bulkSelectionManager.startSelection(.assignments(courseID: course.id), initialID: assignment.id)
+        }) {
+            Label("Select Multiple", systemImage: "checkmark.circle")
+        }
+        
+        Button(role: .destructive, action: {
+            deleteAssignment(assignment)
+        }) {
+            Label("Delete Assignment", systemImage: "trash")
+        }
+    }
+    
+    private var assignmentsSectionBackground: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(.regularMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(course.color.opacity(0.3), lineWidth: 1)
+            )
+    }
+    
+    // MARK: - Helper Methods and Views
     
     private func selectionIndicator(isSelected: Bool) -> some View {
         Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
             .font(.title3)
             .foregroundColor(isSelected ? themeManager.currentTheme.primaryColor : .secondary)
             .animation(.easeInOut(duration: 0.2), value: isSelected)
+    }
+    
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .navigationBarTrailing) {
+            if bulkSelectionManager.isSelecting && bulkSelectionManager.selectionContext == .assignments(courseID: course.id) {
+                Button(selectionAllButtonTitle()) {
+                    toggleSelectAll()
+                }
+                .foregroundColor(themeManager.currentTheme.primaryColor)
+                
+                Button(role: .destructive) {
+                    showBulkDeleteAlert = true
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .disabled(bulkSelectionManager.selectedCount() == 0)
+                .foregroundColor(bulkSelectionManager.selectedCount() == 0 ? .secondary : .red)
+            }
+        }
+        
+        ToolbarItemGroup(placement: .navigationBarLeading) {
+            if bulkSelectionManager.isSelecting {
+                Button("Cancel") {
+                    bulkSelectionManager.endSelection()
+                }
+                .foregroundColor(.secondary)
+            }
+        }
     }
     
     private func selectionAllButtonTitle() -> String {
@@ -322,6 +386,12 @@ struct CourseDetailView: View {
         let assignmentIDsToDelete = bulkSelectionManager.selectedAssignmentIDs
         course.assignments.removeAll { assignmentIDsToDelete.contains($0.id) }
         requestSave()
+        
+        // Delete from course manager
+        for assignmentID in assignmentIDsToDelete {
+            courseManager?.deleteAssignment(assignmentID, from: course.id)
+        }
+        
         bulkSelectionManager.endSelection()
     }
     
@@ -539,6 +609,7 @@ struct CourseDetailView: View {
             if let index = course.assignments.firstIndex(where: { $0.id == assignment.id }) {
                 course.assignments.remove(at: index)
                 requestSave()
+                courseManager?.deleteAssignment(assignment.id, from: course.id)
             }
         }
     }
@@ -555,114 +626,69 @@ struct CourseDetailView: View {
     }
 }
 
-struct AssignmentRow: View {
+// MARK: - Assignment Display Row
+struct AssignmentDisplayRow: View {
     @ObservedObject var assignment: Assignment
     let courseColor: Color
-    let onEdit: () -> Void
-    let onDelete: () -> Void
+    let onTap: () -> Void
     let isSelectionMode: Bool
     
-    @FocusState private var isNameFocused: Bool
-    @FocusState private var isGradeFocused: Bool
-    @FocusState private var isWeightFocused: Bool
-    @State private var showDeleteConfirmation = false
-    
-    private var displayGrade: String {
-        get {
-            if assignment.grade.isEmpty {
-                return ""
-            }
-            if assignment.grade.hasSuffix("%") {
-                return assignment.grade
-            } else {
-                return "\(assignment.grade)%"
-            }
-        }
-        set {
-            assignment.grade = newValue.replacingOccurrences(of: "%", with: "")
-        }
-    }
-    
     var body: some View {
-        VStack(spacing: 8) {
-            HStack {
-                TextField("Assignment name", text: $assignment.name)
-                    .font(.subheadline.weight(.medium))
-                    .focused($isNameFocused)
-                    .textFieldStyle(.plain)
-                    .onChange(of: assignment.name) { _, _ in onEdit() }
-                    .disabled(isSelectionMode)
-                
-                Spacer()
-                
-                if !isSelectionMode {
-                    HStack(spacing: 4) {
-                        TextField("Grade", text: Binding(
-                            get: { displayGrade },
-                            set: { newValue in
-                                assignment.grade = newValue.replacingOccurrences(of: "%", with: "")
-                                onEdit()
-                            }
-                        ))
-                            .font(.subheadline.weight(.medium))
-                            .focused($isGradeFocused)
-                            .keyboardType(.decimalPad)
-                            .textFieldStyle(.plain)
-                            .frame(width: 60)
-                            .multilineTextAlignment(.trailing)
+        Button(action: isSelectionMode ? {} : onTap) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(assignment.name.isEmpty ? "Untitled Assignment" : assignment.name)
+                            .font(.forma(.subheadline, weight: .medium))
+                            .foregroundColor(.primary)
+                            .multilineTextAlignment(.leading)
                         
-                        Text("•")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        TextField("Weight", text: $assignment.weight)
-                            .font(.subheadline.weight(.medium))
-                            .focused($isWeightFocused)
-                            .keyboardType(.decimalPad)
-                            .textFieldStyle(.plain)
-                            .frame(width: 50)
-                            .multilineTextAlignment(.trailing)
-                            .onChange(of: assignment.weight) { _, _ in onEdit() }
-                        
-                        Text("%")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        if !assignment.notes.isEmpty {
+                            Text(assignment.notes)
+                                .font(.forma(.caption))
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
+                        }
                     }
-                } else {
+                    
+                    Spacer()
+                    
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text("Grade: \(displayGrade.isEmpty ? "—" : displayGrade)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("Weight: \(assignment.weight.isEmpty ? "—" : assignment.weight)%")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        if !assignment.grade.isEmpty {
+                            Text("\(assignment.grade)%")
+                                .font(.forma(.subheadline, weight: .semibold))
+                                .foregroundColor(courseColor)
+                        } else {
+                            Text("No Grade")
+                                .font(.forma(.caption))
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        if !assignment.weight.isEmpty {
+                            Text("Weight: \(assignment.weight)%")
+                                .font(.forma(.caption))
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("No Weight")
+                                .font(.forma(.caption))
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
             }
-            if !isSelectionMode {
-                Divider()
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                    )
+            )
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(.systemGray6).opacity(isSelectionMode ? 0.3 : 0.5))
-        .cornerRadius(8)
+        .buttonStyle(.plain)
         .opacity(isSelectionMode ? 0.8 : 1.0)
-        .contextMenu {
-            if !isSelectionMode {
-                Button("Delete Assignment", role: .destructive) {
-                    showDeleteConfirmation = true
-                }
-            }
-        }
-        .alert("Delete Assignment", isPresented: $showDeleteConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                onDelete()
-            }
-        } message: {
-            Text("Are you sure you want to delete '\(assignment.name.isEmpty ? "this assignment" : assignment.name)'?")
-        }
     }
 }
 

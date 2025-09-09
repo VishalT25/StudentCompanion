@@ -4,10 +4,10 @@ import SwiftUI
 import Combine
 
 @MainActor
-class RealtimeSyncManager: ObservableObject {
-    static let shared = RealtimeSyncManager()
+class LegacyRealtimeSyncManager: ObservableObject {
+    static let shared = LegacyRealtimeSyncManager()
     
-    @Published private(set) var syncStatus: SyncStatus = .idle
+    @Published private(set) var syncStatus: LegacySyncStatus = .idle
     @Published private(set) var isConnected = false
     @Published private(set) var lastSyncTime: Date?
     @Published private(set) var pendingSyncCount = 0
@@ -15,9 +15,9 @@ class RealtimeSyncManager: ObservableObject {
     private let supabaseService = SupabaseService.shared
     private var cancellables = Set<AnyCancellable>()
     
-    weak var eventsDelegate: RealtimeSyncDelegate?
-    weak var schedulesDelegate: RealtimeSyncDelegate?
-    weak var coursesDelegate: RealtimeSyncDelegate?
+    weak var eventsDelegate: LegacyRealtimeSyncDelegate?
+    weak var schedulesDelegate: LegacyRealtimeSyncDelegate?
+    weak var coursesDelegate: LegacyRealtimeSyncDelegate?
     
     private init() {
         setupAuthenticationObserver()
@@ -55,7 +55,7 @@ class RealtimeSyncManager: ObservableObject {
         cancellables.removeAll()
     }
     
-    func queueSyncOperation(_ operation: SyncOperation) {
+    func queueSyncOperation(_ operation: LegacySyncOperation) {
         pendingSyncCount = 0
     }
     
@@ -82,12 +82,12 @@ class RealtimeSyncManager: ObservableObject {
     }
 }
 
-enum SyncError: Error {
+enum LegacySyncError: Error {
     case missingID
     case modelDecodingFailed
 }
 
-enum SyncStatus: Equatable {
+enum LegacySyncStatus: Equatable {
     case idle
     case initializing
     case syncing
@@ -115,7 +115,7 @@ enum SyncStatus: Equatable {
         }
     }
     
-    static func == (lhs: SyncStatus, rhs: SyncStatus) -> Bool {
+    static func == (lhs: LegacySyncStatus, rhs: LegacySyncStatus) -> Bool {
         switch (lhs, rhs) {
         case (.idle, .idle),
              (.initializing, .initializing),
@@ -131,20 +131,20 @@ enum SyncStatus: Equatable {
     }
 }
 
-protocol RealtimeSyncDelegate: AnyObject {
+protocol LegacyRealtimeSyncDelegate: AnyObject {
     @MainActor
     func didReceiveRealtimeUpdate(_ data: [String: Any], action: String, table: String)
 }
 
-struct SyncOperation: Identifiable {
+struct LegacySyncOperation: Identifiable {
     let id: UUID
-    let type: SyncDataType
-    let action: SyncAction
+    let type: LegacySyncDataType
+    let action: LegacySyncAction
     let data: [String: Any]
     let timestamp: Date
     var retryCount: Int
     
-    init(type: SyncDataType, action: SyncAction, data: [String: Any], retryCount: Int = 0) {
+    init(type: LegacySyncDataType, action: LegacySyncAction, data: [String: Any], retryCount: Int = 0) {
         self.id = (data["id"] as? UUID) ?? UUID()
         self.type = type
         self.action = action
@@ -154,7 +154,7 @@ struct SyncOperation: Identifiable {
     }
 }
 
-enum SyncDataType: String, CaseIterable {
+enum LegacySyncDataType: String, CaseIterable {
     case events
     case categories
     case schedules
@@ -164,7 +164,7 @@ enum SyncDataType: String, CaseIterable {
     case academicCalendars = "academic_calendars"
 }
 
-enum SyncAction: String {
+enum LegacySyncAction: String {
     case create = "INSERT"
     case update = "UPDATE"
     case delete = "DELETE"

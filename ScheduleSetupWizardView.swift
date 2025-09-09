@@ -32,9 +32,17 @@ struct ProgressiveEnhancementView: View {
             mainContent
         }
         .sheet(isPresented: $showingAcademicCalendarImport) {
-            AcademicCalendarImportView()
-                .environmentObject(academicCalendarManager)
-                .environmentObject(themeManager)
+            AcademicCalendarImportView { imported in
+                academicCalendar = imported
+                if let idx = scheduleManager.scheduleCollections.firstIndex(where: { $0.id == scheduleID }) {
+                    var s = scheduleManager.scheduleCollections[idx]
+                    s.academicCalendarID = imported.id
+                    s.academicCalendar = nil
+                    scheduleManager.updateSchedule(s)
+                }
+            }
+            .environmentObject(academicCalendarManager)
+            .environmentObject(themeManager)
         }
         .sheet(isPresented: $showingAIClassImport) {
             AIScheduleImportView(scheduleID: scheduleID) {
@@ -220,7 +228,10 @@ struct ProgressiveEnhancementView: View {
                 
                 // Apply enhancements
                 schedule.scheduleType = scheduleType
-                schedule.academicCalendar = academicCalendar
+                if let cal = academicCalendar {
+                    schedule.academicCalendarID = cal.id
+                    schedule.academicCalendar = nil
+                }
                 
                 // Set up rotation pattern if needed
                 if scheduleType.supportsRotation {

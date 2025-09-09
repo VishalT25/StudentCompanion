@@ -2,26 +2,58 @@ import Foundation
 import Supabase
 import SwiftUI
 
-/// Secure Supabase service with comprehensive security measures
-/// Implements zero-trust architecture and defense-in-depth
+private let iso8601WithFractional: ISO8601DateFormatter = {
+  let f = ISO8601DateFormatter()
+  f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+  return f
+}()
+
+extension Date {
+  func iso8601String() -> String {
+    iso8601WithFractional.string(from: self)
+  }
+}
+
+/// Enhanced Supabase service optimized for V2 with comprehensive real-time sync
+/// Implements cloud-first architecture with offline support and conflict resolution
 class SupabaseService: ObservableObject {
     static let shared = SupabaseService()
     
-    // MARK: - Security Configuration
+    
+    // MARK: - Core Configuration
     private let supabaseURL: URL
     private let supabaseAnonKey: String
     let client: SupabaseClient
     private let keychainService = SecureKeychainService.shared
     
-    // Authentication state
+    // MARK: - Authentication State
     @Published private(set) var isAuthenticated = false
     @Published private(set) var currentUser: User?
     @Published private(set) var userProfile: UserProfile?
     @Published private(set) var userSubscription: UserSubscription?
     
-    // Security monitoring
+    // MARK: - Connection State
+    @Published private(set) var isConnected = false
+    @Published private(set) var connectionQuality: ConnectionQuality = .unknown
+    @Published private(set) var lastSyncTimestamp: Date?
+    
+    // MARK: - Security & Performance
     private var lastTokenRefresh: Date = Date()
     private let tokenRefreshInterval: TimeInterval = 900 // 15 minutes
+    private var connectionMonitor: Timer?
+    
+    enum ConnectionQuality {
+        case unknown, poor, good, excellent
+        
+        var displayName: String {
+            switch self {
+            case .unknown: return "Unknown"
+            case .poor: return "Poor"
+            case .good: return "Good" 
+            case .excellent: return "Excellent"
+            }
+        }
+    }
     
     private init() {
         // 🔒 SECURITY: Load configuration from secure source
@@ -34,70 +66,164 @@ class SupabaseService: ObservableObject {
         self.supabaseURL = supabaseURL
         self.supabaseAnonKey = key
         
-        // Initialize client with security configuration
+        // Initialize client with V2 optimizations
         self.client = SupabaseClient(
-            supabaseURL: supabaseURL,
-            supabaseKey: supabaseAnonKey
+          supabaseURL: supabaseURL,
+          supabaseKey: supabaseAnonKey,
+          options: .init(
+            db: .init(schema: "public"),
+            // If custom storage is needed for Auth, provide it here; otherwise omit.
+            // auth: .init(storage: MyCustomLocalStorage()),
+            realtime: .init() // Swift Realtime options don't include reconnectAfterMs
+          )
         )
+
         
-        // Initialize authentication state
+        // Initialize authentication state and monitoring
         Task {
-            await initializeAuthenticationState()
+            await initializeServices()
         }
     }
     
-    // MARK: - Secure Authentication
+    // MARK: - Service Initialization
     
-    /// Initialize authentication state from secure storage
-    func initializeAuthenticationState() async {
-        // Retrieve stored session securely
-        if let accessToken = keychainService.retrieveToken(forKey: "supabase_access_token"),
-           let refreshToken = keychainService.retrieveToken(forKey: "supabase_refresh_token") {
+    private func initializeServices() async {
+        await initializeAuthenticationState()
+        startConnectionMonitoring()
+        setupAuthListener()
+    }
+    
+    private func initializeAuthenticationState() async {
+        print("🔒 Initializing authentication state...")
+        
+        // Check for existing session
+        do {
+            let session = try await client.auth.session
             
-            // Validate token structure
-            guard keychainService.validateJWTStructure(accessToken) else {
-                 ("🔒 SECURITY WARNING: Invalid token structure detected")
-                await signOut()
-                return
+            await MainActor.run {
+                self.isAuthenticated = true
+                self.currentUser = session.user
+                self.lastTokenRefresh = Date()
             }
             
-            // Check if token is expired
-            if keychainService.isTokenExpired(accessToken) {
-                 ("🔒 Token expired, attempting refresh...")
-                await refreshAuthenticationToken(refreshToken: refreshToken)
-            } else {
-                // Restore session
-                do {
-                    try await client.auth.setSession(accessToken: accessToken, refreshToken: refreshToken)
-                    
-                    // Get current user after setting session
-                    let user = try await client.auth.user()
-                    
-                    await MainActor.run {
+            // Load associated data
+            await loadUserProfile()
+            await loadUserSubscription()
+            
+            print("🔒 Session restored successfully")
+        } catch {
+            print("🔒 No existing session found: \(error)")
+        }
+    }
+    
+    private func setupAuthListener() {
+        Task {
+            for await (event, session) in await client.auth.authStateChanges {
+                await MainActor.run {
+                    switch event {
+                    case .signedIn:
+                        print("🔒 User signed in")
                         self.isAuthenticated = true
-                        self.currentUser = user
+                        self.currentUser = session?.user
+                        self.lastTokenRefresh = Date()
+                        
+                        if let session = session {
+                            self.storeAuthenticationTokens(
+                                accessToken: session.accessToken,
+                                refreshToken: session.refreshToken
+                            )
+                        }
+                        
+                        // Post notification for authentication state change
+                        NotificationCenter.default.post(
+                            name: .init("SupabaseAuthStateChanged"),
+                            object: true
+                        )
+                        
+                    case .signedOut:
+                        print("🔒 User signed out")
+                        self.isAuthenticated = false
+                        self.currentUser = nil
+                        self.userProfile = nil
+                        self.userSubscription = nil
+                        
+                        // Post notification for authentication state change
+                        NotificationCenter.default.post(
+                            name: .init("SupabaseAuthStateChanged"),
+                            object: false
+                        )
+                        
+                    case .tokenRefreshed:
+                        print("🔒 Token refreshed")
+                        self.lastTokenRefresh = Date()
+                        
+                        if let session = session {
+                            self.storeAuthenticationTokens(
+                                accessToken: session.accessToken,
+                                refreshToken: session.refreshToken
+                            )
+                        }
+                        
+                    default:
+                        break
                     }
-                    
-                    // Load user profile and subscription data
-                    await loadUserProfile()
-                    await loadUserSubscription()
-                    
-                     ("🔒 Session restored successfully")
-                } catch {
-                     ("🔒 SECURITY ERROR: Failed to restore session: \(error)")
-                    await signOut()
+                }
+                
+                // Load user data after sign in
+                if event == .signedIn {
+                    await self.loadUserProfile()
+                    await self.loadUserSubscription()
                 }
             }
         }
     }
     
-    /// Secure sign in with email and password
-    /// - Parameters:
-    ///   - email: User email (validated)
-    ///   - password: User password (will be securely transmitted)
-    /// - Returns: Authentication result
+    private func startConnectionMonitoring() {
+        connectionMonitor = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
+            Task {
+                await self.checkConnectionQuality()
+            }
+        }
+    }
+    
+    private func checkConnectionQuality() async {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        
+        do {
+            // Simple ping to check connection speed
+            _ = try await client
+                .from("profiles")
+                .select("id")
+                .limit(1)
+                .execute()
+            
+            let responseTime = CFAbsoluteTimeGetCurrent() - startTime
+            
+            await MainActor.run {
+                self.isConnected = true
+                self.connectionQuality = self.qualityFromResponseTime(responseTime)
+                self.lastSyncTimestamp = Date()
+            }
+        } catch {
+            await MainActor.run {
+                self.isConnected = false
+                self.connectionQuality = .poor
+            }
+        }
+    }
+    
+    private func qualityFromResponseTime(_ time: TimeInterval) -> ConnectionQuality {
+        switch time {
+        case 0..<0.5: return .excellent
+        case 0.5..<1.5: return .good
+        case 1.5..<3.0: return .poor
+        default: return .poor
+        }
+    }
+    
+    // MARK: - Enhanced Authentication
+    
     func signIn(email: String, password: String) async -> Result<User, AuthError> {
-        // 🔒 SECURITY: Input validation
         guard isValidEmail(email) else {
             return .failure(AuthError.invalidEmail)
         }
@@ -109,42 +235,16 @@ class SupabaseService: ObservableObject {
         do {
             let response = try await client.auth.signIn(email: email, password: password)
             
-            // 🔒 SECURITY: Secure token storage
-            let success = storeAuthenticationTokens(
-                accessToken: response.accessToken,
-                refreshToken: response.refreshToken
-            )
-            
-            guard success else {
-                 ("🔒 SECURITY CRITICAL: Failed to store authentication tokens")
-                return .failure(AuthError.storageError)
-            }
-            
-            await MainActor.run {
-                self.isAuthenticated = true
-                self.currentUser = response.user
-                self.lastTokenRefresh = Date()
-            }
-            
-            // Load user profile and subscription data
-            await loadUserProfile()
-            await loadUserSubscription()
-            
-             ("🔒 User authenticated successfully")
+            // Authentication state will be updated via listener
+            print("🔒 User authenticated successfully")
             return .success(response.user)
         } catch {
-             ("🔒 SECURITY: Authentication failed: \(error)")
+            print("🔒 SECURITY: Authentication failed: \(error)")
             return .failure(AuthError.authenticationFailed)
         }
     }
     
-    /// Secure sign up with email and password
-    /// - Parameters:
-    ///   - email: User email (validated)
-    ///   - password: User password (validated for strength)
-    /// - Returns: Authentication result
     func signUp(email: String, password: String) async -> Result<User, AuthError> {
-        // 🔒 SECURITY: Input validation
         guard isValidEmail(email) else {
             return .failure(AuthError.invalidEmail)
         }
@@ -154,8 +254,6 @@ class SupabaseService: ObservableObject {
         }
         
         do {
-            // Add redirectTo parameter to specify where users should be redirected after email verification
-            // This should match the custom URL scheme registered in Info.plist
             let redirectToURL = URL(string: "stuco://auth.callback")!
             
             let response = try await client.auth.signUp(
@@ -164,94 +262,41 @@ class SupabaseService: ObservableObject {
                 redirectTo: redirectToURL
             )
             
+            // Create default data entries
             if let session = response.session {
-                // Store tokens securely
-                let success = storeAuthenticationTokens(
-                    accessToken: session.accessToken,
-                    refreshToken: session.refreshToken
-                )
-                
-                guard success else {
-                    return .failure(AuthError.storageError)
-                }
-                
-                await MainActor.run {
-                    self.isAuthenticated = true
-                    self.currentUser = response.user
-                    self.lastTokenRefresh = Date()
-                }
-                
-                // Create default profile and subscriber entries
-                await createDefaultProfile(for: response.user)
-                await createDefaultSubscriber(for: response.user)
-                
-                // Load user profile and subscription data
-                await loadUserProfile()
-                await loadUserSubscription()
+                await createDefaultUserData(for: response.user)
             }
             
-             ("🔒 User registered successfully")
+            print("🔒 User registered successfully")
             return .success(response.user)
         } catch {
-             ("🔒 SECURITY: Registration failed: \(error)")
+            print("🔒 SECURITY: Registration failed: \(error)")
             return .failure(AuthError.registrationFailed)
         }
     }
     
-    /// Secure sign out with complete cleanup
     func signOut() async {
         do {
             try await client.auth.signOut()
         } catch {
-             ("🔒 SECURITY WARNING: Server sign out failed: \(error)")
+            print("🔒 SECURITY WARNING: Server sign out failed: \(error)")
         }
         
-        // 🔒 SECURITY: Always clear local tokens regardless of server response
+        // Clear local tokens regardless of server response
         _ = keychainService.clearAllTokens()
         
-        await MainActor.run {
-            self.isAuthenticated = false
-            self.currentUser = nil
-            self.userProfile = nil
-            self.userSubscription = nil
-        }
-        
-         ("🔒 User signed out and tokens cleared")
+        print("🔒 User signed out and tokens cleared")
     }
     
-    // MARK: - Profile Management
+    // MARK: - User Data Management
     
-    /// Load user profile data
-    private func loadUserProfile() async {
-        guard let userId = currentUser?.id else { return }
-        
-        do {
-            await ensureValidToken()
-            
-            let response = try await client
-                .from("profiles")
-                .select()
-                .eq("user_id", value: userId.uuidString)
-                .single()
-                .execute()
-            
-            let profile = try JSONDecoder().decode(UserProfile.self, from: response.data)
-            
-            await MainActor.run {
-                self.userProfile = profile
-            }
-        } catch {
-             ("Failed to load user profile: \(error)")
-            // Create default profile if none exists
-            if let user = currentUser {
-                await createDefaultProfile(for: user)
-            }
-        }
+    private func createDefaultUserData(for user: User) async {
+        await createDefaultProfile(for: user)
+        await createDefaultSubscriber(for: user)
     }
     
-    /// Create default profile entry
     private func createDefaultProfile(for user: User) async {
-        let defaultProfile = DefaultProfile(
+        let profileData = ProfileInsert(
             user_id: user.id.uuidString,
             display_name: user.email?.components(separatedBy: "@").first ?? "User",
             avatar_url: nil,
@@ -261,91 +306,17 @@ class SupabaseService: ObservableObject {
         do {
             _ = try await client
                 .from("profiles")
-                .upsert(defaultProfile)
+                .insert(profileData)
                 .execute()
             
-            // Reload profile data
             await loadUserProfile()
         } catch {
-             ("Failed to create default profile: \(error)")
+            print("Failed to create default profile: \(error)")
         }
     }
     
-    /// Update user profile
-    func updateProfile(displayName: String?, bio: String? = nil) async -> Result<Void, AuthError> {
-        guard let userId = currentUser?.id else {
-            return .failure(AuthError.authenticationFailed)
-        }
-        
-        do {
-            await ensureValidToken()
-            
-            let updateData = ProfileUpdate(
-                display_name: displayName,
-                bio: bio,
-                updated_at: Date().toISOString()
-            )
-            
-            _ = try await client
-                .from("profiles")
-                .update(updateData)
-                .eq("user_id", value: userId.uuidString)
-                .execute()
-            
-            // Reload profile
-            await loadUserProfile()
-            
-            return .success(())
-        } catch {
-             ("Failed to update profile: \(error)")
-            return .failure(AuthError.authenticationFailed)
-        }
-    }
-    
-    /// Refresh profile data
-    func refreshProfile() async {
-        await loadUserProfile()
-    }
-    
-    // MARK: - Subscription Management
-    
-    /// Load user subscription data
-    private func loadUserSubscription() async {
-        guard let userId = currentUser?.id else { return }
-        
-        do {
-            await ensureValidToken()
-            
-            let response = try await client
-                .from("subscribers")
-                .select()
-                .eq("user_id", value: userId.uuidString)
-                .single()
-                .execute()
-            
-            let subscription = try JSONDecoder().decode(UserSubscription.self, from: response.data)
-            
-            await MainActor.run {
-                self.userSubscription = subscription
-            }
-        } catch {
-             ("Failed to load user subscription: \(error)")
-            // Create default subscription if none exists
-            await createDefaultSubscriber(for: currentUser!)
-        }
-    }
-    
-    /// Create default subscriber entry
     private func createDefaultSubscriber(for user: User) async {
-        struct DefaultSubscriber: Codable {
-            let user_id: String
-            let email: String
-            let subscribed: Bool
-            let subscription_tier: String
-            let role: String
-        }
-        
-        let defaultSubscriber = DefaultSubscriber(
+        let subscriberData = SubscriberInsert(
             user_id: user.id.uuidString,
             email: user.email ?? "",
             subscribed: false,
@@ -356,112 +327,154 @@ class SupabaseService: ObservableObject {
         do {
             _ = try await client
                 .from("subscribers")
-                .upsert(defaultSubscriber)
+                .insert(subscriberData)
                 .execute()
             
-            // Reload subscription data
             await loadUserSubscription()
         } catch {
-             ("Failed to create default subscriber: \(error)")
+            print("Failed to create default subscriber: \(error)")
         }
     }
     
-    /// Refresh subscription data
-    func refreshSubscription() async {
-        await loadUserSubscription()
-    }
-    
-    /// Update user password
-    func updatePassword(_ newPassword: String) async -> Result<Void, AuthError> {
-        guard isStrongPassword(newPassword) else {
-            return .failure(AuthError.weakPassword)
-        }
+    private func loadUserProfile() async {
+        guard let userId = currentUser?.id else { return }
         
         do {
-            _ = try await client.auth.update(user: UserAttributes(password: newPassword))
-            return .success(())
-        } catch {
-            return .failure(AuthError.authenticationFailed)
-        }
-    }
-    
-    /// Update user email
-    func updateEmail(_ newEmail: String) async -> Result<Void, AuthError> {
-        guard isValidEmail(newEmail) else {
-            return .failure(AuthError.invalidEmail)
-        }
-        
-        do {
-            _ = try await client.auth.update(user: UserAttributes(email: newEmail))
-            return .success(())
-        } catch {
-            return .failure(AuthError.authenticationFailed)
-        }
-    }
-    
-    // MARK: - Token Management
-    
-    /// Securely store authentication tokens
-    private func storeAuthenticationTokens(accessToken: String, refreshToken: String) -> Bool {
-        let accessSuccess = keychainService.storeToken(accessToken, forKey: "supabase_access_token")
-        let refreshSuccess = keychainService.storeToken(refreshToken, forKey: "supabase_refresh_token")
-        
-        return accessSuccess && refreshSuccess
-    }
-    
-    /// Refresh authentication token
-    private func refreshAuthenticationToken(refreshToken: String) async {
-        do {
-            let response = try await client.auth.refreshSession(refreshToken: refreshToken)
+            let response = try await client
+                .from("profiles")
+                .select()
+                .eq("user_id", value: userId.uuidString)
+                .single()
+                .execute()
             
-            let success = storeAuthenticationTokens(
-                accessToken: response.accessToken,
-                refreshToken: response.refreshToken
-            )
+            let profile = try JSONDecoder().decode(DatabaseProfile.self, from: response.data)
             
-            if success {
-                await MainActor.run {
-                    self.lastTokenRefresh = Date()
-                }
-                 ("🔒 Token refreshed successfully")
-            } else {
-                 ("🔒 SECURITY CRITICAL: Failed to store refreshed tokens")
-                await signOut()
+            await MainActor.run {
+                self.userProfile = profile.toLocal()
             }
         } catch {
-             ("🔒 SECURITY ERROR: Token refresh failed: \(error)")
-            await signOut()
+            print("Failed to load user profile: \(error)")
         }
     }
     
-    /// Check if token needs refresh and refresh if necessary
+    private func loadUserSubscription() async {
+        guard let userId = currentUser?.id else { return }
+        
+        do {
+            let response = try await client
+                .from("subscribers")
+                .select()
+                .eq("user_id", value: userId.uuidString)
+                .single()
+                .execute()
+            
+            let subscriber = try JSONDecoder().decode(DatabaseSubscriber.self, from: response.data)
+            
+            await MainActor.run {
+                self.userSubscription = subscriber.toLocal()
+            }
+        } catch {
+            print("Failed to load user subscription: \(error)")
+        }
+    }
+    
+    func updateProfile(displayName: String?, bio: String? = nil) async -> Result<Void, AuthError> {
+        guard let userId = currentUser?.id else {
+            return .failure(AuthError.authenticationFailed)
+        }
+        
+        do {
+            await ensureValidToken()
+            
+            let updateData = ProfileUpdate(displayName: displayName, bio: bio)
+            
+            _ = try await client
+                .from("profiles")
+                .update(updateData)
+                .eq("user_id", value: userId.uuidString)
+                .execute()
+            
+            await loadUserProfile()
+            
+            return .success(())
+        } catch {
+            print("Failed to update profile: \(error)")
+            return .failure(AuthError.authenticationFailed)
+        }
+    }
+    
+    func refreshUserData() async {
+        await loadUserProfile()
+        await loadUserSubscription()
+    }
+
+    // MARK: - Account Updates
+    func updateEmail(_ newEmail: String) async -> Result<Void, AuthError> {
+        guard isValidEmail(newEmail) else {
+            return .failure(.invalidEmail)
+        }
+        do {
+            try await client.auth.update(user: UserAttributes(email: newEmail))
+            await refreshUserData()
+            return .success(())
+        } catch {
+            print("Failed to update email: \(error)")
+            return .failure(.authenticationFailed)
+        }
+    }
+    
+    func updatePassword(_ newPassword: String) async -> Result<Void, AuthError> {
+        guard isStrongPassword(newPassword) else {
+            return .failure(.weakPassword)
+        }
+        do {
+            try await client.auth.update(user: UserAttributes(password: newPassword))
+            return .success(())
+        } catch {
+            print("Failed to update password: \(error)")
+            return .failure(.authenticationFailed)
+        }
+    }
+
+    // MARK: - Token Management
+    
+    private func storeAuthenticationTokens(accessToken: String, refreshToken: String) {
+        _ = keychainService.storeToken(accessToken, forKey: "supabase_access_token")
+        _ = keychainService.storeToken(refreshToken, forKey: "supabase_refresh_token")
+    }
+    
     func ensureValidToken() async {
         guard isAuthenticated else { return }
         
         let timeSinceLastRefresh = Date().timeIntervalSince(lastTokenRefresh)
         if timeSinceLastRefresh >= tokenRefreshInterval {
-            if let refreshToken = keychainService.retrieveToken(forKey: "supabase_refresh_token") {
-                await refreshAuthenticationToken(refreshToken: refreshToken)
-            } else {
+            do {
+                _ = try await client.auth.refreshSession()
+                // Token refresh will be handled by the auth listener
+            } catch {
+                print("🔒 SECURITY ERROR: Token refresh failed: \(error)")
                 await signOut()
             }
         }
     }
     
-    // MARK: - Input Validation & Security
+    // MARK: - Database Access with RLS
     
-    /// Validate email format
+    var database: SupabaseClient {
+        return client
+    }
+    
+    // MARK: - Validation
+    
     private func isValidEmail(_ email: String) -> Bool {
         let emailRegex = #"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"#
         return NSPredicate(format: "SELF MATCHES %@", emailRegex).evaluate(with: email)
     }
     
-    /// Basic password validation
     private func isValidPassword(_ password: String) -> Bool {
-        return password.count >= 6 // Minimum requirement
+        return password.count >= 6
     }
     
-    /// Strong password validation
     private func isStrongPassword(_ password: String) -> Bool {
         guard password.count >= 8 else { return false }
         
@@ -473,237 +486,124 @@ class SupabaseService: ObservableObject {
         return hasUppercase && hasLowercase && hasNumbers && hasSpecialChar
     }
     
-    // MARK: - Database Access (with RLS)
+    // MARK: - Statistics & Monitoring
     
-    /// Get authenticated database client
-    /// This client will automatically include authentication headers
-    /// and work with Row Level Security policies
-    var database: SupabaseClient {
-        return client
+    func getConnectionStats() -> ConnectionStats {
+        return ConnectionStats(
+            isConnected: isConnected,
+            quality: connectionQuality,
+            lastSync: lastSyncTimestamp,
+            authExpiry: calculateTokenExpiry()
+        )
     }
     
-    // MARK: - Sync Status Methods
-    
-    /// Check database connection
-    func checkDatabaseConnection() async -> Bool {
-        guard isAuthenticated else { return false }
-        
-        do {
-            _ = try await client
-                .from("schedules")
-                .select("id")
-                .limit(1)
-                .execute()
-            return true
-        } catch {
-             ("🔒 Database connection check failed: \(error)")
-            return false
-        }
+    private func calculateTokenExpiry() -> Date? {
+        // JWT tokens typically expire after 1 hour
+        return Date(timeInterval: 3600, since: lastTokenRefresh)
     }
     
-    /// Get sync statistics
     func getSyncStats() async -> SyncStats? {
         guard isAuthenticated else { return nil }
         
         do {
             await ensureValidToken()
             
-            let schedulesResponse = try await client
-                .from("schedules")
-                .select("id")
-                .execute()
+            async let schedulesCount = getTableCount("schedules")
+            async let coursesCount = getTableCount("courses")
+            async let eventsCount = getTableCount("events")
+            async let categoriesCount = getTableCount("categories")
+            async let assignmentsCount = getTableCount("assignments")
             
-            let coursesResponse = try await client
-                .from("courses")
-                .select("id")
-                .execute()
-            
-            let eventsResponse = try await client
-                .from("events")
-                .select("id")
-                .execute()
-            
-            let categoriesResponse = try await client
-                .from("categories")
-                .select("id")
-                .execute()
-            
-            let assignmentsResponse = try await client
-                .from("assignments")
-                .select("id")
-                .execute()
-            
-            // Decode counts
-            let schedulesData = schedulesResponse.data
-            let coursesData = coursesResponse.data
-            let eventsData = eventsResponse.data
-            let categoriesData = categoriesResponse.data
-            let assignmentsData = assignmentsResponse.data
-            
-            let schedulesCount = try JSONSerialization.jsonObject(with: schedulesData) as? [Any]
-            let coursesCount = try JSONSerialization.jsonObject(with: coursesData) as? [Any]
-            let eventsCount = try JSONSerialization.jsonObject(with: eventsData) as? [Any]
-            let categoriesCount = try JSONSerialization.jsonObject(with: categoriesData) as? [Any]
-            let assignmentsCount = try JSONSerialization.jsonObject(with: assignmentsData) as? [Any]
+            let counts = await (
+                schedules: schedulesCount,
+                courses: coursesCount,
+                events: eventsCount,
+                categories: categoriesCount,
+                assignments: assignmentsCount
+            )
             
             return SyncStats(
-                schedulesCount: schedulesCount?.count ?? 0,
-                coursesCount: coursesCount?.count ?? 0,
-                assignmentsCount: assignmentsCount?.count ?? 0,
-                eventsCount: eventsCount?.count ?? 0,
-                categoriesCount: categoriesCount?.count ?? 0
+                schedulesCount: counts.schedules,
+                coursesCount: counts.courses,
+                assignmentsCount: counts.assignments,
+                eventsCount: counts.events,
+                categoriesCount: counts.categories
             )
         } catch {
-             ("🔒 Failed to get sync stats: \(error)")
+            print("🔒 Failed to get sync stats: \(error)")
             return nil
         }
     }
+    
+    private func getTableCount(_ table: String) async -> Int {
+        do {
+            let response = try await client
+                .from(table)
+                .select("id", head: true, count: .exact)
+                .execute()
+            
+            return response.count ?? 0
+        } catch {
+            return 0
+        }
+    }
+    
+    deinit {
+        connectionMonitor?.invalidate()
+    }
+    
+    
+    
 }
 
-// MARK: - Profile Models
+// MARK: - Supporting Types
 
-struct UserProfile: Codable {
-    let id: String
+// Database insert/update structs
+private struct ProfileInsert: Codable {
     let user_id: String
-    let display_name: String?
+    let display_name: String
     let avatar_url: String?
     let bio: String?
-    let created_at: String
-    let updated_at: String
-    
-    var displayName: String {
-        display_name ?? "User"
-    }
-    
-    var createdDate: Date? {
-        ISO8601DateFormatter().date(from: created_at)
-    }
-    
-    var updatedDate: Date? {
-        ISO8601DateFormatter().date(from: updated_at)
-    }
 }
 
-struct DefaultProfile: Codable {
-    let user_id: String
-    let display_name: String?
-    let avatar_url: String?
-    let bio: String?
-}
-
-struct ProfileUpdate: Codable {
-    let display_name: String?
-    let bio: String?
-    let updated_at: String
-}
-
-// MARK: - Subscription Models
-
-struct UserSubscription: Codable {
-    let id: String
+private struct SubscriberInsert: Codable {
     let user_id: String
     let email: String
-    let stripe_customer_id: String?
     let subscribed: Bool
     let subscription_tier: String
     let role: String
-    let subscription_end: String?
+}
+
+private struct ProfileUpdate: Codable {
+    let display_name: String?
+    let bio: String?
     let updated_at: String
-    let created_at: String
     
-    var subscriptionTier: SubscriptionTier {
-        SubscriptionTier(rawValue: subscription_tier) ?? .free
-    }
-    
-    var userRole: UserRole {
-        UserRole(rawValue: role) ?? .free
-    }
-    
-    var isActive: Bool {
-        guard subscribed else { return false }
-        
-        if let endDateString = subscription_end,
-           let endDate = ISO8601DateFormatter().date(from: endDateString) {
-            return Date() < endDate
-        }
-        
-        return subscribed
-    }
-    
-    var subscriptionEndDate: Date? {
-        guard let endDateString = subscription_end else { return nil }
-        return ISO8601DateFormatter().date(from: endDateString)
+    init(displayName: String?, bio: String?) {
+        self.display_name = displayName
+        self.bio = bio
+        self.updated_at = Date().iso8601String()
     }
 }
 
-enum SubscriptionTier: String, CaseIterable, Codable {
-    case free = "free"
-    case premium = "premium"
-    case founder = "founder"
-    
-    var displayName: String {
-        switch self {
-        case .free:
-            return "Free"
-        case .premium:
-            return "Premium"
-        case .founder:
-            return "Founder"
-        }
-    }
-    
-    var color: Color {
-        switch self {
-        case .free:
-            return .gray
-        case .premium:
-            return .blue
-        case .founder:
-            return .purple
-        }
-    }
-    
-    var icon: String {
-        switch self {
-        case .free:
-            return "person"
-        case .premium:
-            return "star.circle.fill"
-        case .founder:
-            return "crown.fill"
-        }
-    }
-    
-    var benefits: [String] {
-        switch self {
-        case .free:
-            return ["Basic scheduling", "Manual data entry", "Cloud sync"]
-        case .premium:
-            return ["All Free features", "AI schedule import", "Priority support", "Advanced analytics"]
-        case .founder:
-            return ["All Premium features", "Lifetime access", "Early feature access", "Founder badge"]
-        }
-    }
+struct ConnectionStats {
+    let isConnected: Bool
+    let quality: SupabaseService.ConnectionQuality
+    let lastSync: Date?
+    let authExpiry: Date?
 }
 
-enum UserRole: String, CaseIterable, Codable {
-    case free = "free"
-    case premium = "premium"
-    case founder = "founder"
+struct SyncStats {
+    let schedulesCount: Int
+    let coursesCount: Int
+    let assignmentsCount: Int
+    let eventsCount: Int
+    let categoriesCount: Int
     
-    var subscriptionTier: SubscriptionTier {
-        switch self {
-        case .free:
-            return .free
-        case .premium:
-            return .premium
-        case .founder:
-            return .founder
-        }
+    var totalItems: Int {
+        schedulesCount + coursesCount + assignmentsCount + eventsCount + categoriesCount
     }
 }
-
-// MARK: - Custom Error Types
 
 enum AuthError: Error, LocalizedError {
     case invalidEmail
@@ -725,19 +625,5 @@ enum AuthError: Error, LocalizedError {
         case .storageError:
             return "Failed to store authentication data securely"
         }
-    }
-}
-
-// MARK: - Sync Statistics
-
-struct SyncStats {
-    let schedulesCount: Int
-    let coursesCount: Int
-    let assignmentsCount: Int
-    let eventsCount: Int
-    let categoriesCount: Int
-    
-    var totalItems: Int {
-        schedulesCount + coursesCount + assignmentsCount + eventsCount + categoriesCount
     }
 }

@@ -332,7 +332,7 @@ struct SettingsView: View {
         }
         .onAppear {
             Task {
-                await supabaseService.refreshSubscription()
+                await supabaseService.refreshUserData()
             }
         }
         .sheet(isPresented: $showingThemeSelector) {
@@ -689,7 +689,7 @@ struct AccountManagementView: View {
         }
         .onAppear {
             Task {
-                await supabaseService.refreshSubscription()
+                await supabaseService.refreshUserData()
             }
         }
     }
@@ -709,7 +709,7 @@ struct AccountManagementView: View {
     // MARK: - Computed Properties
     
     private var displayName: String {
-        supabaseService.userProfile?.displayName ?? "User"
+        supabaseService.userProfile?.displayName ?? ""
     }
     
     // MARK: - Subscription Properties
@@ -1371,6 +1371,39 @@ struct SyncStatusIndicator: View {
                 ProgressView()
                     .scaleEffect(0.8)
             }
+        }
+    }
+}
+
+private extension SubscriptionTier {
+    var icon: String {
+        switch self {
+        case .free: return "person"
+        case .premium: return "star.fill"
+        case .founder: return "crown.fill"
+        }
+    }
+    
+    var benefits: [String] {
+        switch self {
+        case .free:
+            return [
+                "Basic features",
+                "Local data storage"
+            ]
+        case .premium:
+            return [
+                "Cloud sync across devices",
+                "Priority support",
+                "Advanced analytics"
+            ]
+        case .founder:
+            return [
+                "All Premium benefits",
+                "Lifetime access",
+                "Early access to new features",
+                "Founder badge"
+            ]
         }
     }
 }

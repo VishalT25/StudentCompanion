@@ -114,7 +114,7 @@ class BulkCourseSelectionManager: ObservableObject {
 
 // MARK: - Enhanced Course Operations Manager with Real-time Sync and Schedule Integration
 @MainActor
-class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
+class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
     @Published var courses: [Course] = []
     @Published var isSyncing: Bool = false
     @Published var syncStatus: String = "Ready"
@@ -129,7 +129,8 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
     
     init() {
         // Set up real-time sync delegate
-        realtimeSyncManager.coursesDelegate = self
+        realtimeSyncManager.courseDelegate = self
+        realtimeSyncManager.assignmentDelegate = self
         
         // Load local data first for offline support
         loadCourses()
@@ -137,10 +138,67 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         // Setup sync status observation
         setupSyncStatusObservation()
         
+        // Setup authentication observer
+        setupAuthenticationObserver()
+        
         Task {
             await realtimeSyncManager.ensureStarted()
             await self.refreshCourseData()
         }
+    }
+    
+    // MARK: - Authentication Observer
+    
+    private func setupAuthenticationObserver() {
+        // Listen for post sign-in data refresh notification
+        NotificationCenter.default.addObserver(
+            forName: .init("UserSignedInDataRefresh"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            print("🔄 UnifiedCourseManager: Received post sign-in data refresh notification")
+            Task { await self?.refreshCourseData() }
+        }
+        
+        // Listen for data sync completed notification
+        NotificationCenter.default.addObserver(
+            forName: .init("DataSyncCompleted"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            print("🔄 UnifiedCourseManager: Received data sync completed notification")
+            Task { await self?.reloadFromCache() }
+        }
+    }
+    
+    // MARK: - Cache Reload
+    
+    private func reloadFromCache() async {
+        print("🔄 UnifiedCourseManager: Reloading data from cache")
+        
+        // Load courses from cache
+        let cachedCourses = await CacheSystem.shared.courseCache.retrieve()
+        
+        // Load assignments from cache
+        let cachedAssignments = await CacheSystem.shared.assignmentCache.retrieve()
+        
+        // Update courses with their assignments in a single update to prevent UI conflicts
+        var updatedCourses: [Course] = []
+        for course in cachedCourses {
+            var updatedCourse = course
+            updatedCourse.assignments = cachedAssignments.filter { $0.courseId == course.id }
+            updatedCourses.append(updatedCourse)
+        }
+        
+        // Perform a single UI update to prevent layering issues
+        await MainActor.run {
+            self.courses = updatedCourses
+        }
+        
+        // Save to local storage
+        saveCoursesLocally()
+        
+        print("🔄 UnifiedCourseManager: Reloaded \(cachedCourses.count) courses with \(cachedAssignments.count) total assignments from cache")
     }
     
     // NEW: Set schedule manager for synchronization
@@ -197,48 +255,61 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
     
     // MARK: - Real-time Course Handlers
     
-    private func syncCoursesFromDatabase(_ courses: [DatabaseCourse]) {
-        let localCourses = courses.map { $0.toLocal() }
+    private func syncCoursesFromDatabase(_ dbCourses: [DatabaseCourse]) {
+        let localCourses = dbCourses.map { $0.toLocal() }
+        
+        // Load existing courses from storage to preserve assignments
+        let existingCourses = CourseStorage.load()
+        var updatedCourses: [Course] = []
         
         // Preserve existing assignments for courses that already exist
-        for (index, localCourse) in localCourses.enumerated() {
-            if let existingCourseIndex = self.courses.firstIndex(where: { $0.id == localCourse.id }) {
-                // Preserve existing assignments
+        for localCourse in localCourses {
+            if let existingCourse = existingCourses.first(where: { $0.id == localCourse.id }) {
+                // Create updated course with preserved assignments
                 var updatedCourse = localCourse
-                updatedCourse.assignments = self.courses[existingCourseIndex].assignments
-                self.courses[existingCourseIndex] = updatedCourse
+                updatedCourse.assignments = existingCourse.assignments
+                updatedCourses.append(updatedCourse)
             } else {
-                // New course
-                self.courses.append(localCourse)
+                // New course with empty assignments (will be populated separately)
+                updatedCourses.append(localCourse)
             }
         }
         
-        // Remove courses that no longer exist on server
-        let serverCourseIds = Set(localCourses.map { $0.id })
-        self.courses.removeAll { !serverCourseIds.contains($0.id) }
+        // Update manager's courses array
+        self.courses = updatedCourses
         
-        if !isInitialLoad {
-            saveCoursesLocally() // Cache for offline use
-        }
+        saveCoursesLocally() // Always save after sync
+        
+        print("🔄 UnifiedCourseManager: Synced \(updatedCourses.count) courses from database")
     }
     
     private func syncAssignmentsFromDatabase(_ assignments: [DatabaseAssignment]) {
-        // Group assignments by course_id
-        let groupedAssignments = Dictionary(grouping: assignments) { $0.course_id }
+        print("🔄 UnifiedCourseManager: Syncing \(assignments.count) assignments from database")
         
-        for (courseIdString, dbAssignments) in groupedAssignments {
-            guard let courseId = UUID(uuidString: courseIdString),
-                  let courseIndex = courses.firstIndex(where: { $0.id == courseId }) else {
-                continue
+        let localAssignments = assignments.map { $0.toLocal() }
+        let groupedAssignments = Dictionary(grouping: localAssignments.filter { assignment in
+            // Ensure we only include assignments with valid course IDs
+            return self.courses.contains { $0.id == assignment.courseId }
+        }, by: { $0.courseId })
+        
+        var coursesUpdated = false
+        
+        for (courseId, dbAssignments) in groupedAssignments {
+            if let courseIndex = courses.firstIndex(where: { $0.id == courseId }) {
+                // Replace assignments for this course
+                courses[courseIndex].assignments = dbAssignments
+                coursesUpdated = true
+                print("🔄 UnifiedCourseManager: Updated \(dbAssignments.count) assignments for course: \(courses[courseIndex].name)")
             }
-            
-            let localAssignments = dbAssignments.map { $0.toLocal() }
-            courses[courseIndex].assignments = localAssignments
         }
         
-        if !isInitialLoad {
-            saveCoursesLocally() // Cache for offline use
+        // Save to local storage after sync
+        if coursesUpdated {
+            saveCoursesLocally()
+            print("🔄 UnifiedCourseManager: Saved courses with assignments to local storage")
         }
+        
+        print("🔄 UnifiedCourseManager: Assignment sync complete")
     }
     
     private func handleCourseInsert(_ dbCourse: DatabaseCourse) {
@@ -274,29 +345,30 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
     private func handleAssignmentInsert(_ dbAssignment: DatabaseAssignment) {
         let localAssignment = dbAssignment.toLocal()
         
-        guard let courseId = UUID(uuidString: dbAssignment.course_id),
-              let courseIndex = courses.firstIndex(where: { $0.id == courseId }) else {
+        guard let courseIndex = courses.firstIndex(where: { $0.id == localAssignment.courseId }) else {
+            print("🔄 UnifiedCourseManager: Course not found for assignment: \(localAssignment.name)")
             return
         }
         
-        // Check if assignment already exists locally
         if !courses[courseIndex].assignments.contains(where: { $0.id == localAssignment.id }) {
             courses[courseIndex].addAssignment(localAssignment)
-            saveCoursesLocally()
+            saveCoursesLocally() // Save to UserDefaults for UI consistency
+            print("🔄 UnifiedCourseManager: Added assignment \(localAssignment.name) to course \(courses[courseIndex].name)")
         }
     }
     
     private func handleAssignmentUpdate(_ dbAssignment: DatabaseAssignment) {
         let localAssignment = dbAssignment.toLocal()
         
-        guard let courseId = UUID(uuidString: dbAssignment.course_id),
-              let courseIndex = courses.firstIndex(where: { $0.id == courseId }),
+        guard let courseIndex = courses.firstIndex(where: { $0.id == localAssignment.courseId }),
               let assignmentIndex = courses[courseIndex].assignments.firstIndex(where: { $0.id == localAssignment.id }) else {
+            print("🔄 UnifiedCourseManager: Assignment or course not found for update: \(localAssignment.name)")
             return
         }
         
         courses[courseIndex].assignments[assignmentIndex] = localAssignment
-        saveCoursesLocally()
+        saveCoursesLocally() // Save to UserDefaults for UI consistency
+        print("🔄 UnifiedCourseManager: Updated assignment \(localAssignment.name) in course \(courses[courseIndex].name)")
     }
     
     private func handleAssignmentDelete(_ assignmentId: String) {
@@ -305,7 +377,8 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         for courseIndex in courses.indices {
             if let assignmentIndex = courses[courseIndex].assignments.firstIndex(where: { $0.id == uuid }) {
                 let removedAssignment = courses[courseIndex].assignments.remove(at: assignmentIndex)
-                saveCoursesLocally()
+                saveCoursesLocally() // Save to UserDefaults for UI consistency
+                print("🔄 UnifiedCourseManager: Deleted assignment \(removedAssignment.name) from course \(courses[courseIndex].name)")
                 break
             }
         }
@@ -314,91 +387,44 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
     // MARK: - Enhanced Course Operations with Sync
     
     func addCourse(_ course: Course) {
-        // Add locally for immediate UI update
+        guard SupabaseService.shared.isAuthenticated else {
+             ("🔒 UnifiedCourseManager: Add course blocked - user not authenticated")
+            return
+        }
         courses.append(course)
         saveCoursesLocally()
         
-        // NEW: Create corresponding schedule item if course has schedule info
-        if course.hasScheduleInfo,
-           let scheduleManager = scheduleManager,
-           let activeSchedule = scheduleManager.activeSchedule {
-            let scheduleItem = course.toScheduleItem()
-            // Don't create duplicate - check if it already exists
-            let existingItem = activeSchedule.scheduleItems.first { $0.id == course.id }
-            if existingItem == nil {
-                scheduleManager.addScheduleItem(scheduleItem, to: activeSchedule.id)
-            }
-        }
-        
-        // Sync to database
         syncCourseToDatabase(course, action: .create)
     }
     
     func updateCourse(_ course: Course) {
         guard let index = courses.firstIndex(where: { $0.id == course.id }) else { return }
         
-        // Update locally for immediate UI update
         courses[index] = course
         saveCoursesLocally()
         
-        // NEW: Update corresponding schedule item (but prevent recursive updates)
-        if !isSyncing,
-           let scheduleManager = scheduleManager,
-           let activeSchedule = scheduleManager.activeSchedule {
-            
-            // Temporarily set syncing flag to prevent recursive updates
-            let wasSyncing = isSyncing
-            isSyncing = true
-            defer { isSyncing = wasSyncing }
-            
-            if course.hasScheduleInfo {
-                // Update or create schedule item
-                let scheduleItem = course.toScheduleItem()
-                let existingItemIndex = activeSchedule.scheduleItems.firstIndex { $0.id == course.id }
-                
-                if existingItemIndex != nil {
-                    scheduleManager.updateScheduleItem(scheduleItem, in: activeSchedule.id)
-                } else {
-                    scheduleManager.addScheduleItem(scheduleItem, to: activeSchedule.id)
-                }
-            } else {
-                // Remove schedule item if course no longer has schedule info
-                if let existingItem = activeSchedule.scheduleItems.first(where: { $0.id == course.id }) {
-                    scheduleManager.deleteScheduleItem(existingItem, from: activeSchedule.id)
-                }
-            }
-        }
-        
-        // Sync to database
         syncCourseToDatabase(course, action: .update)
     }
     
     func deleteCourse(_ courseID: UUID) {
         guard let course = courses.first(where: { $0.id == courseID }) else { return }
         
-        // Remove locally for immediate UI update
         courses.removeAll { $0.id == courseID }
         saveCoursesLocally()
         
-        // NEW: Remove corresponding schedule item
-        if let scheduleManager = scheduleManager,
-           let activeSchedule = scheduleManager.activeSchedule,
-           let scheduleItem = activeSchedule.scheduleItems.first(where: { $0.id == courseID }) {
-            scheduleManager.deleteScheduleItem(scheduleItem, from: activeSchedule.id)
-        }
-        
-        // Sync to database
         syncCourseToDatabase(course, action: .delete)
     }
     
     func addAssignment(_ assignment: Assignment, to courseId: UUID) {
+        guard SupabaseService.shared.isAuthenticated else {
+             ("🔒 UnifiedCourseManager: Add assignment blocked - user not authenticated")
+            return
+        }
         guard let courseIndex = courses.firstIndex(where: { $0.id == courseId }) else { return }
         
-        // Add locally for immediate UI update
         courses[courseIndex].addAssignment(assignment)
         saveCoursesLocally()
         
-        // Sync to database
         syncAssignmentToDatabase(assignment, courseId: courseId, action: .create)
     }
     
@@ -406,11 +432,9 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         guard let courseIndex = courses.firstIndex(where: { $0.id == courseId }),
               let assignmentIndex = courses[courseIndex].assignments.firstIndex(where: { $0.id == assignment.id }) else { return }
         
-        // Update locally for immediate UI update
         courses[courseIndex].assignments[assignmentIndex] = assignment
         saveCoursesLocally()
         
-        // Sync to database
         syncAssignmentToDatabase(assignment, courseId: courseId, action: .update)
     }
     
@@ -418,11 +442,9 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         guard let courseIndex = courses.firstIndex(where: { $0.id == courseId }),
               let assignment = courses[courseIndex].assignments.first(where: { $0.id == assignmentId }) else { return }
         
-        // Remove locally for immediate UI update
         courses[courseIndex].assignments.removeAll { $0.id == assignmentId }
         saveCoursesLocally()
         
-        // Sync to database
         syncAssignmentToDatabase(assignment, courseId: courseId, action: .delete)
     }
     
@@ -451,9 +473,10 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
     }
     
     private func syncAssignmentToDatabase(_ assignment: Assignment, courseId: UUID, action: SyncAction) {
+        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else { return }
         let dbAssignment = DatabaseAssignment(
             from: assignment,
-            courseId: courseId.uuidString
+            userId: userId
         )
         
         do {
@@ -476,6 +499,9 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
     func refreshCourseData() async {
         isSyncing = true
         
+        // Load current courses from storage first
+        loadCourses()
+        
         // Refresh real-time sync data
         await realtimeSyncManager.refreshAllData()
         
@@ -484,6 +510,8 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         
         lastSyncTime = Date()
         isSyncing = false
+        
+        print("🔄 UnifiedCourseManager: Course data refresh completed. Loaded \(courses.count) courses.")
     }
     
     // MARK: - Sync Status Observation
@@ -506,5 +534,11 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
     
     func loadCourses() {
         self.courses = CourseStorage.load()
+        print("🔄 UnifiedCourseManager: Loaded \(courses.count) courses from storage")
+        
+        // Debug: Print course and assignment counts
+        for course in courses {
+            print("🔄 Course: \(course.name) has \(course.assignments.count) assignments")
+        }
     }
 }

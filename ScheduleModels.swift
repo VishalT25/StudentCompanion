@@ -6,7 +6,7 @@ import Combine
 struct ScheduleCollection: Identifiable, Codable {
     var id = UUID()
     var name: String
-    var semester: String // e.g., "Fall 2025", "Spring 2024"
+    var semester: String // e.g., "Fall 225", "Spring 2024"
     var isActive: Bool = false
     var isArchived: Bool = false // NEW: For archived schedules
     var color: Color = .blue
@@ -111,7 +111,7 @@ struct ScheduleCollection: Identifiable, Codable {
         
         if let calendar = effectiveCalendar {
             // Debug: Check if date is within semester bounds
-            let withinSemester = calendar.isWithinSemester(date)
+            let withinSemester = calendar.isDateWithinSemester(date)
                         
             if !withinSemester {
                 return [] // No classes outside semester dates
@@ -270,19 +270,21 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
     @Published var syncStatus: String = "Ready"
     @Published var lastSyncTime: Date?
     
-    // NEW: Course integration
-    private var courseManager: CourseOperationsManager?
+    // MARK: - NEW: Course integration
+    private var courseManager: UnifiedCourseManager?
     
     private let schedulesKey = "savedScheduleCollections"
     private let activeScheduleKey = "activeScheduleID"
     private let realtimeSyncManager = RealtimeSyncManager.shared
+    private let supabaseService = SupabaseService.shared
+    private let authPromptHandler = AuthenticationPromptHandler.shared
     private var cancellables = Set<AnyCancellable>()
     private var isInitialLoad = true
     
     init() {
-        
         // Set up real-time sync delegate
-        realtimeSyncManager.schedulesDelegate = self
+        realtimeSyncManager.scheduleDelegate = self
+        realtimeSyncManager.scheduleItemDelegate = self
         
         // Load local data first for offline support
         loadSchedules()
@@ -290,100 +292,196 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
         // Setup sync status observation
         setupSyncStatusObservation()
         
+        // Clear data when user signs out
+        setupAuthenticationObserver()
         
         Task {
             await realtimeSyncManager.ensureStarted()
+            // FIX: Always perform initial data refresh, regardless of isInitialLoad flag
             await self.refreshScheduleData()
+            // FIX: Force initial sync if no data exists and user is authenticated
+            if self.scheduleCollections.isEmpty && SupabaseService.shared.isAuthenticated {
+                await self.performEmergencyDataSync()
+            }
         }
     }
     
-    // NEW: Set course manager for synchronization
-    func setCourseManager(_ courseManager: CourseOperationsManager) {
-        self.courseManager = courseManager
-        
-        // Sync existing data
-        syncCoursesWithScheduleItems()
-        
-        // Observe course changes with weak self to prevent retain cycles
-        courseManager.$courses
+    private func setupAuthenticationObserver() {
+        supabaseService.$isAuthenticated
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] courses in
-                guard let self = self else { return }
-                self.syncScheduleItemsWithCourses(courses)
+            .sink { [weak self] isAuthenticated in
+                if !isAuthenticated {
+                    self?.clearData()
+                } else {
+                    Task {
+                        // Add delay to ensure authentication is fully complete
+                        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                        await self?.refreshScheduleData()
+                    }
+                }
+            }
+            .store(in: &cancellables)
+        
+        // Listen for post sign-in data refresh notification
+        NotificationCenter.default.addObserver(
+            forName: .init("UserSignedInDataRefresh"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            print("🔄 ScheduleManager: Received post sign-in data refresh notification")
+            Task { await self?.refreshScheduleData() }
+        }
+        
+        // Listen for data sync completed notification
+        NotificationCenter.default.addObserver(
+            forName: .init("DataSyncCompleted"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            print("🔄 ScheduleManager: Received data sync completed notification")
+            Task { await self?.reloadFromCache() }
+        }
+        
+        // Listen for schedule items sync notification
+        NotificationCenter.default.addObserver(
+            forName: .init("ScheduleItemsSynced"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            print("🔄 ScheduleManager: Received schedule items sync notification")
+            Task { await self?.loadAllScheduleItems() }
+        }
+    }
+
+    private func clearData() {
+        scheduleCollections.removeAll()
+        activeScheduleID = nil
+        UserDefaults.standard.removeObject(forKey: schedulesKey)
+        UserDefaults.standard.removeObject(forKey: activeScheduleKey)
+    }
+    
+    // MARK: - Emergency Data Sync (Fallback)
+    private func performEmergencyDataSync() async {
+        print("🚨 ScheduleManager: Performing emergency data sync - no local data found")
+        
+        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
+            print("🚨 ScheduleManager: Cannot sync - user not authenticated")
+            return
+        }
+        
+        isSyncing = true
+        
+        do {
+            // Load schedules directly from repository
+            let scheduleRepository = ScheduleRepository()
+            let schedules = try await scheduleRepository.readAll(userId: userId)
+            
+            print("🚨 ScheduleManager: Emergency sync found \(schedules.count) schedules")
+            
+            if !schedules.isEmpty {
+                scheduleCollections = schedules
+                
+                // Set active schedule
+                if let firstActive = schedules.first(where: { $0.isActive }) {
+                    activeScheduleID = firstActive.id
+                } else {
+                    activeScheduleID = schedules.first?.id
+                }
+                
+                // Now load schedule items for each schedule
+                await loadAllScheduleItems()
+                
+                // Save to local storage
+                isInitialLoad = false // Disable the flag that prevents saving
+                saveSchedulesLocally()
+                
+                print("🚨 ScheduleManager: Emergency sync completed successfully")
+            }
+        } catch {
+            print("🚨 ScheduleManager: Emergency sync failed: \(error)")
+        }
+        
+        isSyncing = false
+    }
+    
+    private func loadScheduleItemsForSchedule(_ scheduleId: String) async {
+        guard let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id.uuidString == scheduleId }) else { return }
+        
+        do {
+            let response = try await SupabaseService.shared.client
+                .from("schedule_items")
+                .select()
+                .eq("schedule_id", value: scheduleId)
+                .execute()
+            
+            let dbItems = try JSONDecoder().decode([DatabaseScheduleItem].self, from: response.data)
+            let localItems = dbItems.map { $0.toLocal() }
+            
+            scheduleCollections[scheduleIndex].scheduleItems = localItems
+            
+            print("🚨 ScheduleManager: Loaded \(localItems.count) items for schedule: \(scheduleId)")
+        } catch {
+            print("🚨 ScheduleManager: Failed to load schedule items for \(scheduleId): \(error)")
+        }
+    }
+    
+    // MARK: - Enhanced Refresh with Sync
+    func refreshScheduleData() async {
+        print("🔄 ScheduleManager: Starting data refresh...")
+        isSyncing = true
+        
+        // FIX: Always refresh real-time sync data, even on initial load
+        await realtimeSyncManager.refreshAllData()
+        
+        // Load schedule items for all schedules after sync
+        await loadAllScheduleItems()
+        
+        // FIX: Always mark as no longer initial load after first refresh
+        isInitialLoad = false
+        
+        lastSyncTime = Date()
+        isSyncing = false
+        print("🔄 ScheduleManager: Data refresh completed")
+    }
+    
+    // MARK: - Load Schedule Items
+    
+    private func loadAllScheduleItems() async {
+        print("🔄 ScheduleManager: Loading schedule items for all schedules")
+        
+        for scheduleIndex in scheduleCollections.indices {
+            let scheduleId = scheduleCollections[scheduleIndex].id.uuidString
+            await loadScheduleItemsForSchedule(scheduleId, scheduleIndex: scheduleIndex)
+        }
+    }
+    
+    private func loadScheduleItemsForSchedule(_ scheduleId: String, scheduleIndex: Int? = nil) async {
+        do {
+            let repository = ScheduleItemRepository()
+            let items = try await repository.findBySchedule(scheduleId)
+            
+            let index = scheduleIndex ?? scheduleCollections.firstIndex(where: { $0.id.uuidString == scheduleId })
+            guard let scheduleIdx = index else { return }
+            
+            scheduleCollections[scheduleIdx].scheduleItems = items
+            print("🔄 ScheduleManager: Loaded \(items.count) items for schedule: \(scheduleId)")
+        } catch {
+            print("🔄 ScheduleManager: Failed to load schedule items for \(scheduleId): \(error)")
+        }
+    }
+    
+    // MARK: - Sync Status Observation
+    private func setupSyncStatusObservation() {
+        realtimeSyncManager.$syncStatus
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in
+                self?.syncStatus = status.displayName
+                self?.isSyncing = status.isActive
             }
             .store(in: &cancellables)
     }
     
-    // MARK: - Course-Schedule Synchronization
-    
-    private func syncCoursesWithScheduleItems() {
-        guard let courseManager = courseManager,
-              let activeSchedule = activeSchedule else { return }
-        
-        // Create schedule items from courses that have schedule info
-        let coursesWithSchedule = courseManager.courses.filter { course in
-            course.scheduleId == activeSchedule.id && course.hasScheduleInfo
-        }
-        
-        for course in coursesWithSchedule {
-            // Check if schedule item already exists
-            let existingItem = activeSchedule.scheduleItems.first { $0.id == course.id }
-            
-            if existingItem == nil {
-                // Create schedule item from course
-                let scheduleItem = course.toScheduleItem()
-                addScheduleItem(scheduleItem, to: activeSchedule.id)
-                 ("🔄 ScheduleManager: Created schedule item from course: \(course.name)")
-            }
-        }
-    }
-    
-    private func syncScheduleItemsWithCourses(_ courses: [Course]) {
-        guard let activeSchedule = activeSchedule else { return }
-        
-        // Prevent recursive updates by checking if we're already syncing
-        guard !isSyncing else { return }
-        
-        isSyncing = true
-        defer { isSyncing = false }
-        
-        // Remove schedule items for courses that no longer exist or don't have schedule info
-        let activeScheduleCourses = courses.filter { $0.scheduleId == activeSchedule.id }
-        let coursesWithSchedule = activeScheduleCourses.filter { $0.hasScheduleInfo }
-        let courseIds = Set(coursesWithSchedule.map { $0.id })
-        
-        // Remove schedule items that don't have corresponding courses
-        if let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == activeSchedule.id }) {
-            let itemsToRemove = scheduleCollections[scheduleIndex].scheduleItems.filter { item in
-                !courseIds.contains(item.id)
-            }
-            
-            for item in itemsToRemove {
-                scheduleCollections[scheduleIndex].scheduleItems.removeAll { $0.id == item.id }
-                 ("🔄 ScheduleManager: Removed schedule item without corresponding course: \(item.title)")
-            }
-        }
-        
-        // Update existing schedule items and create new ones
-        for course in coursesWithSchedule {
-            if let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == activeSchedule.id }) {
-                if let itemIndex = scheduleCollections[scheduleIndex].scheduleItems.firstIndex(where: { $0.id == course.id }) {
-                    // Update existing schedule item
-                    scheduleCollections[scheduleIndex].scheduleItems[itemIndex] = course.toScheduleItem()
-                } else {
-                    // Create new schedule item
-                    let scheduleItem = course.toScheduleItem()
-                    scheduleCollections[scheduleIndex].scheduleItems.append(scheduleItem)
-                     ("🔄 ScheduleManager: Created schedule item from course: \(course.name)")
-                }
-            }
-        }
-        
-        saveSchedulesLocally()
-    }
-    
-    // MARK: - RealtimeSyncDelegate
-    
+    // MARK: - Fix Real-time Sync Delegate Methods
     func didReceiveRealtimeUpdate(_ data: [String: Any], action: String, table: String) {
          ("🔄 ScheduleManager: Received real-time update for table: \(table), action: \(action)")
         
@@ -407,10 +505,6 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
                 handleScheduleDelete(scheduleId)
             }
 
-        case ("schedule_items", "SYNC"):
-            if let scheduleItemsData = data["schedule_items"] as? [DatabaseScheduleItem] {
-                syncScheduleItemsFromDatabase(scheduleItemsData)
-            }
         case ("schedule_items", "INSERT"):
             if let scheduleItemData = try? JSONSerialization.data(withJSONObject: data),
                let dbScheduleItem = try? JSONDecoder().decode(DatabaseScheduleItem.self, from: scheduleItemData) {
@@ -426,55 +520,60 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
                 handleScheduleItemDelete(scheduleItemId)
             }
             
-        case ("academic_calendars", "SYNC"):
-            if let calendarsData = data["academic_calendars"] as? [DatabaseAcademicCalendar] {
-                syncAcademicCalendarsFromDatabase(calendarsData)
-            }
-        case ("academic_calendars", "INSERT"):
-            if let calendarData = try? JSONSerialization.data(withJSONObject: data),
-               let dbCalendar = try? JSONDecoder().decode(DatabaseAcademicCalendar.self, from: calendarData) {
-                handleAcademicCalendarInsert(dbCalendar)
-            }
-        case ("academic_calendars", "UPDATE"):
-            if let calendarData = try? JSONSerialization.data(withJSONObject: data),
-               let dbCalendar = try? JSONDecoder().decode(DatabaseAcademicCalendar.self, from: calendarData) {
-                handleAcademicCalendarUpdate(dbCalendar)
-            }
-        case ("academic_calendars", "DELETE"):
-            if let calendarId = data["id"] as? String {
-                handleAcademicCalendarDelete(calendarId)
-            }
-            
         default:
              ("🔄 ScheduleManager: Unhandled real-time update: \(table) - \(action)")
         }
     }
     
-    // MARK: - Real-time Schedule Item Handlers
+    // MARK: - Database Sync Handlers
     
-    private func syncScheduleItemsFromDatabase(_ scheduleItems: [DatabaseScheduleItem]) {
-         ("🔄 ScheduleManager: Syncing \(scheduleItems.count) schedule items from database")
+    private func syncSchedulesFromDatabase(_ schedules: [DatabaseSchedule]) {
+         ("🔄 ScheduleManager: Syncing \(schedules.count) schedules from database")
         
-        // Group schedule items by schedule_id
-        let groupedItems = Dictionary(grouping: scheduleItems) { $0.schedule_id }
+        let currentUserId = SupabaseService.shared.currentUser?.id.uuidString
+        let ownSchedules = schedules.filter { db in
+            guard let uid = currentUserId else { return false }
+            return db.user_id == uid
+        }
         
-        for (scheduleIdString, items) in groupedItems {
-            guard let scheduleId = UUID(uuidString: scheduleIdString),
-                  let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleId }) else {
-                 ("🔄 ScheduleManager: Schedule not found for items: \(scheduleIdString)")
-                continue
+        let remoteLocals = ownSchedules.map { $0.toLocal() }
+        let remoteIDs = Set(remoteLocals.map { $0.id })
+        
+        var merged: [ScheduleCollection] = []
+        for remote in remoteLocals {
+            if let existing = scheduleCollections.first(where: { $0.id == remote.id }) {
+                var updated = remote
+                updated.scheduleItems = existing.scheduleItems
+                updated.enhancedScheduleItems = existing.enhancedScheduleItems
+                updated.academicCalendar = existing.academicCalendar
+                merged.append(updated)
+            } else {
+                merged.append(remote)
             }
-            
-            let localItems = items.map { $0.toLocal() }
-            scheduleCollections[scheduleIndex].scheduleItems = localItems
         }
         
-        if !isInitialLoad {
-            saveSchedulesLocally() // Cache for offline use
+        scheduleCollections = merged
+        
+        if let active = activeScheduleID, remoteIDs.contains(active) {
+            // keep current active
+        } else if let firstActive = scheduleCollections.first(where: { $0.isActive })?.id {
+            activeScheduleID = firstActive
+        } else {
+            activeScheduleID = scheduleCollections.first?.id
         }
         
-         ("🔄 ScheduleManager: Schedule items sync complete")
+        // Always save to local storage after sync
+        saveSchedulesLocally()
+        
+        // Load schedule items for all schedules
+        Task {
+            await loadAllScheduleItems()
+        }
+        
+         ("🔄 ScheduleManager: Schedules sync complete. total=\(scheduleCollections.count) active=\(String(describing: activeScheduleID))")
     }
+    
+    // MARK: - Real-time Schedule Item Handlers
     
     private func handleScheduleItemInsert(_ dbScheduleItem: DatabaseScheduleItem) {
         let localScheduleItem = dbScheduleItem.toLocal()
@@ -524,38 +623,98 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
         }
     }
     
-    // MARK: - Real-time Academic Calendar Handlers
+    // MARK: - Schedule CRUD Operations
     
-    private func syncAcademicCalendarsFromDatabase(_ calendars: [DatabaseAcademicCalendar]) {
-         ("🔄 ScheduleManager: Syncing \(calendars.count) academic calendars from database")
-        
-        // Academic calendars are managed separately now, but we need to update
-        // any embedded legacy calendars in schedule collections for backward compatibility
-        
-        if !isInitialLoad {
-            saveSchedulesLocally() // Cache for offline use
+    private func handleScheduleInsert(_ dbSchedule: DatabaseSchedule) {
+        let currentUserId = SupabaseService.shared.currentUser?.id.uuidString
+        guard let uid = currentUserId, dbSchedule.user_id == uid else {
+             ("🔄 ScheduleManager: Ignoring schedule insert for another user")
+            return
         }
         
-         ("🔄 ScheduleManager: Academic calendars sync complete")
+        let local = dbSchedule.toLocal()
+        if let idx = scheduleCollections.firstIndex(where: { $0.id == local.id }) {
+            var updated = local
+            updated.scheduleItems = scheduleCollections[idx].scheduleItems
+            updated.enhancedScheduleItems = scheduleCollections[idx].enhancedScheduleItems
+            updated.academicCalendar = scheduleCollections[idx].academicCalendar
+            scheduleCollections[idx] = updated
+        } else {
+            scheduleCollections.append(local)
+            // Load schedule items for the new schedule
+            Task {
+                await loadScheduleItemsForSchedule(local.id.uuidString)
+            }
+        }
+        
+        if activeScheduleID == nil && local.isActive {
+            activeScheduleID = local.id
+        }
+        saveSchedulesLocally()
+         ("🔄 ScheduleManager: Inserted schedule \(local.displayName)")
     }
     
-    private func handleAcademicCalendarInsert(_ dbCalendar: DatabaseAcademicCalendar) {
-        let localCalendar = dbCalendar.toLocal()
-         ("🔄 ScheduleManager: Added new academic calendar from real-time: \(localCalendar.name)")
+    private func handleScheduleUpdate(_ dbSchedule: DatabaseSchedule) {
+        let currentUserId = SupabaseService.shared.currentUser?.id.uuidString
+        guard let uid = currentUserId, dbSchedule.user_id == uid else {
+             ("🔄 ScheduleManager: Ignoring schedule update for another user")
+            return
+        }
+        
+        let local = dbSchedule.toLocal()
+        if let idx = scheduleCollections.firstIndex(where: { $0.id == local.id }) {
+            var updated = local
+            updated.scheduleItems = scheduleCollections[idx].scheduleItems
+            updated.enhancedScheduleItems = scheduleCollections[idx].enhancedScheduleItems
+            updated.academicCalendar = scheduleCollections[idx].academicCalendar
+            scheduleCollections[idx] = updated
+            
+            if updated.isActive {
+                activeScheduleID = updated.id
+            }
+            saveSchedulesLocally()
+             ("🔄 ScheduleManager: Updated schedule \(updated.displayName)")
+        } else {
+            scheduleCollections.append(local)
+            if local.isActive {
+                activeScheduleID = local.id
+            }
+            // Load schedule items for the new schedule
+            Task {
+                await loadScheduleItemsForSchedule(local.id.uuidString)
+            }
+            saveSchedulesLocally()
+             ("🔄 ScheduleManager: Added schedule from update \(local.displayName)")
+        }
     }
     
-    private func handleAcademicCalendarUpdate(_ dbCalendar: DatabaseAcademicCalendar) {
-        let localCalendar = dbCalendar.toLocal()
-         ("🔄 ScheduleManager: Updated academic calendar from real-time: \(localCalendar.name)")
-    }
-    
-    private func handleAcademicCalendarDelete(_ calendarId: String) {
-         ("🔄 ScheduleManager: Deleted academic calendar from real-time: \(calendarId)")
+    private func handleScheduleDelete(_ scheduleId: String) {
+        guard let uuid = UUID(uuidString: scheduleId) else { return }
+        let wasActive = (activeScheduleID == uuid)
+        scheduleCollections.removeAll { $0.id == uuid }
+        
+        if wasActive {
+            activeScheduleID = scheduleCollections.first?.id
+        }
+        
+        saveSchedulesLocally()
+         ("🔄 ScheduleManager: Deleted schedule \(scheduleId)")
     }
     
     // MARK: - Enhanced Schedule Operations with Sync
     
     func addSchedule(_ schedule: ScheduleCollection) {
+        // Check authentication first
+        guard supabaseService.isAuthenticated else {
+            authPromptHandler.promptForSignIn(
+                title: "Add Schedule",
+                description: "add your schedule"
+            ) { [weak self] in
+                self?.addSchedule(schedule)
+            }
+            return
+        }
+        
         var newSchedule = schedule
         newSchedule.createdDate = Date()
         newSchedule.lastModified = Date()
@@ -578,14 +737,23 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
     }
     
     func addScheduleItem(_ item: ScheduleItem, to scheduleID: UUID) {
+        // Check authentication first
+        guard supabaseService.isAuthenticated else {
+            authPromptHandler.promptForSignIn(
+                title: "Add Class",
+                description: "add your class to the schedule"
+            ) { [weak self] in
+                self?.addScheduleItem(item, to: scheduleID)
+            }
+            return
+        }
+        
         guard let index = scheduleCollections.firstIndex(where: { $0.id == scheduleID }) else { return }
         
-        // Add locally for immediate UI update
         scheduleCollections[index].scheduleItems.append(item)
         scheduleCollections[index].lastModified = Date()
         saveSchedulesLocally()
         
-        // NEW: Create corresponding course if it doesn't exist
         if let courseManager = courseManager {
             let existingCourse = courseManager.courses.first { $0.id == item.id }
             if existingCourse == nil {
@@ -595,21 +763,17 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
             }
         }
         
-        // Sync to database
         syncScheduleItemToDatabase(item, scheduleId: scheduleID, action: .create)
-        
     }
     
     func updateScheduleItem(_ item: ScheduleItem, in scheduleID: UUID) {
         guard let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleID }),
               let itemIndex = scheduleCollections[scheduleIndex].scheduleItems.firstIndex(where: { $0.id == item.id }) else { return }
         
-        // Update locally for immediate UI update
         scheduleCollections[scheduleIndex].scheduleItems[itemIndex] = item
         scheduleCollections[scheduleIndex].lastModified = Date()
         saveSchedulesLocally()
         
-        // NEW: Update corresponding course (but prevent recursive updates)
         if !isSyncing,
            let courseManager = courseManager,
            let courseIndex = courseManager.courses.firstIndex(where: { $0.id == item.id }) {
@@ -632,21 +796,16 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
              ("🔄 ScheduleManager: Updated course from schedule item: \(item.title)")
         }
         
-        // Sync to database
         syncScheduleItemToDatabase(item, scheduleId: scheduleID, action: .update)
-        
     }
     
     func deleteScheduleItem(_ item: ScheduleItem, from scheduleID: UUID) {
         guard let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == scheduleID }) else { return }
         
-        // Remove locally for immediate UI update
         scheduleCollections[scheduleIndex].scheduleItems.removeAll { $0.id == item.id }
         scheduleCollections[scheduleIndex].lastModified = Date()
         saveSchedulesLocally()
         
-        // NEW: Don't delete the corresponding course, just remove schedule info
-        // Users might want to keep the course for grade tracking even without schedule
         if let courseManager = courseManager,
            let courseIndex = courseManager.courses.firstIndex(where: { $0.id == item.id }) {
             var course = courseManager.courses[courseIndex]
@@ -659,9 +818,7 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
              ("🔄 ScheduleManager: Removed schedule info from course: \(course.name)")
         }
         
-        // Sync to database
         syncScheduleItemToDatabase(item, scheduleId: scheduleID, action: .delete)
-        
     }
     
     func toggleSkip(forItem item: ScheduleItem, onDate date: Date, in scheduleID: UUID) {
@@ -670,7 +827,6 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
         
         let identifier = ScheduleItem.instanceIdentifier(for: item.id, onDate: date)
         
-        // Update locally for immediate UI update
         if scheduleCollections[scheduleIndex].scheduleItems[itemIndex].skippedInstanceIdentifiers.contains(identifier) {
             scheduleCollections[scheduleIndex].scheduleItems[itemIndex].skippedInstanceIdentifiers.remove(identifier)
         } else {
@@ -680,67 +836,77 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
         scheduleCollections[scheduleIndex].lastModified = Date()
         saveSchedulesLocally()
         
-        // Sync to database
         let updatedItem = scheduleCollections[scheduleIndex].scheduleItems[itemIndex]
         syncScheduleItemToDatabase(updatedItem, scheduleId: scheduleID, action: .update)
-        
     }
     
     // MARK: - Database Sync Operations
     
+    private func syncScheduleToDatabase(_ schedule: ScheduleCollection, action: SyncAction) {
+        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
+             ("🔄 ScheduleManager: Cannot sync schedule - user not authenticated")
+            return
+        }
+        
+        let operation = SyncOperation(
+            type: .schedules,
+            action: action,
+            data: [
+                "id": schedule.id.uuidString,
+                "user_id": userId,
+                "name": schedule.name,
+                "semester": schedule.semester,
+                "is_active": schedule.isActive,
+                "is_archived": schedule.isArchived,
+                "color_hex": schedule.color.toHex() ?? "007AFF",
+                "schedule_type": schedule.scheduleType.rawValue,
+                "academic_calendar_id": schedule.academicCalendarID?.uuidString as Any,
+                "created_date": schedule.createdDate.toISOString(),
+                "last_modified": schedule.lastModified.toISOString()
+            ]
+        )
+        
+        realtimeSyncManager.queueSyncOperation(operation)
+        
+        // Update cache asynchronously in a Task
+        Task {
+            await CacheSystem.shared.scheduleCache.update(schedule)
+        }
+    }
+    
     private func syncScheduleItemToDatabase(_ item: ScheduleItem, scheduleId: UUID, action: SyncAction) {
-        guard SupabaseService.shared.currentUser?.id != nil else {
+        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
              ("🔄 ScheduleManager: Cannot sync - user not authenticated")
             return
         }
         
-        let dbScheduleItem = DatabaseScheduleItem(
-            from: item,
-            scheduleId: scheduleId.uuidString,
-            courseId: nil
+        // NOTE: Schedule items are now managed as part of courses, not as separate entities
+        // The sync queue will automatically filter out schedule_items operations
+        let operation = SyncOperation(
+            type: .scheduleItems,
+            action: action,
+            data: [
+                "id": item.id.uuidString,
+                "schedule_id": scheduleId.uuidString,
+                "title": item.title,
+                "start_time": item.startTime.toTimeString(),
+                "end_time": item.endTime.toTimeString(),
+                "days_of_week": item.daysOfWeek.map { $0.rawValue },
+                "location": item.location,
+                "instructor": item.instructor,
+                "color_hex": item.color.toHex() ?? "007AFF",
+                "reminder_time": item.reminderTime.rawValue,
+                "is_live_activity_enabled": item.isLiveActivityEnabled,
+                "skipped_instances": Array(item.skippedInstanceIdentifiers)
+            ]
         )
         
-        do {
-            let data = try JSONEncoder().encode(dbScheduleItem)
-            let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-            
-            let operation = SyncOperation(
-                type: .scheduleItems,
-                action: action,
-                data: dict
-            )
-            
-            realtimeSyncManager.queueSyncOperation(operation)
-        } catch {
-             ("🔄 ScheduleManager: Failed to prepare schedule item sync: \(error)")
+        realtimeSyncManager.queueSyncOperation(operation)
+        
+        // Update cache asynchronously in a Task
+        Task {
+            // Note: Schedule items don't have their own cache, they're part of schedules
         }
-    }
-    
-    // MARK: - Enhanced Refresh with Sync
-    
-    func refreshScheduleData() async {
-        isSyncing = true
-        
-        // Refresh real-time sync data
-        await realtimeSyncManager.refreshAllData()
-        
-        // Mark as no longer initial load after first refresh
-        isInitialLoad = false
-        
-        lastSyncTime = Date()
-        isSyncing = false
-    }
-    
-    // MARK: - Sync Status Observation
-    
-    private func setupSyncStatusObservation() {
-        realtimeSyncManager.$syncStatus
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] status in
-                self?.syncStatus = status.displayName
-                self?.isSyncing = status.isActive
-            }
-            .store(in: &cancellables)
     }
     
     // MARK: - Save locally for offline support
@@ -754,7 +920,10 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
             if let activeID = activeScheduleID {
                 UserDefaults.standard.set(activeID.uuidString, forKey: activeScheduleKey)
             }
+            
+            print("🔄 ScheduleManager: Saved \(scheduleCollections.count) schedules locally")
         } catch {
+            print("🔄 ScheduleManager: Failed to save schedules locally: \(error)")
         }
     }
     
@@ -803,7 +972,7 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
                 if activeScheduleID == nil || !scheduleCollections.contains(where: { $0.id == activeScheduleID }) {
                     activeScheduleID = scheduleCollections.first?.id
                 }
-                
+                print("🔄 ScheduleManager: Loaded \(scheduleCollections.count) schedules from cache")
             } catch {
                 setupDefaultSchedule()
             }
@@ -885,160 +1054,115 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
         saveSchedulesLocally()
     }
     
-    private func syncSchedulesFromDatabase(_ schedules: [DatabaseSchedule]) {
-         ("🔄 ScheduleManager: Syncing \(schedules.count) schedules from database")
+    // MARK: - Course-Schedule Synchronization
+    
+    func setCourseManager(_ courseManager: UnifiedCourseManager) {
+        self.courseManager = courseManager
         
-        let currentUserId = SupabaseService.shared.currentUser?.id.uuidString
-        let ownSchedules = schedules.filter { db in
-            guard let uid = currentUserId else { return false }
-            return db.user_id == uid
+        // Sync existing data
+        syncCoursesWithScheduleItems()
+        
+        // Observe course changes with weak self to prevent retain cycles
+        courseManager.$courses
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] courses in
+                guard let self = self else { return }
+                self.syncScheduleItemsWithCourses(courses)
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func syncCoursesWithScheduleItems() {
+        guard let courseManager = courseManager,
+              let activeSchedule = activeSchedule else { return }
+        
+        // Create schedule items from courses that have schedule info
+        let coursesWithSchedule = courseManager.courses.filter { course in
+            course.scheduleId == activeSchedule.id && course.hasScheduleInfo
         }
         
-        let remoteLocals = ownSchedules.map { $0.toLocal() }
-        let remoteIDs = Set(remoteLocals.map { $0.id })
+        for course in coursesWithSchedule {
+            // Check if schedule item already exists
+            let existingItem = activeSchedule.scheduleItems.first { $0.id == course.id }
+            
+            if existingItem == nil {
+                // Create schedule item from course
+                let scheduleItem = course.toScheduleItem()
+                addScheduleItem(scheduleItem, to: activeSchedule.id)
+                 ("🔄 ScheduleManager: Created schedule item from course: \(course.name)")
+            }
+        }
+    }
+    
+    private func syncScheduleItemsWithCourses(_ courses: [Course]) {
+        guard let activeSchedule = activeSchedule else { return }
         
-        var merged: [ScheduleCollection] = []
-        for remote in remoteLocals {
-            if let existing = scheduleCollections.first(where: { $0.id == remote.id }) {
-                var updated = remote
-                updated.scheduleItems = existing.scheduleItems
-                updated.enhancedScheduleItems = existing.enhancedScheduleItems
-                updated.academicCalendar = existing.academicCalendar
-                merged.append(updated)
+        // Prevent recursive updates by checking if we're already syncing
+        guard !isSyncing else { return }
+        
+        isSyncing = true
+        defer { isSyncing = false }
+        
+        // Remove schedule items for courses that no longer exist or don't have schedule info
+        let activeScheduleCourses = courses.filter { $0.scheduleId == activeSchedule.id }
+        let coursesWithSchedule = activeScheduleCourses.filter { $0.hasScheduleInfo }
+        let courseIds = Set(coursesWithSchedule.map { $0.id })
+        
+        // Remove schedule items that don't have corresponding courses
+        if let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == activeSchedule.id }) {
+            let itemsToRemove = scheduleCollections[scheduleIndex].scheduleItems.filter { item in
+                !courseIds.contains(item.id)
+            }
+            
+            for item in itemsToRemove {
+                scheduleCollections[scheduleIndex].scheduleItems.removeAll { $0.id == item.id }
+                 ("🔄 ScheduleManager: Removed schedule item without corresponding course: \(item.title)")
+            }
+        }
+        
+        // Update existing schedule items and create new ones
+        for course in coursesWithSchedule {
+            if let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == activeSchedule.id }) {
+                if let itemIndex = scheduleCollections[scheduleIndex].scheduleItems.firstIndex(where: { $0.id == course.id }) {
+                    // Update existing schedule item
+                    scheduleCollections[scheduleIndex].scheduleItems[itemIndex] = course.toScheduleItem()
+                } else {
+                    // Create new schedule item
+                    let scheduleItem = course.toScheduleItem()
+                    scheduleCollections[scheduleIndex].scheduleItems.append(scheduleItem)
+                     ("🔄 ScheduleManager: Created schedule item from course: \(course.name)")
+                }
+            }
+        }
+        
+        saveSchedulesLocally()
+    }
+    
+    // MARK: - Cache Reload
+    
+    private func reloadFromCache() async {
+        print("🔄 ScheduleManager: Reloading data from cache")
+        
+        // Load schedules from cache
+        let cachedSchedules = await CacheSystem.shared.scheduleCache.retrieve()
+        if !cachedSchedules.isEmpty {
+            scheduleCollections = cachedSchedules
+            
+            // Set active schedule
+            if let activeSchedule = cachedSchedules.first(where: { $0.isActive }) {
+                activeScheduleID = activeSchedule.id
             } else {
-                merged.append(remote)
+                activeScheduleID = cachedSchedules.first?.id
             }
-        }
-        
-        scheduleCollections = merged
-        
-        if let active = activeScheduleID, remoteIDs.contains(active) {
-            // keep
-        } else if let firstActive = scheduleCollections.first(where: { $0.isActive })?.id {
-            activeScheduleID = firstActive
-        } else {
-            activeScheduleID = scheduleCollections.first?.id
-        }
-        
-        if !isInitialLoad {
-            saveSchedulesLocally()
-        }
-        
-         ("🔄 ScheduleManager: Schedules sync complete. total=\(scheduleCollections.count) active=\(String(describing: activeScheduleID))")
-    }
-    
-    private func handleScheduleInsert(_ dbSchedule: DatabaseSchedule) {
-        let currentUserId = SupabaseService.shared.currentUser?.id.uuidString
-        guard let uid = currentUserId, dbSchedule.user_id == uid else {
-             ("🔄 ScheduleManager: Ignoring schedule insert for another user")
-            return
-        }
-        
-        let local = dbSchedule.toLocal()
-        if let idx = scheduleCollections.firstIndex(where: { $0.id == local.id }) {
-            var updated = local
-            updated.scheduleItems = scheduleCollections[idx].scheduleItems
-            updated.enhancedScheduleItems = scheduleCollections[idx].enhancedScheduleItems
-            updated.academicCalendar = scheduleCollections[idx].academicCalendar
-            scheduleCollections[idx] = updated
-        } else {
-            scheduleCollections.append(local)
-        }
-        
-        if activeScheduleID == nil && local.isActive {
-            activeScheduleID = local.id
-        }
-        saveSchedulesLocally()
-         ("🔄 ScheduleManager: Inserted schedule \(local.displayName)")
-    }
-    
-    private func handleScheduleUpdate(_ dbSchedule: DatabaseSchedule) {
-        let currentUserId = SupabaseService.shared.currentUser?.id.uuidString
-        guard let uid = currentUserId, dbSchedule.user_id == uid else {
-             ("🔄 ScheduleManager: Ignoring schedule update for another user")
-            return
-        }
-        
-        let local = dbSchedule.toLocal()
-        if let idx = scheduleCollections.firstIndex(where: { $0.id == local.id }) {
-            var updated = local
-            updated.scheduleItems = scheduleCollections[idx].scheduleItems
-            updated.enhancedScheduleItems = scheduleCollections[idx].enhancedScheduleItems
-            updated.academicCalendar = scheduleCollections[idx].academicCalendar
-            scheduleCollections[idx] = updated
             
-            if updated.isActive {
-                activeScheduleID = updated.id
-            }
-            saveSchedulesLocally()
-             ("🔄 ScheduleManager: Updated schedule \(updated.displayName)")
-        } else {
-            scheduleCollections.append(local)
-            if local.isActive {
-                activeScheduleID = local.id
-            }
-            saveSchedulesLocally()
-             ("🔄 ScheduleManager: Added schedule from update \(local.displayName)")
-        }
-    }
-    
-    private func handleScheduleDelete(_ scheduleId: String) {
-        guard let uuid = UUID(uuidString: scheduleId) else { return }
-        let wasActive = (activeScheduleID == uuid)
-        scheduleCollections.removeAll { $0.id == uuid }
-        
-        if wasActive {
-            activeScheduleID = scheduleCollections.first?.id
-        }
-        
-        saveSchedulesLocally()
-         ("🔄 ScheduleManager: Deleted schedule \(scheduleId)")
-    }
-    
-    private func syncScheduleToDatabase(_ schedule: ScheduleCollection, action: SyncAction) {
-        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
-             ("🔄 ScheduleManager: Cannot sync schedule - user not authenticated")
-            return
-        }
-        
-        let dbSchedule = DatabaseSchedule(from: schedule, userId: userId)
-        
-        do {
-            let data = try JSONEncoder().encode(dbSchedule)
-            let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+            // Load schedule items for all schedules
+            await loadAllScheduleItems()
             
-            let operation = SyncOperation(
-                type: .schedules,
-                action: action,
-                data: dict
-            )
+            // Save to local storage
+            saveSchedulesLocally()
+            lastSyncTime = Date()
             
-            RealtimeSyncManager.shared.queueSyncOperation(operation)
-        } catch {
-             ("🔄 ScheduleManager: Failed to prepare schedule sync: \(error)")
-        }
-    }
-}
-
-// MARK: - Academic Calendar Extensions - Additional methods only
-extension AcademicCalendar {
-    func isWithinSemester(_ date: Date) -> Bool {
-        let calendar = Calendar.current
-        let dateOnly = calendar.startOfDay(for: date)
-        let startOnly = calendar.startOfDay(for: startDate)
-        let endOnly = calendar.startOfDay(for: endDate)
-        
-        return dateOnly >= startOnly && dateOnly <= endOnly
-    }
-    
-    func getBreakForDate(_ date: Date) -> AcademicBreak? {
-        let calendar = Calendar.current
-        let dateOnly = calendar.startOfDay(for: date)
-        
-        return breaks.first { breakPeriod in
-            let breakStart = calendar.startOfDay(for: breakPeriod.startDate)
-            let breakEnd = calendar.startOfDay(for: breakPeriod.endDate)
-            return dateOnly >= breakStart && dateOnly <= breakEnd
+            print("🔄 ScheduleManager: Reloaded \(cachedSchedules.count) schedules from cache")
         }
     }
 }

@@ -252,7 +252,7 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
     }
     
     init() {
-        realtimeSyncManager.eventsDelegate = self
+        realtimeSyncManager.eventDelegate = self
         
         loadData()
         loadCourses()
@@ -456,9 +456,10 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
         
         self.events = localEvents
         
-        if !isInitialLoad {
-            saveDataLocally() 
-        }
+        // Always save after sync, regardless of isInitialLoad
+        saveDataLocally()
+        
+        print(" EventViewModel: Synced \(localEvents.count) events from database")
     }
     
     private func syncCategoriesFromDatabase(_ categories: [DatabaseCategory]) {
@@ -466,9 +467,10 @@ class EventViewModel: ObservableObject, RealtimeSyncDelegate {
         
         self.categories = localCategories
         
-        if !isInitialLoad {
-            saveDataLocally() 
-        }
+        // Always save after sync, regardless of isInitialLoad
+        saveDataLocally()
+        
+        print(" EventViewModel: Synced \(localCategories.count) categories from database")
     }
     
     private func handleEventInsert(_ dbEvent: DatabaseEvent) {

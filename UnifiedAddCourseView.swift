@@ -3,7 +3,7 @@ import SwiftUI
 struct UnifiedAddCourseView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject private var themeManager: ThemeManager
-    @EnvironmentObject private var courseManager: CourseOperationsManager
+    @EnvironmentObject private var courseManager: UnifiedCourseManager
     @EnvironmentObject private var scheduleManager: ScheduleManager
     
     // Course details
@@ -623,6 +623,6 @@ struct InfoRow: View {
 #Preview {
     UnifiedAddCourseView()
         .environmentObject(ThemeManager())
-        .environmentObject(CourseOperationsManager())
+        .environmentObject(UnifiedCourseManager())
         .environmentObject(ScheduleManager())
 }

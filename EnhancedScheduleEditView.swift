@@ -19,6 +19,9 @@ struct EnhancedScheduleEditView: View {
     // Day selection
     @State private var selectedDays: Set<DayOfWeek> = []
     
+    @StateObject private var supabaseService = SupabaseService.shared
+    @State private var showAuthAlert = false
+    
     var isEditing: Bool { scheduleItem != nil }
     
     init(scheduleItem: ScheduleItem?, scheduleID: UUID) {
@@ -182,6 +185,12 @@ struct EnhancedScheduleEditView: View {
         } message: {
             Text("Are you sure you want to delete this class? This action cannot be undone.")
         }
+        
+        .alert("Sign in required", isPresented: $showAuthAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Please sign in to add a new class.")
+        }
     }
     
     private var isValidInput: Bool {
@@ -191,7 +200,6 @@ struct EnhancedScheduleEditView: View {
     }
     
     private func saveScheduleItem() {
-        // Normalize times to ensure they only contain time components, not date
         let normalizedStartTime = normalizeTimeToToday(startTime)
         let normalizedEndTime = normalizeTimeToToday(endTime)
         
@@ -206,6 +214,10 @@ struct EnhancedScheduleEditView: View {
             updatedItem.isLiveActivityEnabled = isLiveActivityEnabled
             scheduleManager.updateScheduleItem(updatedItem, in: scheduleID)
         } else {
+            guard supabaseService.isAuthenticated else {
+                showAuthAlert = true
+                return
+            }
             let newItem = ScheduleItem(
                 title: title.trimmingCharacters(in: .whitespacesAndNewlines),
                 startTime: normalizedStartTime,

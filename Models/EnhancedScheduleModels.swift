@@ -262,6 +262,15 @@ struct AcademicCalendar: Codable, Identifiable {
         self.endDate = endDate
     }
     
+    func isDateWithinSemester(_ date: Date) -> Bool {
+        let calendar = Calendar.current
+        let dateOnly = calendar.startOfDay(for: date)
+        let startOnly = calendar.startOfDay(for: startDate)
+        let endOnly = calendar.startOfDay(for: endDate)
+        
+        return dateOnly >= startOnly && dateOnly <= endOnly
+    }
+    
     func isBreakDay(_ date: Date) -> Bool {
         let calendar = Calendar.current
         let dateOnly = calendar.startOfDay(for: date)

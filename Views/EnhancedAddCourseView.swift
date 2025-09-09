@@ -4,13 +4,13 @@ struct EnhancedAddCourseView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var themeManager: ThemeManager
     @EnvironmentObject var scheduleManager: ScheduleManager
-    @ObservedObject var courseManager: CourseOperationsManager
+    @ObservedObject var courseManager: UnifiedCourseManager
     
     // Add optional existing course parameter for editing
     let existingCourse: Course?
     
     // Initialize with existing course if editing
-    init(courseManager: CourseOperationsManager, existingCourse: Course? = nil) {
+    init(courseManager: UnifiedCourseManager, existingCourse: Course? = nil) {
         self.courseManager = courseManager
         self.existingCourse = existingCourse
         
@@ -664,7 +664,7 @@ struct EnhancedAddCourseView: View {
 }
 
 #Preview {
-    EnhancedAddCourseView(courseManager: CourseOperationsManager())
+    EnhancedAddCourseView(courseManager: UnifiedCourseManager())
         .environmentObject(ThemeManager())
         .environmentObject(ScheduleManager())
 }

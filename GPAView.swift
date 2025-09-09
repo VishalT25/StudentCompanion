@@ -2,7 +2,7 @@ import SwiftUI
 
 struct GPAView: View {
     @EnvironmentObject private var themeManager: ThemeManager
-    @StateObject private var courseManager = CourseOperationsManager()
+    @StateObject private var courseManager = UnifiedCourseManager()
     @EnvironmentObject private var scheduleManager: ScheduleManager
     @StateObject private var bulkSelectionManager = BulkCourseSelectionManager()
     @State private var showingAddCourseSheet = false
@@ -271,13 +271,12 @@ struct GPAView: View {
             if activeScheduleCourses.isEmpty {
                 spectacularEmptyState
             } else {
-                // Beautiful courses grid (removed statistics row)
                 LazyVStack(spacing: 20) {
                     ForEach(Array(activeScheduleCourses.enumerated()), id: \.element.id) { index, course in
                         NavigationLink(
                             destination: CourseDetailView(course: course, courseManager: courseManager)
                         ) {
-                            SpectacularCourseCard(
+                            GorgeousCourseCard(
                                 course: course,
                                 courseManager: courseManager,
                                 bulkSelectionManager: bulkSelectionManager,
@@ -555,7 +554,7 @@ struct GPAView: View {
             }
     }
     
-    private func handleConflictResolution(_ resolution: ConflictResolution) {
+    private func handleConflictResolution(_ resolution: OrphanResolutionAction) {
         switch resolution {
         case .assignCourseToActiveSchedule(let course):
              ("Assigning course \(course.name) to active schedule")

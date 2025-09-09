@@ -13,7 +13,7 @@ struct EnhancedCourseDetailView: View {
     @State private var showingDeleteAlert = false
     @State private var scrollOffset: CGFloat = 0
     
-    private let headerHeight: CGFloat = 180
+    private let headerHeight: CGFloat = 200
     
     var body: some View {
         ZStack {
@@ -46,7 +46,7 @@ struct EnhancedCourseDetailView: View {
                         Spacer(minLength: 40)
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, 30)
+                    .padding(.top, 20)
                     .background {
                         // Elegant content background
                         RoundedRectangle(cornerRadius: 32)
@@ -54,7 +54,7 @@ struct EnhancedCourseDetailView: View {
                             .shadow(color: Color.black.opacity(0.1), radius: 20, x: 0, y: -10)
                             .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 32)
                     }
-                    .offset(y: -32)
+                    .offset(y: -16)
                 }
                 .background(GeometryReader { geometry in
                     Color.clear
@@ -149,7 +149,7 @@ struct EnhancedCourseDetailView: View {
             }
         }
         .padding(.horizontal, 20)
-        .padding(.top, 8)
+        .padding(.top, 16)
         .background {
             Rectangle()
                 .fill(.ultraThinMaterial)

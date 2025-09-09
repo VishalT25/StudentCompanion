@@ -17,7 +17,7 @@ struct ScheduleView: View {
     @EnvironmentObject private var scheduleManager: ScheduleManager
     @EnvironmentObject var themeManager: ThemeManager
     @EnvironmentObject var academicCalendarManager: AcademicCalendarManager
-    @StateObject private var courseManager = CourseOperationsManager()
+    @StateObject private var courseManager = UnifiedCourseManager()
     @State private var showingScheduleManager = false
     @State private var selectedDate = Date()
     @State private var currentWeekOffset = 0
@@ -27,41 +27,24 @@ struct ScheduleView: View {
     @State private var pulseAnimation: Double = 1.0
     @Environment(\.colorScheme) var colorScheme
     
-    @State private var cachedCurrentWeekDates: [Date] = []
-    @State private var cachedWeekHeaderText: String = "This Week"
-    
     private var currentWeekDates: [Date] {
-        if cachedCurrentWeekDates.isEmpty {
-            let calendar = Calendar.current
-            let today = Date()
-            guard let weekInterval = calendar.dateInterval(of: .weekOfYear, for: today) else { return [] }
-            let startOfTargetWeek = calendar.date(byAdding: .weekOfYear, value: currentWeekOffset, to: weekInterval.start) ?? weekInterval.start
-            let dates = (0..<7).compactMap { dayOffset in
-                calendar.date(byAdding: .day, value: dayOffset, to: startOfTargetWeek)
-            }
-            DispatchQueue.main.async {
-                cachedCurrentWeekDates = dates
-            }
-            return dates
+        let calendar = Calendar.current
+        let today = Date()
+        guard let weekInterval = calendar.dateInterval(of: .weekOfYear, for: today) else { return [] }
+        let startOfTargetWeek = calendar.date(byAdding: .weekOfYear, value: currentWeekOffset, to: weekInterval.start) ?? weekInterval.start
+        return (0..<7).compactMap { dayOffset in
+            calendar.date(byAdding: .day, value: dayOffset, to: startOfTargetWeek)
         }
-        return cachedCurrentWeekDates
     }
     
     private var weekHeaderText: String {
-        if cachedWeekHeaderText == "This Week" {
-            guard let firstDay = currentWeekDates.first, let lastDay = currentWeekDates.last else { return "This Week" }
-            if currentWeekOffset == 0 { return "This Week" }
-            if currentWeekOffset == 1 { return "Next Week" }
-            if currentWeekOffset == -1 { return "Last Week" }
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM d"
-            let text = "\(formatter.string(from: firstDay)) - \(formatter.string(from: lastDay))"
-            DispatchQueue.main.async {
-                cachedWeekHeaderText = text
-            }
-            return text
-        }
-        return cachedWeekHeaderText
+        guard let firstDay = currentWeekDates.first, let lastDay = currentWeekDates.last else { return "This Week" }
+        if currentWeekOffset == 0 { return "This Week" }
+        if currentWeekOffset == 1 { return "Next Week" }
+        if currentWeekOffset == -1 { return "Last Week" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return "\(formatter.string(from: firstDay)) - \(formatter.string(from: lastDay))"
     }
     
     var body: some View {
@@ -96,10 +79,6 @@ struct ScheduleView: View {
             courseManager.setScheduleManager(scheduleManager)
             scheduleManager.setCourseManager(courseManager)
             startAnimations()
-        }
-        .onChange(of: currentWeekOffset) { _, _ in
-            cachedCurrentWeekDates = []
-            cachedWeekHeaderText = "This Week"
         }
     }
     
@@ -571,6 +550,7 @@ struct ScheduleView: View {
                         ModernScheduleRow(item: item, date: selectedDate, scheduleID: schedule.id)
                             .environmentObject(scheduleManager)
                             .environmentObject(themeManager)
+                            .id(item.id)
                     }
                 }
             }
@@ -779,9 +759,7 @@ struct ModernScheduleRow: View {
     
     var body: some View {
         Button(action: {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                showingDetailView = true
-            }
+            showingDetailView = true
         }) {
             HStack(spacing: 16) {
                 // Beautiful color indicator with gradient
@@ -801,7 +779,7 @@ struct ModernScheduleRow: View {
                             .fill(
                                 LinearGradient(
                                     colors: [
-                                        Color.white.opacity(0.4),
+                                        Color.white.opacity(0.25),
                                         Color.clear
                                     ],
                                     startPoint: .top,
@@ -878,24 +856,21 @@ struct ModernScheduleRow: View {
             .padding(.vertical, 16)
             .background(
                 RoundedRectangle(cornerRadius: 18)
-                    .fill(.ultraThinMaterial)
+                    .fill(.thinMaterial)
                     .overlay(
                         RoundedRectangle(cornerRadius: 18)
                             .stroke(
                                 isSkipped 
-                                    ? Color.secondary.opacity(0.1) 
-                                    : item.color.opacity(0.2), 
-                                lineWidth: 1.5
+                                    ? Color.secondary.opacity(0.08) 
+                                    : item.color.opacity(0.18), 
+                                lineWidth: 1
                             )
                     )
-            )
-            .shadow(
-                color: isSkipped ? .clear : item.color.opacity(0.1),
-                radius: 6, x: 0, y: 3
             )
             .opacity(isSkipped ? 0.7 : 1.0)
         }
         .buttonStyle(SmoothButtonStyle())
+        .animation(nil, value: showingDetailView)
         .sheet(isPresented: $showingDetailView) {
             NavigationView {
                 EnhancedCourseDetailView(
@@ -906,6 +881,14 @@ struct ModernScheduleRow: View {
                 .environmentObject(themeManager)
             }
         }
+    }
+}
+
+extension ModernScheduleRow: Equatable {
+    static func == (lhs: ModernScheduleRow, rhs: ModernScheduleRow) -> Bool {
+        lhs.item.id == rhs.item.id &&
+        Calendar.current.isDate(lhs.date, inSameDayAs: rhs.date) &&
+        lhs.scheduleID == rhs.scheduleID
     }
 }
 
@@ -976,6 +959,7 @@ extension ScheduleView {
                                 .scaleEffect(pulseAnimation * 0.3 + 0.7)
                                 .opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity : 0.2)
                         }
+                        .compositingGroup()
                         .shadow(
                             color: themeManager.currentTheme.secondaryColor.opacity(0.4),
                             radius: 12, x: 0, y: 6
@@ -1021,6 +1005,7 @@ extension ScheduleView {
                                 .scaleEffect(pulseAnimation * 0.2 + 0.8)
                                 .opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity : 0.15)
                         }
+                        .compositingGroup()
                         .shadow(
                             color: themeManager.currentTheme.tertiaryColor.opacity(0.3),
                             radius: 8, x: 0, y: 4
@@ -1075,6 +1060,7 @@ extension ScheduleView {
                                     )
                                 )
                         }
+                        .compositingGroup()
                         .shadow(
                             color: themeManager.currentTheme.primaryColor.opacity(0.4),
                             radius: 20, x: 0, y: 10

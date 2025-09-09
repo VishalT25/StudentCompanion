@@ -8,6 +8,8 @@ struct StudentCompanionApp: App {
     @StateObject private var eventViewModel = EventViewModel()
     @StateObject private var scheduleManager = ScheduleManager()
     @StateObject private var academicCalendarManager = AcademicCalendarManager()
+    @StateObject private var unifiedCourseManager = UnifiedCourseManager()
+    @StateObject private var eventOperationsManager = EventOperationsManager()
     
     var body: some Scene {
         WindowGroup {
@@ -18,11 +20,25 @@ struct StudentCompanionApp: App {
                 .environmentObject(eventViewModel)
                 .environmentObject(scheduleManager)
                 .environmentObject(academicCalendarManager)
+                .environmentObject(unifiedCourseManager)
+                .environmentObject(eventOperationsManager)
                 .onAppear {
                     // Initialize real-time sync when app starts
                     Task {
+                        print("📱 App: Starting RealtimeSyncManager initialization")
                         await realtimeSyncManager.initialize()
+                        print("📱 App: RealtimeSyncManager initialization completed")
                     }
+                    
+                    // Set up cross-manager relationships
+                    setupManagerRelationships()
+                    
+                    print("📱 App: Managers initialized:")
+                    print("   - scheduleManager: \(scheduleManager.scheduleCollections.count) schedules")
+                    print("   - academicCalendarManager: \(academicCalendarManager.academicCalendars.count) calendars") 
+                    print("   - unifiedCourseManager: \(unifiedCourseManager.courses.count) courses")
+                    print("   - eventOperationsManager: \(eventOperationsManager.eventCount) events")
+                    print("   - eventViewModel: \(eventViewModel.events.count) events")
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
                     // Cleanup real-time connections when app terminates
@@ -31,5 +47,11 @@ struct StudentCompanionApp: App {
                     }
                 }
         }
+    }
+    
+    private func setupManagerRelationships() {
+        // Connect course manager to schedule manager for schedule item synchronization
+        unifiedCourseManager.setScheduleManager(scheduleManager)
+        scheduleManager.setCourseManager(unifiedCourseManager)
     }
 }

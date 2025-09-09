@@ -7,7 +7,14 @@ struct AcademicCalendarImportView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var isProcessing = false
-    
+    var onImported: ((AcademicCalendar) -> Void)? = nil
+
+    @StateObject private var supabaseService = SupabaseService.shared
+
+    init(onImported: ((AcademicCalendar) -> Void)? = nil) {
+        self.onImported = onImported
+    }
+
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
@@ -45,12 +52,16 @@ struct AcademicCalendarImportView: View {
     }
     
     private func importCalendar() {
+        guard supabaseService.isAuthenticated else {
+            errorMessage = "Please sign in to import an academic calendar."
+            showError = true
+            return
+        }
         isProcessing = true
         Task {
             do {
                 var calendar = try AcademicCalendarImporter.import(from: jsonText)
                 
-                // Set default dates if not in JSON
                 if calendar.startDate == Date(timeIntervalSince1970: 0) {
                     calendar.startDate = Date()
                 }
@@ -60,14 +71,15 @@ struct AcademicCalendarImportView: View {
 
                 await MainActor.run {
                     academicCalendarManager.addCalendar(calendar)
-                    self.isProcessing = false
+                    onImported?(calendar)
+                    isProcessing = false
                     dismiss()
                 }
             } catch {
                 await MainActor.run {
-                    self.errorMessage = error.localizedDescription
-                    self.showError = true
-                    self.isProcessing = false
+                    errorMessage = error.localizedDescription
+                    showError = true
+                    isProcessing = false
                 }
             }
         }

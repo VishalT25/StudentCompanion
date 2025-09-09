@@ -839,12 +839,6 @@ struct SupabaseEvent: Codable {
 
 // MARK: - Extensions
 
-extension Date {
-    func toISOString() -> String {
-        return ISO8601DateFormatter().string(from: self)
-    }
-}
-
 extension UIColor {
     func toHex() -> String? {
         guard let components = cgColor.components, components.count >= 3 else {

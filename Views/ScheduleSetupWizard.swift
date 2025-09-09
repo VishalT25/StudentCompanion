@@ -12,6 +12,9 @@ struct ScheduleSetupWizard: View {
     
     private let totalSteps = 7
     
+    @StateObject private var supabaseService = SupabaseService.shared
+    @State private var showAuthAlert = false
+    
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
@@ -100,6 +103,11 @@ struct ScheduleSetupWizard: View {
                 }
             }
         }
+        .alert("Sign in required", isPresented: $showAuthAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Please sign in to create schedules.")
+        }
     }
     
     private var canProceedFromCurrentStep: Bool {
@@ -138,6 +146,10 @@ struct ScheduleSetupWizard: View {
     }
     
     private func createSchedule() {
+        guard supabaseService.isAuthenticated else {
+            showAuthAlert = true
+            return
+        }
         var finalSchedule = newSchedule
         finalSchedule.lastModified = Date()
         finalSchedule.color = themeManager.currentTheme.primaryColor
@@ -624,11 +636,11 @@ struct AcademicCalendarStep: View {
         }
         .sheet(isPresented: $showingBreakEditor) {
             if let calendarID = schedule.academicCalendarID,
-               let calendar = academicCalendarManager.calendar(withID: calendarID) {
+               let index = academicCalendarManager.academicCalendars.firstIndex(where: { $0.id == calendarID }) {
                 BreakEditorView(
                     break: $editingBreak,
                     academicCalendar: Binding(
-                        get: { calendar },
+                        get: { academicCalendarManager.academicCalendars[index] },
                         set: { updatedCalendar in
                             academicCalendarManager.updateCalendar(updatedCalendar)
                         }
@@ -637,15 +649,11 @@ struct AcademicCalendarStep: View {
             }
         }
         .sheet(isPresented: $showingAIImport) {
-            AcademicCalendarImportView()
-                .environmentObject(academicCalendarManager)
-                .onDisappear {
-                    // Check if a new calendar was added and link it to our schedule
-                    if let latestCalendar = academicCalendarManager.academicCalendars.last {
-                        schedule.academicCalendarID = latestCalendar.id
-                        setupChoice = .manual
-                    }
-                }
+            AcademicCalendarImportView(onImported: { imported in
+                schedule.academicCalendarID = imported.id
+                setupChoice = .manual
+            })
+            .environmentObject(academicCalendarManager)
         }
     }
     
@@ -972,6 +980,8 @@ struct ClassImportStep: View {
     @ObservedObject var scheduleManager: ScheduleManager
     @State private var showingAIImport = false
     @State private var tempScheduleID: UUID?
+    @StateObject private var supabaseService = SupabaseService.shared
+    @State private var showAuthAlert = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -987,7 +997,10 @@ struct ClassImportStep: View {
             
             VStack(spacing: 16) {
                 Button("Import with AI") {
-                    // First create a temporary schedule to import classes into
+                    guard supabaseService.isAuthenticated else {
+                        showAuthAlert = true
+                        return
+                    }
                     var tempSchedule = schedule
                     tempSchedule.lastModified = Date()
                     scheduleManager.addSchedule(tempSchedule)
@@ -1002,8 +1015,6 @@ struct ClassImportStep: View {
                 .cornerRadius(12)
                 
                 Button("Add classes manually") {
-                    // For now, we'll just note that manual entry will be available
-                    // In a real implementation, this would navigate to a class entry screen
                 }
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(.blue)
@@ -1025,6 +1036,11 @@ struct ClassImportStep: View {
                 AIScheduleImportView(scheduleID: scheduleID)
                     .environmentObject(scheduleManager)
             }
+        }
+        .alert("Sign in required", isPresented: $showAuthAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Please sign in to import classes.")
         }
     }
 }

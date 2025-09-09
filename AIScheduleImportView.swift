@@ -3,6 +3,7 @@ import SwiftUI
 struct AIScheduleImportView: View {
     @EnvironmentObject var scheduleManager: ScheduleManager
     @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var supabaseService: SupabaseService
     @Environment(\.dismiss) private var dismiss
     
     let scheduleID: UUID
@@ -10,6 +11,7 @@ struct AIScheduleImportView: View {
     @State private var importText = ""
     @State private var showingSuccessAlert = false
     @State private var showingErrorAlert = false
+    @State private var showAuthAlert = false
     @State private var errorMessage = ""
     @State private var importedItemsCount = 0
     @State private var isProcessing = false
@@ -18,6 +20,7 @@ struct AIScheduleImportView: View {
     
     @State private var showingSetupWizard = false
     @State private var importedScheduleItems: [ScheduleItem] = []
+    @StateObject private var courseManager = UnifiedCourseManager()
 
     init(scheduleID: UUID, onImportCompleted: (() -> Void)? = nil) {
         self.scheduleID = scheduleID
@@ -294,11 +297,12 @@ REMEMBER: Output only JSON. NO other text.
                         .padding(.vertical, 16)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing ? 
-                                      Color.gray : themeManager.currentTheme.primaryColor)
+                                .fill(importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing || !supabaseService.isAuthenticated
+                                      ? Color.gray
+                                      : themeManager.currentTheme.primaryColor)
                         )
                     }
-                    .disabled(importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing)
+                    .disabled(importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing || !supabaseService.isAuthenticated)
                     
                     Spacer(minLength: 20)
                 }
@@ -330,6 +334,11 @@ REMEMBER: Output only JSON. NO other text.
         } message: {
             Text(errorMessage)
         }
+        .alert("Sign In Required", isPresented: $showAuthAlert) {
+            Button("OK") { }
+        } message: {
+            Text("Please sign in to import schedules.")
+        }
         .sheet(isPresented: $showingSetupWizard) {
             if let schedule = scheduleManager.schedule(for: scheduleID) {
                 ProgressiveEnhancementView(scheduleID: schedule.id, importedItems: importedScheduleItems) {
@@ -343,6 +352,8 @@ REMEMBER: Output only JSON. NO other text.
         }
         .onAppear {
             customPrompt = defaultAIPrompt
+            courseManager.setScheduleManager(scheduleManager)
+            scheduleManager.setCourseManager(courseManager)
         }
     }
     
@@ -373,6 +384,10 @@ REMEMBER: Output only JSON. NO other text.
     }
     
     private func importSchedule() {
+        guard supabaseService.isAuthenticated else {
+            showAuthAlert = true
+            return
+        }
         isProcessing = true
         
         Task {
@@ -380,7 +395,6 @@ REMEMBER: Output only JSON. NO other text.
                 let scheduleItems = try ScheduleImportParser.parseScheduleJSON(importText.trimmingCharacters(in: .whitespacesAndNewlines))
                 
                 await MainActor.run {
-                    // Add items to schedule
                     for item in scheduleItems {
                         scheduleManager.addScheduleItem(item, to: scheduleID)
                     }
@@ -407,9 +421,10 @@ struct AIImportPreview: View {
     @StateObject private var themeManager = ThemeManager()
     
     var body: some View {
-        AIImportTutorialView(scheduleID: UUID())
+        AIScheduleImportView(scheduleID: UUID())
             .environmentObject(scheduleManager)
             .environmentObject(themeManager)
+            .environmentObject(SupabaseService.shared)
     }
 }
 

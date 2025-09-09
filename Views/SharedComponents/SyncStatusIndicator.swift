@@ -66,6 +66,10 @@ struct RealtimeSyncStatusIndicator: View {
         case .error:
             Image(systemName: "cloud.bolt.rain")
                 .foregroundColor(.red)
+                
+        default:
+            Image(systemName: "cloud")
+                .foregroundColor(.secondary)
         }
     }
 }
@@ -187,6 +191,22 @@ struct SyncStatusDetailView: View {
                         }
                     }
                 }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Debug Snapshot")
+                        .font(.forma(.subheadline, weight: .semibold))
+                    debugRow("academic_calendars")
+                    debugRow("assignments")
+                    debugRow("courses")
+                    debugRow("events")
+                    debugRow("categories")
+                    debugRow("schedules")
+                }
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(.systemGroupedBackground))
+                )
                 
                 Spacer()
             }
@@ -221,6 +241,7 @@ struct SyncStatusDetailView: View {
         case .ready: return realtimeSyncManager.isConnected ? "cloud.fill" : "cloud.slash"
         case .disconnected: return "cloud.slash"
         case .error: return "cloud.bolt.rain"
+        default: return "cloud"
         }
     }
     
@@ -231,6 +252,7 @@ struct SyncStatusDetailView: View {
         case .syncing, .initializing: return themeManager.currentTheme.primaryColor
         case .error, .disconnected: return .red
         case .idle: return .secondary
+        default: return .secondary
         }
     }
     
@@ -244,6 +266,28 @@ struct SyncStatusDetailView: View {
             Text(realtimeSyncManager.isConnected ? "Connected" : "Disconnected")
                 .font(.forma(.caption, weight: .medium))
                 .foregroundColor(realtimeSyncManager.isConnected ? .green : .red)
+        }
+    }
+    
+    @ViewBuilder
+    private func debugRow(_ table: String) -> some View {
+        let stats = realtimeSyncManager.syncStatistics
+        let changes = stats.changesReceived[table, default: 0]
+        let ok = stats.syncSuccesses[table, default: 0]
+        let errs = stats.syncErrors[table, default: 0]
+        HStack {
+            Text(table)
+                .font(.forma(.caption, weight: .medium))
+            Spacer()
+            Text("changes: \(changes)")
+                .font(.forma(.caption))
+                .foregroundColor(.secondary)
+            Text("ok: \(ok)")
+                .font(.forma(.caption))
+                .foregroundColor(.green)
+            Text("err: \(errs)")
+                .font(.forma(.caption))
+                .foregroundColor(.red)
         }
     }
 }

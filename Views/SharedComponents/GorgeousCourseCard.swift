@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct SpectacularCourseCard: View {
+struct GorgeousCourseCard: View {
     let course: Course
     let courseManager: UnifiedCourseManager
     let bulkSelectionManager: BulkCourseSelectionManager
@@ -37,7 +37,6 @@ struct SpectacularCourseCard: View {
     
     var body: some View {
         if bulkSelectionManager.selectionContext == .courses {
-            // In selection mode: Add tap gesture for selection
             cardContent
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -62,7 +61,6 @@ struct SpectacularCourseCard: View {
                     startAnimations()
                 }
         } else {
-            // Not in selection mode: No tap gesture - let NavigationLink handle taps
             cardContent
                 .onLongPressGesture(minimumDuration: 0.6) {
                     let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
@@ -87,11 +85,8 @@ struct SpectacularCourseCard: View {
     
     private var cardContent: some View {
         VStack(spacing: 0) {
-            // Main content area
             HStack(spacing: 16) {
-                // Left side: Course icon and progress ring
                 ZStack {
-                    // Progress ring background
                     Circle()
                         .stroke(
                             course.color.opacity(0.2),
@@ -99,7 +94,6 @@ struct SpectacularCourseCard: View {
                         )
                         .frame(width: 60, height: 60)
                     
-                    // Progress ring foreground
                     if course.calculateCurrentGrade() != nil {
                         Circle()
                             .trim(from: 0, to: gradePercentage / 100)
@@ -122,7 +116,6 @@ struct SpectacularCourseCard: View {
                             .animation(.spring(response: 1.2, dampingFraction: 0.8).delay(animationDelay), value: gradePercentage)
                     }
                     
-                    // Course icon
                     Image(systemName: course.iconName)
                         .font(.forma(.title3, weight: .semibold))
                         .foregroundColor(course.color)
@@ -130,9 +123,7 @@ struct SpectacularCourseCard: View {
                         .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isPressed)
                 }
                 
-                // Center: Course information
                 VStack(alignment: .leading, spacing: 6) {
-                    // Course name and code
                     VStack(alignment: .leading, spacing: 2) {
                         Text(course.name)
                             .font(.forma(.headline, weight: .bold))
@@ -145,7 +136,6 @@ struct SpectacularCourseCard: View {
                                     .font(.forma(.caption, weight: .medium))
                                     .foregroundColor(course.color)
                                 
-                                // Show instructor instead of section
                                 if !course.instructor.isEmpty {
                                     Text("• \(course.instructor)")
                                         .font(.forma(.caption))
@@ -160,26 +150,21 @@ struct SpectacularCourseCard: View {
                 
                 Spacer()
                 
-                // Right side: Grade display and selection
                 VStack(alignment: .trailing, spacing: 8) {
                     if bulkSelectionManager.selectionContext == .courses {
-                        // Selection indicator
                         Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                             .font(.forma(.title2))
                             .foregroundColor(isSelected ? themeManager.currentTheme.primaryColor : .secondary.opacity(0.6))
                             .scaleEffect(isSelected ? 1.1 : 1.0)
                             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
                     } else {
-                        // Grade display
                         VStack(alignment: .trailing, spacing: 4) {
                             if let grade = course.calculateCurrentGrade() {
                                 VStack(alignment: .trailing, spacing: 2) {
-                                    // Main grade
                                     Text(usePercentageGrades ? "\(course.currentGradeString)%" : course.letterGrade)
                                         .font(.forma(.title2, weight: .bold))
                                         .foregroundColor(progressRingColor)
                                     
-                                    // GPA points (if not using percentage)
                                     if !usePercentageGrades, let gpa = course.gpaPoints {
                                         Text(String(format: "%.2f GPA", gpa))
                                             .font(.forma(.caption, weight: .medium))
@@ -203,10 +188,8 @@ struct SpectacularCourseCard: View {
             }
             .padding(20)
             
-            // Bottom bar: Assignment info only
             if !bulkSelectionManager.isSelecting {
                 HStack(spacing: 16) {
-                    // Assignment count with icon
                     HStack(spacing: 6) {
                         Image(systemName: "doc.text.fill")
                             .font(.forma(.caption2))
@@ -225,11 +208,9 @@ struct SpectacularCourseCard: View {
         }
         .background(
             ZStack {
-                // Main card background
                 RoundedRectangle(cornerRadius: 24)
                     .fill(.regularMaterial)
                 
-                // Course color accent
                 RoundedRectangle(cornerRadius: 24)
                     .fill(
                         LinearGradient(
@@ -243,7 +224,6 @@ struct SpectacularCourseCard: View {
                         )
                     )
                 
-                // Shimmer effect on hover/press
                 if isPressed {
                     RoundedRectangle(cornerRadius: 24)
                         .fill(
@@ -259,7 +239,6 @@ struct SpectacularCourseCard: View {
                         )
                 }
                 
-                // Enhanced border
                 RoundedRectangle(cornerRadius: 24)
                     .stroke(
                         LinearGradient(
@@ -313,50 +292,8 @@ struct SpectacularCourseCard: View {
     }
     
     private func startAnimations() {
-        // Offset animation for staggered entrance
         withAnimation(.spring(response: 0.8, dampingFraction: 0.8).delay(animationDelay)) {
             animationOffset = 0
         }
-    }
-}
-
-#Preview {
-    PreviewWrapper()
-}
-
-private struct PreviewWrapper: View {
-    var body: some View {
-        let themeManager = ThemeManager()
-        let sampleCourse = Course(
-            scheduleId: UUID(),
-            name: "Advanced iOS Development",
-            iconName: "iphone",
-            colorHex: "007AFF",
-            assignments: [
-                Assignment(courseId: UUID(), name: "Project 1", grade: "95", weight: "20"),
-                Assignment(courseId: UUID(), name: "Midterm", grade: "88", weight: "30")
-            ],
-            instructor: "Dr. Smith",
-            courseCode: "CS 4820"
-        )
-
-        NavigationView {
-            VStack {
-                SpectacularCourseCard(
-                    course: sampleCourse,
-                    courseManager: UnifiedCourseManager(),
-                    bulkSelectionManager: BulkCourseSelectionManager(),
-                    themeManager: themeManager,
-                    usePercentageGrades: true,
-                    animationDelay: 0.0,
-                    onDelete: {},
-                    onLongPress: {}
-                )
-                .padding()
-                Spacer()
-            }
-            .background(Color(.systemGroupedBackground))
-        }
-        .environmentObject(themeManager)
     }
 }
