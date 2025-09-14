@@ -67,6 +67,8 @@
 		AB0FB5442DF8DD0D0037ADA2 /* ClassLiveActivityExtensionExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClassLiveActivityExtensionExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB0FB5462DF8DD0D0037ADA2 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		AB0FB5482DF8DD0D0037ADA2 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		AB53FCC02E75F242001D6391 /* StuCo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = StuCo.entitlements; path = StuCo/StuCo.entitlements; sourceTree = "<group>"; };
+		AB53FCC12E75F274001D6391 /* ClassLiveActivityExtensionExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClassLiveActivityExtensionExtension.entitlements; sourceTree = "<group>"; };
 		ABA4EE812DD8389E0068853B /* StuCo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StuCo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ABA4EE912DD838A20068853B /* StudentCompanionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StudentCompanionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		ABA4EE9B2DD838A20068853B /* StudentCompanionUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StudentCompanionUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -95,6 +97,96 @@
 			);
 			target = ABA4EE802DD8389E0068853B /* StuCo */;
 		};
+		AB53FCBB2E755784001D6391 /* Exceptions for "StudentCompanion" folder in "ClassLiveActivityExtensionExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"forma-djr-banner/FormaDJRBanner-Black-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-BlackItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-Bold-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-BoldItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-ExtraBold-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-ExtraBoldItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-ExtraLight-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-ExtraLightItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-Hairline-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-HairlineItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-Italic-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-Light-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-LightItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-Medium-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-MediumItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-Regular-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-Thin-Testing.ttf",
+				"forma-djr-banner/FormaDJRBanner-ThinItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-Black-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-BlackItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-Bold-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-BoldItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-ExtraBold-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-ExtraBoldItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-ExtraLight-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-ExtraLightItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-Hairline-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-HairlineItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-Italic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-Light-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-LightItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-Medium-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-MediumItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-Regular-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-Thin-Testing.ttf",
+				"forma-djr-banner/FormaDJRDeck-ThinItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-Black-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-BlackItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-Bold-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-BoldItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-ExtraBold-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-ExtraBoldItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-ExtraLight-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-ExtraLightItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-Hairline-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-HairlineItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-Italic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-Light-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-LightItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-Medium-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-MediumItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-Regular-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-Thin-Testing.ttf",
+				"forma-djr-banner/FormaDJRDisplay-ThinItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-Black-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-BlackItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-Bold-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-BoldItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-ExtraBold-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-ExtraBoldItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-ExtraLight-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-ExtraLightItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-Italic-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-Light-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-LightItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-Medium-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-MediumItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRMicro-Regular-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-Black-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-BlackItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-Bold-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-BoldItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-ExtraBold-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-ExtraBoldItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-ExtraLight-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-ExtraLightItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-Italic-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-Light-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-LightItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-Medium-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-MediumItalic-Testing.ttf",
+				"forma-djr-banner/FormaDJRText-Regular-Testing.ttf",
+				"forma-djr-banner/FormaDJRVariable-Italic-VF-Testing.ttf",
+				"forma-djr-banner/FormaDJRVariable-VF-Testing.ttf",
+			);
+			target = AB0FB5432DF8DD0D0037ADA2 /* ClassLiveActivityExtensionExtension */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -111,6 +203,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				AB0FB5622DF8E1E00037ADA2 /* Exceptions for "StudentCompanion" folder in "StuCo" target */,
+				AB53FCBB2E755784001D6391 /* Exceptions for "StudentCompanion" folder in "ClassLiveActivityExtensionExtension" target */,
 			);
 			path = StudentCompanion;
 			sourceTree = "<group>";
@@ -186,6 +279,8 @@
 		ABA4EE782DD8389E0068853B = {
 			isa = PBXGroup;
 			children = (
+				AB53FCC12E75F274001D6391 /* ClassLiveActivityExtensionExtension.entitlements */,
+				AB53FCC02E75F242001D6391 /* StuCo.entitlements */,
 				ABA4EE832DD8389E0068853B /* StudentCompanion */,
 				ABA4EE942DD838A20068853B /* StudentCompanionTests */,
 				ABA4EE9E2DD838A20068853B /* StudentCompanionUITests */,
@@ -453,6 +548,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = ClassLiveActivityExtensionExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = KQ6B773275;
@@ -480,6 +576,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = ClassLiveActivityExtensionExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = KQ6B773275;
@@ -626,6 +723,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = StuCo/StuCo.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"StudentCompanion/Preview Content\"";
@@ -661,6 +759,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = StuCo/StuCo.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"StudentCompanion/Preview Content\"";

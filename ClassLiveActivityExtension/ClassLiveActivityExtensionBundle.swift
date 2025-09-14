@@ -12,5 +12,6 @@ import SwiftUI
 struct ClassLiveActivityExtensionBundle: WidgetBundle {
     var body: some Widget {
         ClassLiveActivity()
+        ScheduleLockscreenWidget()
     }
 }
