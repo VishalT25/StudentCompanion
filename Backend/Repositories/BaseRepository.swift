@@ -110,7 +110,16 @@ class BaseRepository<DBRow: DatabaseModel, LocalModel>: Repository where DBRow.L
       logResult("read", resultData: response.data)
       let dbModel = try JSONDecoder().decode(DBRow.self, from: response.data)
       return dbModel.toLocal()
+    } catch let pgErr as PostgrestError {
+      if pgErr.code == "PGRST116" {
+        return nil
+      }
+      print("🛑 DB READ \(tableName) failed: \(pgErr)")
+      throw pgErr
     } catch {
+      if error.localizedDescription.contains("Cannot coerce the result to a single JSON object") {
+        return nil
+      }
       print("🛑 DB READ \(tableName) failed: \(error)")
       throw error
     }
@@ -337,6 +346,23 @@ class ScheduleRepository: BaseRepository<DatabaseSchedule, ScheduleCollection> {
     let dbModels = try JSONDecoder().decode([DatabaseSchedule].self, from: response.data)
     return dbModels.map { $0.toLocal() }
   }
+
+  func setActive(scheduleId: String, userId: String) async throws {
+    await supabaseService.ensureValidToken()
+
+    _ = try await client
+      .from(tableName)
+      .update(["is_active": false])
+      .eq("user_id", value: userId)
+      .execute()
+
+    _ = try await client
+      .from(tableName)
+      .update(["is_active": true])
+      .eq("id", value: scheduleId)
+      .eq("user_id", value: userId)
+      .execute()
+  }
 }
 
 class ScheduleItemRepository: BaseRepository<DatabaseScheduleItem, ScheduleItem> {
@@ -417,6 +443,36 @@ class ScheduleItemRepository: BaseRepository<DatabaseScheduleItem, ScheduleItem>
       let dbModels = try JSONDecoder().decode([DatabaseScheduleItem].self, from: response.data)
       return dbModels.map { $0.toLocal() }
     }
+  }
+}
+
+class CourseMeetingRepository: BaseRepository<DatabaseCourseMeeting, CourseMeeting> {
+  init(supabaseService: SupabaseService = .shared) {
+    super.init(supabaseService: supabaseService, tableName: "course_meetings")
+  }
+
+  func findByCourse(_ courseId: String, userId: String) async throws -> [CourseMeeting] {
+    await supabaseService.ensureValidToken()
+    let response = try await client
+      .from(tableName)
+      .select()
+      .eq("user_id", value: userId)
+      .eq("course_id", value: courseId)
+      .execute()
+    let dbModels = try JSONDecoder().decode([DatabaseCourseMeeting].self, from: response.data)
+    return dbModels.map { $0.toLocal() }
+  }
+
+  func findBySchedule(_ scheduleId: String, userId: String) async throws -> [CourseMeeting] {
+    await supabaseService.ensureValidToken()
+    let response = try await client
+      .from(tableName)
+      .select()
+      .eq("user_id", value: userId)
+      .eq("schedule_id", value: scheduleId)
+      .execute()
+    let dbModels = try JSONDecoder().decode([DatabaseCourseMeeting].self, from: response.data)
+    return dbModels.map { $0.toLocal() }
   }
 }
 

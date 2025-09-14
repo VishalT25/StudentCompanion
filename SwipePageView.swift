@@ -112,7 +112,7 @@ struct SwipePageView: View {
             
             VStack(spacing: 0) {
                 topToolbarView
-                
+
                 TabView(selection: $currentPage) {
                     GPAView()
                         .environmentObject(themeManager)
@@ -342,8 +342,8 @@ struct SwipePageView: View {
                 
                 Spacer()
             }
-            .padding(.top, 8)
-            .padding(.bottom, 8)
+            .padding(.top, 6)
+            .padding(.bottom, 6)
             
             HStack {
                 Button {
@@ -370,26 +370,18 @@ struct SwipePageView: View {
                 
                 Spacer()
                 
-                Button {
-                    withAnimation(.spring()) {
-                        showingNotificationCenter = true
-                    }
-                } label: {
-                    Image(systemName: "bell.fill")
-                        .font(.forma(.caption, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .padding(5)
-                        .background(
-                            Circle()
-                                .fill(.thinMaterial)
-                                .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.15), radius: 2, x: 0, y: 1)
-                        )
-                }
-                .scaleEffect(showingNotificationCenter ? 0.95 : 1.0)
-                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: showingNotificationCenter)
+                Image(systemName: "bell.fill")
+                    .font(.forma(.caption, weight: .medium))
+                    .opacity(0)
+                    .padding(5)
+                    .background(
+                        Circle()
+                            .fill(.thinMaterial)
+                            .opacity(0)
+                    )
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 12)
+            .padding(.bottom, 8)
         }
         .background(
             ZStack {
@@ -479,7 +471,11 @@ struct HomePageView: View {
                             navigateToPage = .schedule
                         }
                     } label: {
-                        TodayScheduleView()
+                        TodayScheduleView(onNavigateToSchedule: {
+                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                navigateToPage = .schedule
+                            }
+                        })
                             .environmentObject(viewModel)
                             .environmentObject(themeManager)
                     }
@@ -500,7 +496,7 @@ struct HomePageView: View {
                 quickActionsView
             }
             .padding(.horizontal, 20)
-            .padding(.top, 10)
+            .padding(.top, 16)
         }
         .refreshable {
             await viewModel.refreshLiveData()

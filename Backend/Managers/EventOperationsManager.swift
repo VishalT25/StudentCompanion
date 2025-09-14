@@ -4,7 +4,7 @@ import Combine
 
 // MARK: - Event Operations Manager
 @MainActor
-class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
+class EventOperationsManager: ObservableObject {
     
     // MARK: - Published Properties
     @Published private(set) var events: [Event] = []
@@ -14,10 +14,7 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
     @Published private(set) var operationStatistics = EventStatistics()
     
     // MARK: - Dependencies
-    private let eventRepository: CachedRepository<DatabaseEvent, Event>
-    private let categoryRepository: CachedRepository<DatabaseCategory, Category>
     private let supabaseService = SupabaseService.shared
-    private let realtimeSyncManager = RealtimeSyncManager.shared
     private let dataValidator = DataConsistencyValidator()
     private let authPromptHandler = AuthenticationPromptHandler.shared
     
@@ -25,137 +22,107 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
     private var cancellables = Set<AnyCancellable>()
     
     init() {
-        // Initialize repositories with caching
-        let baseEventRepo = BaseRepository<DatabaseEvent, Event>(tableName: "events")
-        let baseCategoryRepo = BaseRepository<DatabaseCategory, Category>(tableName: "categories")
-        
-        eventRepository = CachedRepository<DatabaseEvent, Event>(
-            repository: baseEventRepo,
-            cache: CacheSystem.shared.eventCache,
-            supabaseService: supabaseService
-        )
-        
-        categoryRepository = CachedRepository<DatabaseCategory, Category>(
-            repository: baseCategoryRepo,
-            cache: CacheSystem.shared.categoryCache,
-            supabaseService: supabaseService
-        )
-        
-        setupRealtimeSync()
+        print("📅 EventOperationsManager: Initializing with simple approach...")
         setupAuthenticationObserver()
-        
-        Task {
-            await initialize()
-        }
     }
     
-    // MARK: - Initialization
-    
-    private func initialize() async {
-        guard supabaseService.isAuthenticated else { return }
-        
-        isLoading = true
-        
-        do {
-            await loadCategories()
-            await loadEvents()
-            lastSyncTime = Date()
-        } catch {
-            print("❌ EventOperationsManager: Initialization failed: \(error)")
-        }
-        
-        isLoading = false
-    }
-    
-    private func setupRealtimeSync() {
-        realtimeSyncManager.eventDelegate = self
-    }
+    // MARK: - Simple Authentication Observer
     
     private func setupAuthenticationObserver() {
         supabaseService.$isAuthenticated
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isAuthenticated in
+                print("📅 EventOperationsManager: Auth state changed: \(isAuthenticated)")
                 if isAuthenticated {
-                    Task { 
-                        // Add delay to ensure authentication is fully complete
-                        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-                        await self?.initialize()
+                    Task {
+                        // Simple: just wait a moment for auth to settle, then load data
+                        try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                        await self?.loadDataDirectly()
                     }
                 } else {
                     self?.clearData()
                 }
             }
             .store(in: &cancellables)
-        
-        // Listen for post sign-in data refresh notification
-        NotificationCenter.default.addObserver(
-            forName: .init("UserSignedInDataRefresh"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            print("🔄 EventOperationsManager: Received post sign-in data refresh notification")
-            Task { await self?.refreshData() }
-        }
-        
-        // Listen for data sync completed notification
-        NotificationCenter.default.addObserver(
-            forName: .init("DataSyncCompleted"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            print("🔄 EventOperationsManager: Received data sync completed notification")
-            Task { await self?.reloadFromCache() }
-        }
     }
     
-    // MARK: - Cache Reload
+    // MARK: - Direct Data Loading
     
-    private func reloadFromCache() async {
-        print("🔄 EventOperationsManager: Reloading data from cache")
+    /// Simple, direct data loading from database
+    private func loadDataDirectly() async {
+        print("📅 EventOperationsManager: 🚀 Loading data directly from database...")
         
-        // Load events from cache
-        let cachedEvents = await CacheSystem.shared.eventCache.retrieve()
-        events = cachedEvents.sorted { $0.date < $1.date }
+        guard let userId = supabaseService.currentUser?.id.uuidString else {
+            print("📅 EventOperationsManager: ❌ No user ID available")
+            return
+        }
         
-        // Load categories from cache
-        let cachedCategories = await CacheSystem.shared.categoryCache.retrieve()
-        categories = cachedCategories.sorted { $0.name < $1.name }
-        
-        operationStatistics.updateEventsLoaded(events.count)
-        operationStatistics.updateCategoriesLoaded(categories.count)
-        lastSyncTime = Date()
-        
-        print("🔄 EventOperationsManager: Reloaded \(events.count) events and \(categories.count) categories from cache")
-    }
-    
-    // MARK: - Data Loading
-    
-    func loadEvents() async {
-        guard let userId = supabaseService.currentUser?.id.uuidString else { return }
+        isLoading = true
         
         do {
-            let loadedEvents = try await eventRepository.readAll(userId: userId)
-            events = loadedEvents.sorted { $0.date < $1.date }
+            // Load categories directly from database using basic repository
+            print("📅 EventOperationsManager: Loading categories...")
+            let categoryResponse = try await supabaseService.client
+                .from("categories")
+                .select()
+                .eq("user_id", value: userId)
+                .execute()
             
-            operationStatistics.updateEventsLoaded(loadedEvents.count)
-            print("📅 EventOperationsManager: Loaded \(loadedEvents.count) events")
+            let dbCategories = try JSONDecoder().decode([DatabaseCategory].self, from: categoryResponse.data)
+            let loadedCategories = dbCategories.map { $0.toLocal() }.sorted { $0.name < $1.name }
+            
+            print("📅 EventOperationsManager: ✅ Loaded \(loadedCategories.count) categories from database")
+            
+            // Load events directly from database
+            print("📅 EventOperationsManager: Loading events...")
+            let eventResponse = try await supabaseService.client
+                .from("events")
+                .select()
+                .eq("user_id", value: userId)
+                .execute()
+            
+            let dbEvents = try JSONDecoder().decode([DatabaseEvent].self, from: eventResponse.data)
+            let loadedEvents = dbEvents.map { $0.toLocal() }.sorted { $0.date < $1.date }
+            
+            print("📅 EventOperationsManager: ✅ Loaded \(loadedEvents.count) events from database")
+            
+            // Update UI directly
+            self.categories = loadedCategories
+            self.events = loadedEvents
+            self.operationStatistics.updateCategoriesLoaded(loadedCategories.count)
+            self.operationStatistics.updateEventsLoaded(loadedEvents.count)
+            self.lastSyncTime = Date()
+            
+            // Also update cache for other components
+            await CacheSystem.shared.categoryCache.store(loadedCategories)
+            await CacheSystem.shared.eventCache.store(loadedEvents)
+            
+            print("📅 EventOperationsManager: ✅ Data loading complete - \(loadedEvents.count) events, \(loadedCategories.count) categories displayed")
+            
         } catch {
-            print("❌ EventOperationsManager: Failed to load events: \(error)")
+            print("📅 EventOperationsManager: ❌ Failed to load data: \(error)")
+            
+            // Fallback to cache if database fails
+            print("📅 EventOperationsManager: Trying cache as fallback...")
+            let cachedCategories = await CacheSystem.shared.categoryCache.retrieve()
+            let cachedEvents = await CacheSystem.shared.eventCache.retrieve()
+            
+            self.categories = cachedCategories.sorted { $0.name < $1.name }
+            self.events = cachedEvents.sorted { $0.date < $1.date }
+            self.operationStatistics.updateCategoriesLoaded(cachedCategories.count)
+            self.operationStatistics.updateEventsLoaded(cachedEvents.count)
+            
+            print("📅 EventOperationsManager: ✅ Fallback complete - \(cachedEvents.count) events, \(cachedCategories.count) categories from cache")
         }
+        
+        isLoading = false
     }
     
-    func loadCategories() async {
-        guard let userId = supabaseService.currentUser?.id.uuidString else { return }
-        
-        do {
-            let loadedCategories = try await categoryRepository.readAll(userId: userId)
-            categories = loadedCategories.sorted { $0.name < $1.name }
-            
-            operationStatistics.updateCategoriesLoaded(loadedCategories.count)
-            print("🏷️ EventOperationsManager: Loaded \(loadedCategories.count) categories")
-        } catch {
-            print("❌ EventOperationsManager: Failed to load categories: \(error)")
-        }
+    // MARK: - Public Methods for Manual Refresh
+    
+    func refreshData() async {
+        print("📅 EventOperationsManager: 🔄 Manual refresh requested")
+        await loadDataDirectly()
     }
     
     // MARK: - Event Operations
@@ -189,12 +156,24 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
         // Sync to backend
         Task {
             do {
-                let savedEvent = try await eventRepository.create(event, userId: userId)
+                let dbModel = DatabaseEvent(from: event, userId: userId)
+                let response = try await supabaseService.client
+                    .from("events")
+                    .insert(dbModel)
+                    .select()
+                    .single()
+                    .execute()
+                
+                let savedDbEvent = try JSONDecoder().decode(DatabaseEvent.self, from: response.data)
+                let savedEvent = savedDbEvent.toLocal()
                 
                 // Update local copy with server data
                 if let index = events.firstIndex(where: { $0.id == event.id }) {
                     events[index] = savedEvent
                 }
+                
+                // Update cache
+                await CacheSystem.shared.eventCache.store(savedEvent)
                 
                 print("✅ EventOperationsManager: Event '\(event.title)' added successfully")
             } catch {
@@ -225,7 +204,17 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
         // Sync to backend
         Task {
             do {
-                let updatedEvent = try await eventRepository.update(event, userId: userId)
+                let dbModel = DatabaseEvent(from: event, userId: userId)
+                let response = try await supabaseService.client
+                    .from("events")
+                    .update(dbModel)
+                    .eq("id", value: event.id.uuidString)
+                    .select()
+                    .single()
+                    .execute()
+                
+                let updatedDbEvent = try JSONDecoder().decode(DatabaseEvent.self, from: response.data)
+                let updatedEvent = updatedDbEvent.toLocal()
                 
                 // Update local copy with server data
                 if let currentIndex = events.firstIndex(where: { $0.id == event.id }) {
@@ -233,10 +222,13 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
                     events.sort { $0.date < $1.date }
                 }
                 
+                // Update cache
+                await CacheSystem.shared.eventCache.update(updatedEvent)
+                
                 print("✅ EventOperationsManager: Event '\(event.title)' updated successfully")
             } catch {
                 // Revert local changes if sync failed
-                await loadEvents()
+                await loadDataDirectly()
                 operationStatistics.incrementErrors()
                 print("❌ EventOperationsManager: Failed to update event: \(error)")
             }
@@ -251,7 +243,14 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
         // Sync to backend
         Task {
             do {
-                try await eventRepository.delete(id: event.id.uuidString)
+                _ = try await supabaseService.client
+                    .from("events")
+                    .delete()
+                    .eq("id", value: event.id.uuidString)
+                    .execute()
+                
+                // Remove from cache
+                await CacheSystem.shared.eventCache.delete(id: event.id.uuidString)
                 
                 print("✅ EventOperationsManager: Event '\(event.title)' deleted successfully")
             } catch {
@@ -307,12 +306,24 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
         // Sync to backend
         Task {
             do {
-                let savedCategory = try await categoryRepository.create(category, userId: userId)
+                let dbModel = DatabaseCategory(from: category, userId: userId)
+                let response = try await supabaseService.client
+                    .from("categories")
+                    .insert(dbModel)
+                    .select()
+                    .single()
+                    .execute()
+                
+                let savedDbCategory = try JSONDecoder().decode(DatabaseCategory.self, from: response.data)
+                let savedCategory = savedDbCategory.toLocal()
                 
                 // Update local copy with server data
                 if let index = categories.firstIndex(where: { $0.id == category.id }) {
                     categories[index] = savedCategory
                 }
+                
+                // Update cache
+                await CacheSystem.shared.categoryCache.store(savedCategory)
                 
                 print("✅ EventOperationsManager: Category '\(category.name)' added successfully")
             } catch {
@@ -343,7 +354,17 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
         // Sync to backend
         Task {
             do {
-                let updatedCategory = try await categoryRepository.update(category, userId: userId)
+                let dbModel = DatabaseCategory(from: category, userId: userId)
+                let response = try await supabaseService.client
+                    .from("categories")
+                    .update(dbModel)
+                    .eq("id", value: category.id.uuidString)
+                    .select()
+                    .single()
+                    .execute()
+                
+                let updatedDbCategory = try JSONDecoder().decode(DatabaseCategory.self, from: response.data)
+                let updatedCategory = updatedDbCategory.toLocal()
                 
                 // Update local copy with server data
                 if let currentIndex = categories.firstIndex(where: { $0.id == category.id }) {
@@ -351,10 +372,13 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
                     categories.sort { $0.name < $1.name }
                 }
                 
+                // Update cache
+                await CacheSystem.shared.categoryCache.update(updatedCategory)
+                
                 print("✅ EventOperationsManager: Category '\(category.name)' updated successfully")
             } catch {
                 // Revert local changes if sync failed
-                await loadCategories()
+                await loadDataDirectly()
                 operationStatistics.incrementErrors()
                 print("❌ EventOperationsManager: Failed to update category: \(error)")
             }
@@ -376,7 +400,14 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
         // Sync to backend
         Task {
             do {
-                try await categoryRepository.delete(id: category.id.uuidString)
+                _ = try await supabaseService.client
+                    .from("categories")
+                    .delete()
+                    .eq("id", value: category.id.uuidString)
+                    .execute()
+                
+                // Remove from cache
+                await CacheSystem.shared.categoryCache.delete(id: category.id.uuidString)
                 
                 print("✅ EventOperationsManager: Category '\(category.name)' deleted successfully")
             } catch {
@@ -454,7 +485,17 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
         
         for event in eventsToImport {
             do {
-                let savedEvent = try await eventRepository.create(event, userId: userId)
+                let dbModel = DatabaseEvent(from: event, userId: userId)
+                let response = try await supabaseService.client
+                    .from("events")
+                    .insert(dbModel)
+                    .select()
+                    .single()
+                    .execute()
+                
+                let savedDbEvent = try JSONDecoder().decode(DatabaseEvent.self, from: response.data)
+                let savedEvent = savedDbEvent.toLocal()
+                
                 events.append(savedEvent)
                 successCount += 1
                 operationStatistics.incrementEventsCreated()
@@ -509,124 +550,14 @@ class EventOperationsManager: ObservableObject, RealtimeSyncDelegate {
         )
     }
     
-    // MARK: - RealtimeSyncDelegate
-    
-    func didReceiveRealtimeUpdate(_ data: [String: Any], action: String, table: String) {
-        Task { @MainActor in
-            switch (table, action) {
-            case ("events", "SYNC"):
-                if let eventsData = data["events"] as? [DatabaseEvent] {
-                    await handleEventSync(eventsData)
-                }
-            case ("events", "INSERT"), ("events", "UPDATE"):
-                await handleEventUpdate(data)
-            case ("events", "DELETE"):
-                await handleEventDelete(data)
-            case ("categories", "SYNC"):
-                if let categoriesData = data["categories"] as? [DatabaseCategory] {
-                    await handleCategorySync(categoriesData)
-                }
-            case ("categories", "INSERT"), ("categories", "UPDATE"):
-                await handleCategoryUpdate(data)
-            case ("categories", "DELETE"):
-                await handleCategoryDelete(data)
-            default:
-                break
-            }
-            
-            lastSyncTime = Date()
-        }
-    }
-    
-    private func handleEventSync(_ dbEvents: [DatabaseEvent]) async {
-        let syncedEvents = dbEvents.map { $0.toLocal() }
-        events = syncedEvents.sorted { $0.date < $1.date }
-        operationStatistics.updateEventsLoaded(syncedEvents.count)
-        
-        print("🔄 EventOperationsManager: Synced \(syncedEvents.count) events from database")
-    }
-    
-    private func handleCategorySync(_ dbCategories: [DatabaseCategory]) async {
-        let syncedCategories = dbCategories.map { $0.toLocal() }
-        categories = syncedCategories.sorted { $0.name < $1.name }
-        operationStatistics.updateCategoriesLoaded(syncedCategories.count)
-        
-        print("🔄 EventOperationsManager: Synced \(syncedCategories.count) categories from database")
-    }
-    
-    private func handleEventUpdate(_ data: [String: Any]) async {
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: data)
-            let dbEvent = try JSONDecoder().decode(DatabaseEvent.self, from: jsonData)
-            let event = dbEvent.toLocal()
-            
-            if let existingIndex = events.firstIndex(where: { $0.id == event.id }) {
-                // Update existing event
-                events[existingIndex] = event
-            } else {
-                // Add new event
-                events.append(event)
-            }
-            
-            events.sort { $0.date < $1.date }
-            
-            print("🔄 EventOperationsManager: Event '\(event.title)' synced from realtime")
-        } catch {
-            print("❌ EventOperationsManager: Failed to handle event update: \(error)")
-        }
-    }
-    
-    private func handleEventDelete(_ data: [String: Any]) async {
-        guard let idString = data["id"] as? String,
-              let eventId = UUID(uuidString: idString) else { return }
-        
-        events.removeAll { $0.id == eventId }
-        
-        print("🔄 EventOperationsManager: Event deleted from realtime")
-    }
-    
-    private func handleCategoryUpdate(_ data: [String: Any]) async {
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: data)
-            let dbCategory = try JSONDecoder().decode(DatabaseCategory.self, from: jsonData)
-            let category = dbCategory.toLocal()
-            
-            if let existingIndex = categories.firstIndex(where: { $0.id == category.id }) {
-                // Update existing category
-                categories[existingIndex] = category
-            } else {
-                // Add new category
-                categories.append(category)
-            }
-            
-            categories.sort { $0.name < $1.name }
-            
-            print("🔄 EventOperationsManager: Category '\(category.name)' synced from realtime")
-        } catch {
-            print("❌ EventOperationsManager: Failed to handle category update: \(error)")
-        }
-    }
-    
-    private func handleCategoryDelete(_ data: [String: Any]) async {
-        guard let idString = data["id"] as? String,
-              let categoryId = UUID(uuidString: idString) else { return }
-        
-        categories.removeAll { $0.id == categoryId }
-        
-        print("🔄 EventOperationsManager: Category deleted from realtime")
-    }
-    
     // MARK: - Cleanup
     
     private func clearData() {
+        print("📅 EventOperationsManager: 🧹 Clearing all data")
         events.removeAll()
         categories.removeAll()
         operationStatistics.reset()
         lastSyncTime = nil
-    }
-    
-    func refreshData() async {
-        await initialize()
     }
     
     // MARK: - Computed Properties

@@ -145,6 +145,13 @@ class RealtimeSyncManager: ObservableObject {
             return
         }
         
+        // Ensure delegates are properly set up
+        print("🔄 RealtimeSyncManager: Checking delegates...")
+        print("🔄 RealtimeSyncManager: eventDelegate = \(eventDelegate != nil ? "✅" : "❌")")
+        print("🔄 RealtimeSyncManager: categoryDelegate = \(categoryDelegate != nil ? "✅" : "❌")")
+        print("🔄 RealtimeSyncManager: courseDelegate = \(courseDelegate != nil ? "✅" : "❌")")
+        print("🔄 RealtimeSyncManager: scheduleDelegate = \(scheduleDelegate != nil ? "✅" : "❌")")
+        
         syncStatus = .initializing
         
         do {
@@ -195,17 +202,25 @@ class RealtimeSyncManager: ObservableObject {
             ("categories", "categories_channel"),
             ("courses", "courses_channel"),
             ("events", "events_channel"),
-            ("schedules", "schedules_channel"),
-            ("schedule_items", "schedule_items_channel")
+            ("schedules", "schedules_channel")
         ]
         
         for (tableName, channelName) in tableConfigs {
+            if channels[tableName] != nil {
+                print("🔄 RealtimeSyncManager: Already subscribed to \(tableName), skipping")
+                continue
+            }
             await setupChannel(for: tableName, channelName: channelName, userId: userId.uuidString)
         }
     }
     
     @MainActor
     private func setupChannel(for tableName: String, channelName: String, userId: String) async {
+      if channels[tableName] != nil {
+        print("🔄 RealtimeSyncManager: Channel exists for \(tableName), skip re-register")
+        return
+      }
+
       let channel = supabaseService.client.channel(channelName)
 
       let filterString: String? = {
@@ -295,11 +310,8 @@ class RealtimeSyncManager: ObservableObject {
                 await cacheSystem.scheduleCache.store(localModel)
                 scheduleDelegate?.didReceiveRealtimeUpdate(data, action: "INSERT", table: table)
                 
-            case "schedule_items":
-                let dbModel = try JSONDecoder().decode(DatabaseScheduleItem.self, from: JSONSerialization.data(withJSONObject: data))
-                let localModel = dbModel.toLocal()
-                scheduleItemDelegate?.didReceiveRealtimeUpdate(data, action: "INSERT", table: table)
-                
+            // case "schedule_items": ...
+
             default:
                 print("🔄 RealtimeSyncManager: Unknown table: \(table)")
             }
@@ -369,11 +381,8 @@ class RealtimeSyncManager: ObservableObject {
                 await cacheSystem.scheduleCache.update(localModel)
                 scheduleDelegate?.didReceiveRealtimeUpdate(data, action: "UPDATE", table: table)
                 
-            case "schedule_items":
-                let dbModel = try JSONDecoder().decode(DatabaseScheduleItem.self, from: JSONSerialization.data(withJSONObject: data))
-                let localModel = dbModel.toLocal()
-                scheduleItemDelegate?.didReceiveRealtimeUpdate(data, action: "UPDATE", table: table)
-                
+            // case "schedule_items": ...
+
             default:
                 print("🔄 RealtimeSyncManager: Unknown table: \(table)")
             }
@@ -417,9 +426,8 @@ class RealtimeSyncManager: ObservableObject {
                     await cacheSystem.scheduleCache.delete(id: id)
                     scheduleDelegate?.didReceiveRealtimeUpdate(data, action: "DELETE", table: table)
                     
-                case "schedule_items":
-                    scheduleItemDelegate?.didReceiveRealtimeUpdate(data, action: "DELETE", table: table)
-                    
+                // case "schedule_items": ...
+
                 default:
                     print("🔄 RealtimeSyncManager: Unknown table: \(table)")
                 }
@@ -440,7 +448,7 @@ class RealtimeSyncManager: ObservableObject {
         syncStatus = .syncing
         syncProgress = 0.0
         
-        let tables = ["academic_calendars", "categories", "schedules", "courses", "schedule_items", "assignments", "events"]
+        let tables = ["academic_calendars", "categories", "schedules", "courses", "assignments", "events"]
         let progressStep = 1.0 / Double(tables.count)
         
         for (index, table) in tables.enumerated() {
@@ -448,7 +456,6 @@ class RealtimeSyncManager: ObservableObject {
             syncProgress = Double(index + 1) * progressStep
         }
         
-        // IMPORTANT: After loading all data into cache, notify delegates with SYNC action
         await notifyDelegatesOfInitialSync(userId: userId)
         
         lastSyncTime = Date()
@@ -458,45 +465,77 @@ class RealtimeSyncManager: ObservableObject {
     
     private func notifyDelegatesOfInitialSync(userId: String) async {
         // Notify all delegates that initial sync is complete with all data
+        print("🔄 RealtimeSyncManager: 📤 Starting delegate notifications...")
+        
         do {
+            // Categories - send to EventViewModel via categoryDelegate  
+            let categories = await cacheSystem.categoryCache.retrieve()
+            print("🔄 RealtimeSyncManager: Found \(categories.count) categories in cache")
+            
+            if let categoryDelegate = categoryDelegate {
+                if !categories.isEmpty {
+                    let dbCategories = categories.map { DatabaseCategory(from: $0, userId: userId) }
+                    print("🔄 RealtimeSyncManager: ✅ Notifying categoryDelegate with \(dbCategories.count) categories")
+                    categoryDelegate.didReceiveRealtimeUpdate(
+                        ["categories": dbCategories],
+                        action: "SYNC",
+                        table: "categories"
+                    )
+                } else {
+                    print("🔄 RealtimeSyncManager: ✅ Notifying categoryDelegate with empty category sync")
+                    categoryDelegate.didReceiveRealtimeUpdate(
+                        ["categories": []],
+                        action: "SYNC",
+                        table: "categories"
+                    )
+                }
+            } else {
+                print("🔄 RealtimeSyncManager: ⚠️ No categoryDelegate set!")
+            }
+            
+            // Events - send to EventViewModel via eventDelegate
+            let events = await cacheSystem.eventCache.retrieve()
+            print("🔄 RealtimeSyncManager: Found \(events.count) events in cache")
+            
+            if let eventDelegate = eventDelegate {
+                if !events.isEmpty {
+                    let dbEvents = events.map { DatabaseEvent(from: $0, userId: userId) }
+                    print("🔄 RealtimeSyncManager: ✅ Notifying eventDelegate with \(dbEvents.count) events")
+                    eventDelegate.didReceiveRealtimeUpdate(
+                        ["events": dbEvents],
+                        action: "SYNC", 
+                        table: "events"
+                    )
+                } else {
+                    print("🔄 RealtimeSyncManager: ✅ Notifying eventDelegate with empty events sync")
+                    eventDelegate.didReceiveRealtimeUpdate(
+                        ["events": []],
+                        action: "SYNC",
+                        table: "events"
+                    )
+                }
+            } else {
+                print("🔄 RealtimeSyncManager: ⚠️ No eventDelegate set!")
+            }
+            
             // Academic Calendars
             let academicCalendars = await cacheSystem.academicCalendarCache.retrieve()
-            if !academicCalendars.isEmpty {
+            if let academicCalendarDelegate = academicCalendarDelegate, !academicCalendars.isEmpty {
                 let dbAcademicCalendars = academicCalendars.map { DatabaseAcademicCalendar(from: $0, userId: userId) }
-                academicCalendarDelegate?.didReceiveRealtimeUpdate(
+                print("🔄 RealtimeSyncManager: ✅ Notifying academicCalendarDelegate with \(dbAcademicCalendars.count) calendars")
+                academicCalendarDelegate.didReceiveRealtimeUpdate(
                     ["academic_calendars": dbAcademicCalendars],
                     action: "SYNC",
                     table: "academic_calendars"
                 )
             }
             
-            // Categories
-            let categories = await cacheSystem.categoryCache.retrieve()
-            if !categories.isEmpty {
-                let dbCategories = categories.map { DatabaseCategory(from: $0, userId: userId) }
-                categoryDelegate?.didReceiveRealtimeUpdate(
-                    ["categories": dbCategories],
-                    action: "SYNC",
-                    table: "categories"
-                )
-            }
-            
-            // Events
-            let events = await cacheSystem.eventCache.retrieve()
-            if !events.isEmpty {
-                let dbEvents = events.map { DatabaseEvent(from: $0, userId: userId) }
-                eventDelegate?.didReceiveRealtimeUpdate(
-                    ["events": dbEvents],
-                    action: "SYNC", 
-                    table: "events"
-                )
-            }
-            
             // Schedules
             let schedules = await cacheSystem.scheduleCache.retrieve()
-            if !schedules.isEmpty {
+            if let scheduleDelegate = scheduleDelegate, !schedules.isEmpty {
                 let dbSchedules = schedules.map { DatabaseSchedule(from: $0, userId: userId) }
-                scheduleDelegate?.didReceiveRealtimeUpdate(
+                print("🔄 RealtimeSyncManager: ✅ Notifying scheduleDelegate with \(dbSchedules.count) schedules")
+                scheduleDelegate.didReceiveRealtimeUpdate(
                     ["schedules": dbSchedules],
                     action: "SYNC",
                     table: "schedules"
@@ -505,9 +544,10 @@ class RealtimeSyncManager: ObservableObject {
             
             // Courses
             let courses = await cacheSystem.courseCache.retrieve()
-            if !courses.isEmpty {
+            if let courseDelegate = courseDelegate, !courses.isEmpty {
                 let dbCourses = courses.map { DatabaseCourse(from: $0, userId: userId) }
-                courseDelegate?.didReceiveRealtimeUpdate(
+                print("🔄 RealtimeSyncManager: ✅ Notifying courseDelegate with \(dbCourses.count) courses")
+                courseDelegate.didReceiveRealtimeUpdate(
                     ["courses": dbCourses],
                     action: "SYNC",
                     table: "courses"
@@ -516,18 +556,19 @@ class RealtimeSyncManager: ObservableObject {
             
             // Assignments
             let assignments = await cacheSystem.assignmentCache.retrieve()
-            if !assignments.isEmpty {
+            if let assignmentDelegate = assignmentDelegate, !assignments.isEmpty {
                 let dbAssignments = assignments.map { DatabaseAssignment(from: $0, userId: userId) }
-                assignmentDelegate?.didReceiveRealtimeUpdate(
+                print("🔄 RealtimeSyncManager: ✅ Notifying assignmentDelegate with \(dbAssignments.count) assignments")
+                assignmentDelegate.didReceiveRealtimeUpdate(
                     ["assignments": dbAssignments],
                     action: "SYNC",
                     table: "assignments"
                 )
             }
             
-            print("🔄 RealtimeSyncManager: Notified all delegates of initial sync completion")
+            print("🔄 RealtimeSyncManager: ✅ All delegate notifications completed")
         } catch {
-            print("🔄 RealtimeSyncManager: Failed to notify delegates of initial sync: \(error)")
+            print("🔄 RealtimeSyncManager: ❌ Failed to notify delegates of initial sync: \(error)")
         }
     }
     
@@ -579,11 +620,7 @@ class RealtimeSyncManager: ObservableObject {
                 let items = try JSONDecoder().decode([DatabaseSchedule].self, from: response.data)
                 await cacheSystem.scheduleCache.store(items.map { $0.toLocal() })
 
-            case "schedule_items":
-                let repository = ScheduleItemRepository()
-                let items = try await repository.readAll(userId: userId)
-                // Don't store in cache, let ScheduleManager handle this
-                print("🔄 RealtimeSyncManager: Found \(items.count) schedule items")
+            // case "schedule_items": ...
 
             case "assignments":
                 let response = try await supabaseService.client
@@ -673,15 +710,39 @@ class RealtimeSyncManager: ObservableObject {
           .sink { [weak self] isAuthenticated in
             Task { @MainActor in
               if isAuthenticated { 
+                print("🔄 RealtimeSyncManager: User authenticated, initializing...")
+                
+                // Ensure delegate setup before initialization
+                await self?.ensureDelegatesAreSet()
+                
+                // Initialize with proper delegate setup
                 await self?.initialize()
-                // Trigger comprehensive data refresh after sign-in using coordinator
+                
+                // Trigger comprehensive data refresh
                 await self?.performPostSignInDataSync()
               } else { 
+                print("🔄 RealtimeSyncManager: User signed out, cleaning up...")
                 await self?.cleanup() 
               }
             }
           }
-          .store(in: &combineCancellables) // FIX: not in realtime tokens
+          .store(in: &combineCancellables)
+    }
+    
+    /// Ensure delegates are properly set up before sync operations
+    private func ensureDelegatesAreSet() async {
+        print("🔄 RealtimeSyncManager: 🔌 Ensuring delegates are set up...")
+        
+        // Give a moment for other managers to register themselves as delegates
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+        
+        print("🔄 RealtimeSyncManager: Current delegate status:")
+        print("  - eventDelegate: \(eventDelegate != nil ? "✅ Set" : "❌ Missing")")
+        print("  - categoryDelegate: \(categoryDelegate != nil ? "✅ Set" : "❌ Missing")")
+        print("  - courseDelegate: \(courseDelegate != nil ? "✅ Set" : "❌ Missing")")
+        print("  - scheduleDelegate: \(scheduleDelegate != nil ? "✅ Set" : "❌ Missing")")
+        print("  - academicCalendarDelegate: \(academicCalendarDelegate != nil ? "✅ Set" : "❌ Missing")")
+        print("  - assignmentDelegate: \(assignmentDelegate != nil ? "✅ Set" : "❌ Missing")")
     }
     
     // MARK: - Post Sign-In Data Sync
@@ -692,21 +753,19 @@ class RealtimeSyncManager: ObservableObject {
         syncStatus = .syncing
         
         // Add delay to ensure authentication is fully established
-        try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second (reduced from 2)
         
-        // Perform full data refresh
+        // Perform full data refresh - this will populate cache and notify delegates
         await performInitialSync()
         
-        // Force refresh all cached data after sync
-        await refreshAllData()
+        syncStatus = .connected
         
-        // Notify all managers to refresh their data after sync
+        // Post final notification after all sync work is complete
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            print("🔄 RealtimeSyncManager: Posting UserSignedInDataRefresh notification")
-            NotificationCenter.default.post(name: .init("UserSignedInDataRefresh"), object: nil)
+            print("🔄 RealtimeSyncManager: Posting DataSyncCompleted notification")
+            NotificationCenter.default.post(name: .init("DataSyncCompleted"), object: nil)
         }
         
-        syncStatus = .connected
         print("🔄 RealtimeSyncManager: Post sign-in data sync completed")
     }
 }

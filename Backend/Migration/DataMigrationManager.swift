@@ -314,40 +314,17 @@ class DataMigrationManager: ObservableObject {
     }
     
     private func establishRelationships() async throws {
-        guard let userId = supabaseService.currentUser?.id.uuidString else {
+        guard supabaseService.isAuthenticated else {
             throw MigrationError.userNotAuthenticated
         }
         
-        let scheduleItemRepo = BaseRepository<DatabaseScheduleItem, ScheduleItem>(tableName: "schedule_items")
+        // Keep only setting the active schedule ID if present
         
-        // Create schedule items for courses that have schedule information
-        for schedule in legacyData.scheduleCollections {
-            for scheduleItem in schedule.scheduleItems {
-                do {
-                    let dbScheduleItem = DatabaseScheduleItem(
-                        from: scheduleItem,
-                        userId: userId,
-                        scheduleId: schedule.id.uuidString,
-                        courseId: scheduleItem.id.uuidString
-                    )
-                    
-                    _ = try await supabaseService.client
-                        .from("schedule_items")
-                        .insert(dbScheduleItem)
-                        .execute()
-                    
-                    await cacheSystem.scheduleItemCache.store(scheduleItem)
-                    
-                    logMigration("Created schedule item relationship: \(scheduleItem.title)", level: .info)
-                } catch {
-                    logMigration("Failed to create schedule item \(scheduleItem.title): \(error)", level: .warning)
-                }
-            }
-        }
-        
-        // Set active schedule
         if let activeId = legacyData.activeScheduleId {
             userDefaults.set(activeId.uuidString, forKey: "activeScheduleID")
+            logMigration("Preserved active schedule ID during migration", level: .info)
+        } else {
+            logMigration("No active schedule ID found to preserve", level: .info)
         }
     }
     

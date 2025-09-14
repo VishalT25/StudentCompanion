@@ -113,7 +113,7 @@ struct GorgeousCourseCard: View {
                             )
                             .frame(width: 60, height: 60)
                             .rotationEffect(.degrees(-90))
-                            .animation(.spring(response: 1.2, dampingFraction: 0.8).delay(animationDelay), value: gradePercentage)
+                            .animation(.spring(response: 1.0, dampingFraction: 0.85).delay(animationDelay), value: gradePercentage)
                     }
                     
                     Image(systemName: course.iconName)
@@ -150,41 +150,47 @@ struct GorgeousCourseCard: View {
                 
                 Spacer()
                 
-                VStack(alignment: .trailing, spacing: 8) {
-                    if bulkSelectionManager.selectionContext == .courses {
-                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                            .font(.forma(.title2))
-                            .foregroundColor(isSelected ? themeManager.currentTheme.primaryColor : .secondary.opacity(0.6))
-                            .scaleEffect(isSelected ? 1.1 : 1.0)
-                            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
-                    } else {
-                        VStack(alignment: .trailing, spacing: 4) {
-                            if let grade = course.calculateCurrentGrade() {
-                                VStack(alignment: .trailing, spacing: 2) {
-                                    Text(usePercentageGrades ? "\(course.currentGradeString)%" : course.letterGrade)
-                                        .font(.forma(.title2, weight: .bold))
-                                        .foregroundColor(progressRingColor)
-                                    
-                                    if !usePercentageGrades, let gpa = course.gpaPoints {
-                                        Text(String(format: "%.2f GPA", gpa))
-                                            .font(.forma(.caption, weight: .medium))
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                            } else {
-                                VStack(alignment: .trailing, spacing: 2) {
-                                    Text("No Grade")
-                                        .font(.forma(.subheadline, weight: .medium))
+                let isSelectionMode = bulkSelectionManager.selectionContext == .courses
+                ZStack(alignment: .trailing) {
+                    // Grade view
+                    VStack(alignment: .trailing, spacing: 4) {
+                        if let grade = course.calculateCurrentGrade() {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(usePercentageGrades ? "\(course.currentGradeString)%" : course.letterGrade)
+                                    .font(.forma(.title2, weight: .bold))
+                                    .foregroundColor(progressRingColor)
+                                
+                                if !usePercentageGrades, let gpa = course.gpaPoints {
+                                    Text(String(format: "%.2f GPA", gpa))
+                                        .font(.forma(.caption, weight: .medium))
                                         .foregroundColor(.secondary)
-                                    
-                                    Text("Add assignments")
-                                        .font(.forma(.caption))
-                                        .foregroundColor(.secondary.opacity(0.7))
                                 }
+                            }
+                        } else {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("No Grade")
+                                    .font(.forma(.subheadline, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                
+                                Text("Add assignments")
+                                    .font(.forma(.caption))
+                                    .foregroundColor(.secondary.opacity(0.7))
                             }
                         }
                     }
+                    .opacity(isSelectionMode ? 0 : 1)
+                    .scaleEffect(isSelectionMode ? 0.98 : 1.0)
+                    
+                    // Selection indicator
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.forma(.title2))
+                        .foregroundColor(isSelected ? themeManager.currentTheme.primaryColor : .secondary.opacity(0.6))
+                        .scaleEffect(isSelectionMode ? 1.0 : 0.95)
+                        .opacity(isSelectionMode ? 1 : 0)
                 }
+                .frame(minWidth: 96, alignment: .trailing)
+                .animation(.spring(response: 0.35, dampingFraction: 0.9), value: isSelected)
+                .animation(.spring(response: 0.35, dampingFraction: 0.9), value: isSelectionMode)
             }
             .padding(20)
             

@@ -566,6 +566,7 @@ struct UnifiedAddCourseView: View {
             return
         }
         
+        // Create traditional course only
         let newCourse = Course(
             scheduleId: activeScheduleId,
             name: courseName.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -583,13 +584,13 @@ struct UnifiedAddCourseView: View {
         
         courseManager.addCourse(newCourse)
         
-        // Also add to schedule if it has schedule info
         if newCourse.hasScheduleInfo {
             let scheduleItem = newCourse.toScheduleItem()
             scheduleManager.addScheduleItem(scheduleItem, to: activeScheduleId)
         }
         
-         ("Created unified course: \(newCourse.name)")
+         ("Created traditional course")
+        dismiss()
     }
 }
 

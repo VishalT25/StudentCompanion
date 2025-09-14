@@ -2,6 +2,17 @@ import SwiftUI
 import Combine
 import Foundation
 
+// MARK: - Supporting Types (Simplified)
+struct CourseTimeSlot: Codable, Equatable {
+    let start: Date
+    let end: Date
+    
+    init(start: Date, end: Date) {
+        self.start = start
+        self.end = end
+    }
+}
+
 class Course: Identifiable, ObservableObject, Codable, Equatable {
     @Published var id: UUID
     @Published var scheduleId: UUID // Required reference to schedule
@@ -31,20 +42,29 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         }
     }
 
-    // NEW: Schedule Properties (unified with ScheduleItem)
+    // SIMPLIFIED: Traditional Schedule Properties Only
     @Published var startTime: Date?
     @Published var endTime: Date?
-    @Published var daysOfWeek: [DayOfWeek] = []
+    @Published var daysOfWeek: [DayOfWeek] = [] // Monday through Friday
     @Published var location: String = ""
     @Published var instructor: String = ""
     @Published var reminderTime: ReminderTime = .none
     @Published var isLiveActivityEnabled: Bool = true
     @Published var skippedInstanceIdentifiers: Set<String> = []
     
+    @Published var isRotating: Bool = false
+    @Published var day1StartTime: Date?
+    @Published var day1EndTime: Date?
+    @Published var day2StartTime: Date?
+    @Published var day2EndTime: Date?
+    
     // Academic Analytics
     @Published var creditHours: Double = 3.0
     @Published var courseCode: String = "" // e.g., "CS 101"
     @Published var section: String = ""    // e.g., "Section A"
+    
+    // DEPRECATED: Keep for backward compatibility but don't use
+    @Published var meetings: [CourseMeeting] = []
     
     private var cancellables = Set<AnyCancellable>()
 
@@ -57,7 +77,7 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         assignments: [Assignment] = [], 
         finalGradeGoal: String = "", 
         weightOfRemainingTasks: String = "",
-        // NEW: Schedule parameters
+        // Schedule parameters
         startTime: Date? = nil,
         endTime: Date? = nil,
         daysOfWeek: [DayOfWeek] = [],
@@ -65,7 +85,12 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         instructor: String = "",
         creditHours: Double = 3.0,
         courseCode: String = "",
-        section: String = ""
+        section: String = "",
+        isRotating: Bool = false,
+        day1StartTime: Date? = nil,
+        day1EndTime: Date? = nil,
+        day2StartTime: Date? = nil,
+        day2EndTime: Date? = nil
     ) {
         self.id = id
         self.scheduleId = scheduleId
@@ -83,7 +108,7 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         self.finalGradeGoal = finalGradeGoal
         self.weightOfRemainingTasks = weightOfRemainingTasks
         
-        // NEW: Schedule properties
+        // Schedule properties
         self.startTime = startTime
         self.endTime = endTime
         self.daysOfWeek = daysOfWeek
@@ -92,6 +117,12 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         self.creditHours = creditHours
         self.courseCode = courseCode
         self.section = section
+        
+        self.isRotating = isRotating
+        self.day1StartTime = day1StartTime
+        self.day1EndTime = day1EndTime
+        self.day2StartTime = day2StartTime
+        self.day2EndTime = day2EndTime
         
         DispatchQueue.main.async { [weak self] in
             self?.setupAssignmentsObservation()
@@ -156,6 +187,8 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         case id, scheduleId, name, iconName, colorHex, assignments, finalGradeGoal, weightOfRemainingTasks
         case startTime, endTime, daysOfWeek, location, instructor, reminderTime, isLiveActivityEnabled
         case skippedInstanceIdentifiers, creditHours, courseCode, section
+        case meetings // Keep for backward compatibility
+        case isRotating, day1StartTime, day1EndTime, day2StartTime, day2EndTime
     }
 
     required init(from decoder: Decoder) throws {
@@ -170,7 +203,7 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         finalGradeGoal = try container.decode(String.self, forKey: .finalGradeGoal)
         weightOfRemainingTasks = try container.decode(String.self, forKey: .weightOfRemainingTasks)
         
-        // NEW: Schedule properties with backward compatibility
+        // Schedule properties with backward compatibility
         startTime = try container.decodeIfPresent(Date.self, forKey: .startTime)
         endTime = try container.decodeIfPresent(Date.self, forKey: .endTime)
         daysOfWeek = try container.decodeIfPresent([DayOfWeek].self, forKey: .daysOfWeek) ?? []
@@ -182,6 +215,15 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         creditHours = try container.decodeIfPresent(Double.self, forKey: .creditHours) ?? 3.0
         courseCode = try container.decodeIfPresent(String.self, forKey: .courseCode) ?? ""
         section = try container.decodeIfPresent(String.self, forKey: .section) ?? ""
+        
+        isRotating = try container.decodeIfPresent(Bool.self, forKey: .isRotating) ?? false
+        day1StartTime = try container.decodeIfPresent(Date.self, forKey: .day1StartTime)
+        day1EndTime = try container.decodeIfPresent(Date.self, forKey: .day1EndTime)
+        day2StartTime = try container.decodeIfPresent(Date.self, forKey: .day2StartTime)
+        day2EndTime = try container.decodeIfPresent(Date.self, forKey: .day2EndTime)
+        
+        // Backward compatibility - try to load meetings but don't require them
+        meetings = try container.decodeIfPresent([CourseMeeting].self, forKey: .meetings) ?? []
         
         assignments = decodedAssignments
         
@@ -205,7 +247,7 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         try container.encode(finalGradeGoal, forKey: .finalGradeGoal)
         try container.encode(weightOfRemainingTasks, forKey: .weightOfRemainingTasks)
         
-        // NEW: Schedule properties
+        // Schedule properties
         try container.encodeIfPresent(startTime, forKey: .startTime)
         try container.encodeIfPresent(endTime, forKey: .endTime)
         try container.encode(daysOfWeek, forKey: .daysOfWeek)
@@ -217,6 +259,15 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         try container.encode(creditHours, forKey: .creditHours)
         try container.encode(courseCode, forKey: .courseCode)
         try container.encode(section, forKey: .section)
+        
+        try container.encode(isRotating, forKey: .isRotating)
+        try container.encodeIfPresent(day1StartTime, forKey: .day1StartTime)
+        try container.encodeIfPresent(day1EndTime, forKey: .day1EndTime)
+        try container.encodeIfPresent(day2StartTime, forKey: .day2StartTime)
+        try container.encodeIfPresent(day2EndTime, forKey: .day2EndTime)
+        
+        // Backward compatibility
+        try container.encode(meetings, forKey: .meetings)
     }
 
     static func == (lhs: Course, rhs: Course) -> Bool {
@@ -239,16 +290,104 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         Color(hex: colorHex) ?? .blue
     }
     
-    // MARK: - Schedule Integration Methods
+    // MARK: - Simplified Schedule Logic (Traditional Only)
     
     var hasScheduleInfo: Bool {
+        if isRotating {
+            let participatesDay1 = (day1StartTime != nil && day1EndTime != nil)
+            let participatesDay2 = (day2StartTime != nil && day2EndTime != nil)
+            return participatesDay1 || participatesDay2
+        }
         return startTime != nil && endTime != nil && !daysOfWeek.isEmpty
     }
     
+    func shouldAppear(on date: Date, in schedule: ScheduleCollection, calendar: AcademicCalendar?) -> Bool {
+        if isSkipped(onDate: date) {
+            return false
+        }
+        
+        let cal = Calendar.current
+        let weekday = cal.component(.weekday, from: date)
+        if weekday == 1 || weekday == 7 {
+            return false
+        }
+        
+        if let start = schedule.semesterStartDate, let end = schedule.semesterEndDate {
+            let day = cal.startOfDay(for: date)
+            let s = cal.startOfDay(for: start)
+            let e = cal.startOfDay(for: end)
+            if day < s || day > e {
+                return false
+            }
+        }
+        
+        if let calendar {
+            if !calendar.isDateWithinSemester(date) { return false }
+            if calendar.isBreakDay(date) { return false }
+        }
+        
+        if isRotating {
+            let day = cal.component(.day, from: date)
+            let isDay1 = day % 2 == 1
+            if isDay1 {
+                return day1StartTime != nil && day1EndTime != nil
+            } else {
+                return day2StartTime != nil && day2EndTime != nil
+            }
+        } else {
+            let dayOfWeek = DayOfWeek.from(weekday: weekday)
+            return daysOfWeek.contains(dayOfWeek)
+        }
+    }
+    
+    func toScheduleItem(for date: Date, in schedule: ScheduleCollection, calendar: AcademicCalendar?) -> ScheduleItem? {
+        guard shouldAppear(on: date, in: schedule, calendar: calendar) else { return nil }
+        
+        if isRotating {
+            let cal = Calendar.current
+            let day = cal.component(.day, from: date)
+            let isDay1 = day % 2 == 1
+            let s = isDay1 ? day1StartTime : day2StartTime
+            let e = isDay1 ? day1EndTime : day2EndTime
+            guard let start = s, let end = e else { return nil }
+            
+            return ScheduleItem(
+                id: self.id,
+                title: name,
+                startTime: start,
+                endTime: end,
+                daysOfWeek: [],
+                location: location,
+                instructor: instructor,
+                color: color,
+                skippedInstanceIdentifiers: skippedInstanceIdentifiers,
+                isLiveActivityEnabled: isLiveActivityEnabled,
+                reminderTime: reminderTime
+            )
+        } else {
+            guard let start = startTime, let end = endTime else { return nil }
+            return ScheduleItem(
+                id: self.id,
+                title: name,
+                startTime: start,
+                endTime: end,
+                daysOfWeek: daysOfWeek,
+                location: location,
+                instructor: instructor,
+                color: color,
+                skippedInstanceIdentifiers: skippedInstanceIdentifiers,
+                isLiveActivityEnabled: isLiveActivityEnabled,
+                reminderTime: reminderTime
+            )
+        }
+    }
+    
+    // MARK: - Legacy Methods (for backward compatibility)
+    
     var isScheduledToday: Bool {
-        guard hasScheduleInfo else { return false }
-        let today = DayOfWeek.from(weekday: Calendar.current.component(.weekday, from: Date()))
-        return daysOfWeek.contains(today) && !isSkippedToday
+        let today = Date()
+        let dayOfWeek = DayOfWeek.from(weekday: Calendar.current.component(.weekday, from: today))
+        return daysOfWeek.contains(dayOfWeek) && !isSkippedToday
     }
     
     var isSkippedToday: Bool {
@@ -256,6 +395,19 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         let today = calendar.startOfDay(for: Date())
         let identifier = Course.instanceIdentifier(for: id, onDate: today)
         return skippedInstanceIdentifiers.contains(identifier)
+    }
+    
+    func isSkipped(onDate date: Date) -> Bool {
+        let identifier = Course.instanceIdentifier(for: id, onDate: date)
+        return skippedInstanceIdentifiers.contains(identifier)
+    }
+    
+    static func instanceIdentifier(for id: UUID, onDate date: Date) -> String {
+        let calendar = Calendar.current
+        let year = calendar.component(.year, from: date)
+        let month = calendar.component(.month, from: date)
+        let day = calendar.component(.day, from: date)
+        return "\(id.uuidString)_\(year)-\(month)-\(day)"
     }
     
     var timeRange: String {
@@ -291,63 +443,7 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
                           .joined(separator: ", ")
     }
     
-    // Convert to ScheduleItem for backward compatibility
-    func toScheduleItem() -> ScheduleItem {
-        return ScheduleItem(
-            id: self.id, // Use the same ID to maintain the link
-            title: name,
-            startTime: startTime ?? Date(),
-            endTime: endTime ?? Date().addingTimeInterval(3600),
-            daysOfWeek: daysOfWeek,
-            location: location,
-            instructor: instructor,
-            color: color,
-            skippedInstanceIdentifiers: skippedInstanceIdentifiers,
-            isLiveActivityEnabled: isLiveActivityEnabled,
-            reminderTime: reminderTime
-        )
-    }
-    
-    // Create from ScheduleItem
-    static func from(scheduleItem: ScheduleItem, scheduleId: UUID) -> Course {
-        let course = Course(
-            id: scheduleItem.id, // Use the same ID to maintain the link
-            scheduleId: scheduleId,
-            name: scheduleItem.title,
-            iconName: "book.closed.fill",
-            colorHex: scheduleItem.color.toHex() ?? Color.blue.toHex()!,
-            assignments: [], // New course starts with no assignments
-            finalGradeGoal: "",
-            weightOfRemainingTasks: "",
-            startTime: scheduleItem.startTime,
-            endTime: scheduleItem.endTime,
-            daysOfWeek: scheduleItem.daysOfWeek,
-            location: scheduleItem.location,
-            instructor: scheduleItem.instructor
-        )
-        
-        // Set additional schedule properties that aren't in the main initializer
-        course.skippedInstanceIdentifiers = scheduleItem.skippedInstanceIdentifiers
-        course.isLiveActivityEnabled = scheduleItem.isLiveActivityEnabled
-        course.reminderTime = scheduleItem.reminderTime
-        
-        return course
-    }
-    
-    func isSkipped(onDate date: Date) -> Bool {
-        let identifier = Course.instanceIdentifier(for: id, onDate: date)
-        return skippedInstanceIdentifiers.contains(identifier)
-    }
-    
-    static func instanceIdentifier(for id: UUID, onDate date: Date) -> String {
-        let calendar = Calendar.current
-        let year = calendar.component(.year, from: date)
-        let month = calendar.component(.month, from: date)
-        let day = calendar.component(.day, from: date)
-        return "\(id.uuidString)_\(year)-\(month)-\(day)"
-    }
-    
-    // MARK: - Grade Analytics
+    // MARK: - Grade Analytics (Unchanged)
     
     func calculateCurrentGrade() -> Double? {
         var totalWeightedGrade = 0.0
@@ -439,37 +535,7 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
     }
 }
 
-// MARK: - Schedule Model Extensions for unified system
-struct Schedule: Identifiable, Codable {
-    var id = UUID()
-    var name: String
-    var semester: String
-    var isActive: Bool = false
-    var isArchived: Bool = false
-    var colorHex: String = Color.blue.toHex() ?? "007AFF"
-    var scheduleType: String = "traditional"
-    var academicCalendarId: UUID?
-    var createdDate: Date = Date()
-    var lastModified: Date = Date()
-    
-    init(name: String, semester: String, isActive: Bool = false) {
-        self.name = name
-        self.semester = semester
-        self.isActive = isActive
-    }
-    
-    var displayName: String {
-        if name.isEmpty {
-            return semester
-        }
-        return "\(name) - \(semester)"
-    }
-    
-    var color: Color {
-        Color(hex: colorHex) ?? .blue
-    }
-}
-
+// MARK: - Extensions and Supporting Types (unchanged)
 extension Color {
     var isDark: Bool {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
@@ -492,5 +558,103 @@ extension Color {
         } else {
             return self
         }
+    }
+}
+
+// MARK: - Legacy Support
+struct Schedule: Identifiable, Codable {
+    var id = UUID()
+    var name: String
+    var semester: String
+    var isActive: Bool = false
+    var isArchived: Bool = false
+    var colorHex: String = Color.blue.toHex() ?? "007AFF"
+    var academicCalendarId: UUID?
+    var createdDate: Date = Date()
+    var lastModified: Date = Date()
+    
+    init(name: String, semester: String, isActive: Bool = false) {
+        self.name = name
+        self.semester = semester
+        self.isActive = isActive
+    }
+    
+    var displayName: String {
+        if name.isEmpty {
+            return semester
+        }
+        return "\(name) - \(semester)"
+    }
+    
+    var color: Color {
+        Color(hex: colorHex) ?? .blue
+    }
+}
+
+extension Course {
+    static func from(scheduleItem: ScheduleItem, scheduleId: UUID) -> Course {
+        let colorHex = scheduleItem.color.toHex() ?? "007AFF"
+        let course = Course(
+            id: scheduleItem.id,
+            scheduleId: scheduleId,
+            name: scheduleItem.title,
+            iconName: "book.closed.fill",
+            colorHex: colorHex,
+            assignments: [],
+            finalGradeGoal: "",
+            weightOfRemainingTasks: "",
+            startTime: scheduleItem.startTime,
+            endTime: scheduleItem.endTime,
+            daysOfWeek: scheduleItem.daysOfWeek,
+            location: scheduleItem.location,
+            instructor: scheduleItem.instructor,
+            creditHours: 3.0,
+            courseCode: "",
+            section: ""
+        )
+        course.skippedInstanceIdentifiers = scheduleItem.skippedInstanceIdentifiers
+        course.reminderTime = scheduleItem.reminderTime
+        course.isLiveActivityEnabled = scheduleItem.isLiveActivityEnabled
+        return course
+    }
+    
+    func toScheduleItem() -> ScheduleItem {
+        let calendar = Calendar.current
+        func defaultTimes() -> (Date, Date) {
+            var components = calendar.dateComponents([.year, .month, .day], from: Date())
+            components.hour = 9
+            components.minute = 0
+            let start = calendar.date(from: components) ?? Date()
+            let end = calendar.date(byAdding: .minute, value: 60, to: start) ?? start.addingTimeInterval(3600)
+            return (start, end)
+        }
+        
+        let s = startTime ?? defaultTimes().0
+        let e = endTime ?? calendar.date(byAdding: .minute, value: 60, to: s) ?? s.addingTimeInterval(3600)
+        
+        return ScheduleItem(
+            id: self.id,
+            title: self.name,
+            startTime: s,
+            endTime: e,
+            daysOfWeek: self.daysOfWeek,
+            location: self.location,
+            instructor: self.instructor,
+            color: self.color,
+            skippedInstanceIdentifiers: self.skippedInstanceIdentifiers,
+            isLiveActivityEnabled: self.isLiveActivityEnabled,
+            reminderTime: self.reminderTime
+        )
+    }
+}
+
+// MARK: - Date Extension for Time Setting
+extension Date {
+    func setting(hour: Int, minute: Int) -> Date? {
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day], from: self)
+        components.hour = hour
+        components.minute = minute
+        return calendar.date(from: components)
     }
 }

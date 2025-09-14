@@ -70,13 +70,11 @@ class LocalCacheManager<T: Codable & Identifiable>: CacheManager where T.ID == U
         }
         
         await saveToDisk()
-        print("📦 LocalCache[\(cacheKey)]: Stored \(items.count) items")
     }
     
     func store(_ item: T) async {
         cache[item.id.uuidString] = item
         await saveToDisk()
-        print("📦 LocalCache[\(cacheKey)]: Stored single item \(item.id)")
     }
     
     func retrieve() async -> [T] {
@@ -98,13 +96,11 @@ class LocalCacheManager<T: Codable & Identifiable>: CacheManager where T.ID == U
     func update(_ item: T) async {
         cache[item.id.uuidString] = item
         await saveToDisk()
-        print("📦 LocalCache[\(cacheKey)]: Updated item \(item.id)")
     }
     
     func delete(id: String) async {
         cache.removeValue(forKey: id)
         await saveToDisk()
-        print("📦 LocalCache[\(cacheKey)]: Deleted item \(id)")
     }
     
     func deleteAll() async {
@@ -115,7 +111,6 @@ class LocalCacheManager<T: Codable & Identifiable>: CacheManager where T.ID == U
         try? fileManager.removeItem(at: cacheFileURL)
         try? fileManager.removeItem(at: metadataFileURL)
         
-        print("📦 LocalCache[\(cacheKey)]: Cleared all data")
     }
     
     func getCacheInfo() async -> CacheInfo {
@@ -149,7 +144,6 @@ class LocalCacheManager<T: Codable & Identifiable>: CacheManager where T.ID == U
             
             lastLoadTime = Date()
         } catch {
-            print("📦 LocalCache[\(cacheKey)]: Failed to save to disk: \(error)")
         }
     }
     
@@ -171,9 +165,7 @@ class LocalCacheManager<T: Codable & Identifiable>: CacheManager where T.ID == U
                 lastLoadTime = Date()
             }
             
-            print("📦 LocalCache[\(cacheKey)]: Loaded \(items.count) items from disk")
         } catch {
-            print("📦 LocalCache[\(cacheKey)]: No cache file found or failed to load: \(error)")
             cache.removeAll()
             lastLoadTime = Date()
         }
@@ -213,6 +205,7 @@ class CacheSystem: ObservableObject {
     let eventCache = LocalCacheManager<Event>(cacheKey: "events")
     let scheduleCache = LocalCacheManager<ScheduleCollection>(cacheKey: "schedules")
     let scheduleItemCache = LocalCacheManager<ScheduleItem>(cacheKey: "schedule_items")
+    let courseMeetingCache = LocalCacheManager<CourseMeeting>(cacheKey: "course_meetings")
     
     @Published private(set) var totalCacheSize: Int = 0
     @Published private(set) var totalItems: Int = 0
@@ -226,12 +219,10 @@ class CacheSystem: ObservableObject {
     
     private func initializeCaches() async {
         // Initialize all caches
-        print("📦 CacheSystem: Initializing cache system...")
         
         await updateCacheStats()
         isInitialized = true
         
-        print("📦 CacheSystem: Initialization complete. Total items: \(totalItems), Size: \(formatBytes(totalCacheSize))")
     }
     
     func updateCacheStats() async {
@@ -242,7 +233,8 @@ class CacheSystem: ObservableObject {
             courseCache.getCacheInfo(),
             eventCache.getCacheInfo(),
             scheduleCache.getCacheInfo(),
-            scheduleItemCache.getCacheInfo()
+            scheduleItemCache.getCacheInfo(),
+            courseMeetingCache.getCacheInfo()
         ]
         
         totalItems = cacheInfos.reduce(0) { $0 + $1.itemCount }
@@ -260,7 +252,11 @@ class CacheSystem: ObservableObject {
         
         await updateCacheStats()
         
-        print("📦 CacheSystem: All caches cleared")
+    }
+    
+    /// Clears all user-specific cached data (alias for clearAllCaches for consistency)
+    func clearAllUserData() async {
+        await clearAllCaches()
     }
     
     func getCacheSystemInfo() -> CacheSystemInfo {
@@ -338,12 +334,17 @@ class CachedRepository<DBRow: DatabaseModel, LocalModel: Codable & Identifiable>
     
     func readAll(userId: String) async throws -> [LocalModel] {
         if supabaseService.isConnected {
-            // Fetch from database and update cache
-            let items = try await repository.readAll(userId: userId)
-            await cache.store(items)
-            return items
+            // Always fetch fresh data from database when connected
+            do {
+                let items = try await repository.readAll(userId: userId)
+                await cache.store(items)
+                return items
+            } catch {
+                // If database fails, fall back to cached items
+                return await cache.retrieve()
+            }
         } else {
-            // Return cached items
+            // Return cached items when offline
             return await cache.retrieve()
         }
     }

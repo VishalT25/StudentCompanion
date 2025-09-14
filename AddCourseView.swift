@@ -28,7 +28,7 @@ struct AddCourseView: View {
     private var canProceed: Bool {
         switch currentStep {
         case 1: return !courseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case 2: return !selectedDays.isEmpty
+        case 2: return !selectedDays.isEmpty && startTime < endTime
         case 3: return true
         default: return false
         }
@@ -315,7 +315,6 @@ struct AddCourseView: View {
                                     )
                                     .labelsHidden()
                                     .onChange(of: startTime) { _, newValue in
-                                        // Auto-adjust end time to be 1 hour later
                                         endTime = newValue.addingTimeInterval(3600)
                                     }
                                 }
@@ -334,7 +333,6 @@ struct AddCourseView: View {
                                 }
                             }
                             
-                            // Duration Display
                             let duration = endTime.timeIntervalSince(startTime)
                             if duration > 0 {
                                 HStack {
@@ -513,7 +511,6 @@ struct AddCourseView: View {
         if let existingScheduleId = scheduleManager.activeScheduleID {
             activeScheduleId = existingScheduleId
         } else {
-            // Create a default schedule if none exists
             let defaultSchedule = ScheduleCollection(
                 name: "My Schedule", 
                 semester: "Fall 2025"
@@ -542,11 +539,9 @@ struct AddCourseView: View {
         
         newCourse.reminderTime = reminderTime
         newCourse.isLiveActivityEnabled = isLiveActivityEnabled
-        
-        // Add to local array AND trigger proper sync
         courses.append(newCourse)
         
-         ("✅ Course created successfully: \(newCourse.name) with scheduleId: \(activeScheduleId)")
+         ("✅ Course created successfully for scheduleId: \(activeScheduleId)")
     }
     
     private func formatDuration(_ duration: TimeInterval) -> String {

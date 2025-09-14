@@ -8,7 +8,6 @@ struct SettingsView: View {
     @EnvironmentObject var realtimeSyncManager: RealtimeSyncManager
     
     @State private var showingThemeSelector = false
-    @State private var showingNotificationSettings = false
     @State private var showingGoogleCalendarSettings = false
     @State private var showingAppleCalendarSettings = false
     @State private var showingAcademicCalendarManagement = false
@@ -20,6 +19,8 @@ struct SettingsView: View {
     @State private var showingSyncStats = false
     @State private var syncStats: SyncStats?
     @Environment(\.dismiss) private var dismiss
+    
+    private let showSyncSections = false
     
     var body: some View {
         ZStack {
@@ -113,83 +114,83 @@ struct SettingsView: View {
                         }
                     }
                     
-                    // NEW: Sync & Data Section
-                    Section {
-                        // Real-time Sync Status
-                        HStack {
-                            Image(systemName: "cloud.bolt")
-                                .foregroundColor(themeManager.currentTheme.primaryColor)
-                                .frame(width: 24, height: 24)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Real-time Sync")
-                                    .font(.forma(.body))
+                    if showSyncSections {
+                        Section {
+                            // Real-time Sync Status
+                            HStack {
+                                Image(systemName: "cloud.bolt")
+                                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                                    .frame(width: 24, height: 24)
                                 
-                                Text(realtimeSyncManager.syncStatus.displayName)
-                                    .font(.forma(.caption))
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            SyncStatusIndicator()
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            // Tapping opens sync status details
-                        }
-                        
-                        // Manual Sync Button
-                        Button(action: {
-                            Task {
-                                await realtimeSyncManager.refreshAllData()
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "arrow.clockwise")
-                                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                                    .frame(width: 24, height: 24)
-                            
-                                Text("Refresh All Data")
-                                    .font(.forma(.body))
-                                    .foregroundColor(.primary)
-                            
-                                Spacer()
-                            
-                                if realtimeSyncManager.syncStatus.isActive {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                }
-                            }
-                        }
-                        .disabled(realtimeSyncManager.syncStatus.isActive)
-                        
-                        if let lastSync = realtimeSyncManager.lastSyncTime {
-                            HStack {
-                                Image(systemName: "clock")
-                                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                                    .frame(width: 24, height: 24)
-                            
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("Last Sync")
+                                    Text("Real-time Sync")
                                         .font(.forma(.body))
                                     
-                                    Text(lastSync.formatted(.relative(presentation: .numeric)))
+                                    Text(realtimeSyncManager.syncStatus.displayName)
                                         .font(.forma(.caption))
                                         .foregroundColor(.secondary)
                                 }
-                            
+                                
                                 Spacer()
+                                
+                                SyncStatusIndicator()
                             }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                // Tapping opens sync status details
+                            }
+                            
+                            // Manual Sync Button
+                            Button(action: {
+                                Task {
+                                    await realtimeSyncManager.refreshAllData()
+                                }
+                            }) {
+                                HStack {
+                                    Image(systemName: "arrow.clockwise")
+                                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                                        .frame(width: 24, height: 24)
+                                
+                                    Text("Refresh All Data")
+                                        .font(.forma(.body))
+                                        .foregroundColor(.primary)
+                                
+                                    Spacer()
+                                
+                                    if realtimeSyncManager.syncStatus.isActive {
+                                        ProgressView()
+                                            .scaleEffect(0.8)
+                                    }
+                                }
+                            }
+                            .disabled(realtimeSyncManager.syncStatus.isActive)
+                            
+                            if let lastSync = realtimeSyncManager.lastSyncTime {
+                                HStack {
+                                    Image(systemName: "clock")
+                                        .foregroundColor(themeManager.currentTheme.primaryColor)
+                                        .frame(width: 24, height: 24)
+                                
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Last Sync")
+                                            .font(.forma(.body))
+                                        
+                                        Text(lastSync.formatted(.relative(presentation: .numeric)))
+                                            .font(.forma(.caption))
+                                            .foregroundColor(.secondary)
+                                    }
+                                
+                                    Spacer()
+                                }
+                            }
+                        } header: {
+                            Text("Sync & Data")
+                        } footer: {
+                            Text("Real-time synchronization keeps your data updated across all devices. Pending operations: \(realtimeSyncManager.pendingSyncCount)")
                         }
-                    } header: {
-                        Text("Sync & Data")
-                    } footer: {
-                        Text("Real-time synchronization keeps your data updated across all devices. Pending operations: \(realtimeSyncManager.pendingSyncCount)")
                     }
                     
-                    // Data Sync (only show when authenticated)
-                    if supabaseService.isAuthenticated {
+                    if showSyncSections && supabaseService.isAuthenticated {
                         Section(header: Text("Data Sync").font(.forma(.footnote, weight: .medium))) {
                             // Sync Status
                             HStack(spacing: 12) {
@@ -261,15 +262,6 @@ struct SettingsView: View {
                         }
                     }
                     
-                    // Notifications
-                    Section(header: Text("Notifications").font(.forma(.footnote, weight: .medium))) {
-                        Button {
-                            showingNotificationSettings = true
-                        } label: {
-                            SettingsRow(icon: "bell.badge", iconColor: .orange, title: "Notification Settings", subtitle: "Manage alerts and reminders")
-                        }
-                    }
-                    
                     // Calendar Integration
                     Section(header: Text("Calendar Integration").font(.forma(.footnote, weight: .medium))) {
                         Button {
@@ -281,7 +273,7 @@ struct SettingsView: View {
                         Button {
                             showingAppleCalendarSettings = true
                         } label: {
-                            SettingsRow(icon: "applelogo", iconColor: .primary, title: "Apple Calendar", subtitle: "Native iOS integration")
+                            SettingsRow(icon: "applelogo", iconColor: .primary, title: "Apple Reminders", subtitle: "Use native Reminders app")
                         }
                         
                         Button {
@@ -339,15 +331,13 @@ struct SettingsView: View {
             ThemeSelectorView()
                 .environmentObject(themeManager)
         }
-        .sheet(isPresented: $showingNotificationSettings) {
-            NotificationSettingsView()
-                .environmentObject(NotificationManager.shared)
-        }
         .sheet(isPresented: $showingGoogleCalendarSettings) {
             GoogleCalendarSettingsView()
+                .environmentObject(themeManager)
         }
         .sheet(isPresented: $showingAppleCalendarSettings) {
             AppleCalendarSettingsView()
+                .environmentObject(themeManager)
         }
         .sheet(isPresented: $showingAcademicCalendarManagement) {
             AcademicCalendarManagementView()

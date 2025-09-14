@@ -62,7 +62,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             await loadAssignments()
             lastSyncTime = Date()
         } catch {
-            print("❌ CourseOperationsManager: Initialization failed: \(error)")
         }
         
         isLoading = false
@@ -95,7 +94,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            print("🔄 CourseOperationsManager: Received post sign-in data refresh notification")
             Task { await self?.refreshData() }
         }
         
@@ -105,7 +103,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            print("🔄 CourseOperationsManager: Received data sync completed notification")
             Task { await self?.reloadFromCache() }
         }
     }
@@ -113,7 +110,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
     // MARK: - Cache Reload
     
     private func reloadFromCache() async {
-        print("🔄 CourseOperationsManager: Reloading data from cache")
         
         // Load courses from cache
         let cachedCourses = await CacheSystem.shared.courseCache.retrieve()
@@ -130,7 +126,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         operationStatistics.updateAssignmentsLoaded(assignments.count)
         lastSyncTime = Date()
         
-        print("🔄 CourseOperationsManager: Reloaded \(courses.count) courses and \(assignments.count) assignments from cache")
     }
     
     // MARK: - Data Loading
@@ -149,9 +144,7 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             }
             
             operationStatistics.updateCoursesLoaded(loadedCourses.count)
-            print("📚 CourseOperationsManager: Loaded \(loadedCourses.count) courses")
         } catch {
-            print("❌ CourseOperationsManager: Failed to load courses: \(error)")
         }
     }
     
@@ -166,9 +159,7 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             updateCourseAssignments()
             
             operationStatistics.updateAssignmentsLoaded(loadedAssignments.count)
-            print("📝 CourseOperationsManager: Loaded \(loadedAssignments.count) assignments")
         } catch {
-            print("❌ CourseOperationsManager: Failed to load assignments: \(error)")
         }
     }
     
@@ -199,7 +190,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         // Validate course
         let validationResult = dataValidator.validateCourse(course)
         guard validationResult.isValid else {
-            print("❌ CourseOperationsManager: Course validation failed")
             return
         }
         
@@ -217,12 +207,10 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
                     courses[index] = savedCourse
                 }
                 
-                print("✅ CourseOperationsManager: Course '\(course.name)' added successfully")
             } catch {
                 // Remove from local array if sync failed
                 courses.removeAll { $0.id == course.id }
                 operationStatistics.incrementErrors()
-                print("❌ CourseOperationsManager: Failed to add course: \(error)")
             }
         }
     }
@@ -234,7 +222,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         // Validate course
         let validationResult = dataValidator.validateCourse(course)
         guard validationResult.isValid else {
-            print("❌ CourseOperationsManager: Course validation failed")
             return
         }
         
@@ -252,12 +239,10 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
                     courses[currentIndex] = updatedCourse
                 }
                 
-                print("✅ CourseOperationsManager: Course '\(course.name)' updated successfully")
             } catch {
                 // Revert local changes if sync failed
                 await loadCourses()
                 operationStatistics.incrementErrors()
-                print("❌ CourseOperationsManager: Failed to update course: \(error)")
             }
         }
     }
@@ -283,14 +268,12 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
                 // Then delete course
                 try await courseRepository.delete(id: course.id.uuidString)
                 
-                print("✅ CourseOperationsManager: Course '\(course.name)' deleted successfully")
             } catch {
                 // Restore data if sync failed
                 courses.append(course)
                 assignments.append(contentsOf: courseAssignments)
                 updateCourseAssignments()
                 operationStatistics.incrementErrors()
-                print("❌ CourseOperationsManager: Failed to delete course: \(error)")
             }
         }
     }
@@ -313,7 +296,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         
         let validationResult = dataValidator.validateAssignment(assignment)
         guard validationResult.isValid else {
-            print("❌ CourseOperationsManager: Assignment validation failed")
             return
         }
         
@@ -325,7 +307,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             let courseId = course.id
             let exists = await verifyRemoteCourseExists(courseId: courseId, userId: userId)
             if !exists {
-                print("🧪 CourseOperationsManager: Remote FK check failed for course_id=\(courseId). Will retry assignment insert shortly.")
             }
             
             do {
@@ -337,9 +318,7 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
                 
                 updateCourseAssignments()
                 
-                print("✅ CourseOperationsManager: Assignment '\(assignment.name)' added successfully")
             } catch {
-                print("🛑 CourseOperationsManager: Initial assignment insert failed: \(error.localizedDescription)")
                 
                 do {
                     try await Task.sleep(nanoseconds: 800_000_000) // 0.8s
@@ -348,13 +327,11 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
                         assignments[index] = savedAssignment
                     }
                     updateCourseAssignments()
-                    print("✅ CourseOperationsManager: Assignment '\(assignment.name)' added successfully on retry")
                 } catch {
                     // Remove from local arrays if sync failed
                     assignments.removeAll { $0.id == assignment.id }
                     course.assignments.removeAll { $0.id == assignment.id }
                     operationStatistics.incrementErrors()
-                    print("❌ CourseOperationsManager: Failed to add assignment after retry: \(error.localizedDescription)")
                 }
             }
         }
@@ -366,7 +343,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         
         let validationResult = dataValidator.validateAssignment(assignment)
         guard validationResult.isValid else {
-            print("❌ CourseOperationsManager: Assignment validation failed")
             return
         }
         
@@ -377,7 +353,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         Task {
             let exists = await verifyRemoteCourseExists(courseId: assignment.courseId, userId: userId)
             if !exists {
-                print("🧪 CourseOperationsManager: Remote FK check failed for update, course_id=\(assignment.courseId).")
             }
             
             do {
@@ -389,11 +364,9 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
                 
                 updateCourseAssignments()
                 
-                print("✅ CourseOperationsManager: Assignment '\(assignment.name)' updated successfully")
             } catch {
                 await loadAssignments()
                 operationStatistics.incrementErrors()
-                print("❌ CourseOperationsManager: Failed to update assignment: \(error.localizedDescription)")
             }
         }
     }
@@ -414,13 +387,11 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             do {
                 try await assignmentRepository.delete(id: assignment.id.uuidString)
                 
-                print("✅ CourseOperationsManager: Assignment '\(assignment.name)' deleted successfully")
             } catch {
                 // Restore data if sync failed
                 assignments.append(assignment)
                 updateCourseAssignments()
                 operationStatistics.incrementErrors()
-                print("❌ CourseOperationsManager: Failed to delete assignment: \(error)")
             }
         }
     }
@@ -451,14 +422,12 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
                 successCount += 1
                 operationStatistics.incrementCoursesCreated()
             } catch {
-                print("❌ CourseOperationsManager: Failed to import course '\(course.name)': \(error)")
                 operationStatistics.incrementErrors()
             }
         }
         
         isLoading = false
         
-        print("📚 CourseOperationsManager: Imported \(successCount)/\(coursesToImport.count) courses")
     }
     
     func exportCourses() -> [Course] {
@@ -568,9 +537,7 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
                 course.assignments = assignments.filter { $0.courseId == course.id }
             }
             
-            print("🔄 CourseOperationsManager: Course '\(course.name)' synced from realtime")
         } catch {
-            print("❌ CourseOperationsManager: Failed to handle course update: \(error)")
         }
     }
     
@@ -581,7 +548,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         courses.removeAll { $0.id == courseId }
         assignments.removeAll { $0.courseId == courseId }
         
-        print("🔄 CourseOperationsManager: Course deleted from realtime")
     }
     
     private func handleAssignmentUpdate(_ data: [String: Any]) async {
@@ -601,9 +567,7 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
             // Update course assignments
             updateCourseAssignments()
             
-            print("🔄 CourseOperationsManager: Assignment '\(assignment.name)' synced from realtime")
         } catch {
-            print("❌ CourseOperationsManager: Failed to handle assignment update: \(error)")
         }
     }
     
@@ -614,7 +578,6 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
         assignments.removeAll { $0.id == assignmentId }
         updateCourseAssignments()
         
-        print("🔄 CourseOperationsManager: Assignment deleted from realtime")
     }
     
     // MARK: - Cleanup
@@ -654,11 +617,9 @@ class CourseOperationsManager: ObservableObject, RealtimeSyncDelegate {
                 .single()
                 .execute()
             if let json = String(data: response.data, encoding: .utf8) {
-                print("🧪 FK check: course exists remotely: \(json)")
             }
             return true
         } catch {
-            print("🧪 FK check: course not found remotely for id=\(courseId) err=\(error.localizedDescription)")
             return false
         }
     }

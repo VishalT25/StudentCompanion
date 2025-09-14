@@ -395,7 +395,7 @@ class HierarchicalDataManager: ObservableObject {
                 is_active: schedule.isActive,
                 is_archived: schedule.isArchived,
                 color_hex: schedule.colorHex,
-                schedule_type: schedule.scheduleType,
+                schedule_type: "traditional", // Default to traditional schedule type
                 academic_calendar_id: schedule.academicCalendarId?.uuidString,
                 created_date: schedule.createdDate.toISOString(),
                 last_modified: schedule.lastModified.toISOString()
@@ -718,7 +718,7 @@ struct SupabaseSchedule: Codable {
         schedule.id = UUID(uuidString: id) ?? UUID()
         schedule.isArchived = is_archived
         schedule.colorHex = color_hex
-        schedule.scheduleType = schedule_type
+        // Note: ignoring schedule_type since local Schedule doesn't have this property
         schedule.academicCalendarId = academic_calendar_id.flatMap { UUID(uuidString: $0) }
         
         if let createdDateString = created_date {

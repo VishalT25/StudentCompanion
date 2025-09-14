@@ -273,7 +273,7 @@ struct DatabaseCategory: DatabaseModel {
     }
 }
 
-// MARK: - Courses Table
+// MARK: - Courses Table (Simplified for Traditional Schedules Only)
 struct DatabaseCourse: DatabaseModel {
     static let tableName = "courses"
     
@@ -293,6 +293,13 @@ struct DatabaseCourse: DatabaseModel {
     let skipped_instances: [String]?
     let reminder_time: Int?
     let is_live_activity_enabled: Bool?
+    let is_rotating: Bool?
+    let day1_start_time: String?
+    let day1_end_time: String?
+    let day2_start_time: String?
+    let day2_end_time: String?
+    // KEEP: rotating_day for legacy compatibility
+    let rotating_day: Int?
     let created_at: String?
     let updated_at: String?
     
@@ -312,7 +319,15 @@ struct DatabaseCourse: DatabaseModel {
             endTime: end_time.flatMap { Date.fromTimeString($0) },
             daysOfWeek: (days_of_week ?? []).compactMap { DayOfWeek(rawValue: $0) },
             location: location ?? "",
-            instructor: instructor ?? ""
+            instructor: instructor ?? "",
+            creditHours: 3.0,
+            courseCode: "",
+            section: "",
+            isRotating: is_rotating ?? false,
+            day1StartTime: day1_start_time.flatMap { Date.fromTimeString($0) },
+            day1EndTime: day1_end_time.flatMap { Date.fromTimeString($0) },
+            day2StartTime: day2_start_time.flatMap { Date.fromTimeString($0) },
+            day2EndTime: day2_end_time.flatMap { Date.fromTimeString($0) }
         )
         
         course.skippedInstanceIdentifiers = Set(skipped_instances ?? [])
@@ -331,14 +346,20 @@ struct DatabaseCourse: DatabaseModel {
         self.color_hex = local.colorHex
         self.final_grade_goal = local.finalGradeGoal
         self.weight_of_remaining_tasks = local.weightOfRemainingTasks
-        self.start_time = local.startTime?.toTimeString()
-        self.end_time = local.endTime?.toTimeString()
-        self.days_of_week = local.daysOfWeek.map { $0.rawValue }
+        self.start_time = local.isRotating ? nil : local.startTime?.toTimeString()
+        self.end_time = local.isRotating ? nil : local.endTime?.toTimeString()
+        self.days_of_week = local.isRotating ? [] : local.daysOfWeek.map { $0.rawValue }
         self.location = local.location
         self.instructor = local.instructor
         self.skipped_instances = Array(local.skippedInstanceIdentifiers)
         self.reminder_time = local.reminderTime.rawValue
         self.is_live_activity_enabled = local.isLiveActivityEnabled
+        self.is_rotating = local.isRotating
+        self.day1_start_time = local.day1StartTime?.toTimeString()
+        self.day1_end_time = local.day1EndTime?.toTimeString()
+        self.day2_start_time = local.day2StartTime?.toTimeString()
+        self.day2_end_time = local.day2EndTime?.toTimeString()
+        self.rotating_day = nil
         self.created_at = nil
         self.updated_at = nil
     }
@@ -530,21 +551,51 @@ struct DatabaseSchedule: DatabaseModel {
     let semester: String
     let is_active: Bool
     let is_archived: Bool
-    let color_hex: String
-    let schedule_type: String
+    let color_hex: String?
+    let is_rotating: Bool?
+    // Optional legacy support
+    let schedule_type: String?
     let academic_calendar_id: String?
     let created_date: String?
     let last_modified: String?
     let updated_at: String?
+    let semester_start_date: String?
+    let semester_end_date: String?
     
     var created_at: String? { created_date }
     
+    enum CodingKeys: String, CodingKey {
+        case id, user_id, name, semester, is_active, is_archived, color_hex, is_rotating, schedule_type, academic_calendar_id, created_date, last_modified, updated_at, semester_start_date, semester_end_date
+    }
+    
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        user_id = try c.decodeIfPresent(String.self, forKey: .user_id)
+        name = try c.decode(String.self, forKey: .name)
+        semester = try c.decode(String.self, forKey: .semester)
+        is_active = try c.decode(Bool.self, forKey: .is_active)
+        is_archived = try c.decode(Bool.self, forKey: .is_archived)
+        color_hex = try c.decodeIfPresent(String.self, forKey: .color_hex)
+        is_rotating = try c.decodeIfPresent(Bool.self, forKey: .is_rotating)
+        schedule_type = try c.decodeIfPresent(String.self, forKey: .schedule_type)
+        academic_calendar_id = try c.decodeIfPresent(String.self, forKey: .academic_calendar_id)
+        created_date = try c.decodeIfPresent(String.self, forKey: .created_date)
+        last_modified = try c.decodeIfPresent(String.self, forKey: .last_modified)
+        updated_at = try c.decodeIfPresent(String.self, forKey: .updated_at)
+        semester_start_date = try c.decodeIfPresent(String.self, forKey: .semester_start_date)
+        semester_end_date = try c.decodeIfPresent(String.self, forKey: .semester_end_date)
+    }
+    
     func toLocal() -> ScheduleCollection {
-        let color = Color(hex: color_hex) ?? .blue
-        let scheduleType = ScheduleType(rawValue: schedule_type) ?? .traditional
+        let color = Color(hex: color_hex ?? "007AFF") ?? .blue
+        let rotating = is_rotating ?? (ScheduleType(rawValue: schedule_type ?? "") == .rotating)
+        let scheduleType: ScheduleType = rotating ? .rotating : .traditional
         let createdDate = created_date.flatMap { Date.fromISOString($0) } ?? Date()
         let lastModified = last_modified.flatMap { Date.fromISOString($0) } ?? Date()
         let academicCalendarID = academic_calendar_id.flatMap { UUID(uuidString: $0) }
+        let startDate = semester_start_date.flatMap { Date.fromDateOnlyString($0) }
+        let endDate = semester_end_date.flatMap { Date.fromDateOnlyString($0) }
         
         var schedule = ScheduleCollection(
             name: name,
@@ -559,6 +610,8 @@ struct DatabaseSchedule: DatabaseModel {
         schedule.createdDate = createdDate
         schedule.lastModified = lastModified
         schedule.academicCalendarID = academicCalendarID
+        schedule.semesterStartDate = startDate
+        schedule.semesterEndDate = endDate
         
         return schedule
     }
@@ -570,12 +623,15 @@ struct DatabaseSchedule: DatabaseModel {
         self.semester = local.semester
         self.is_active = local.isActive
         self.is_archived = local.isArchived
-        self.color_hex = local.color.toHex() ?? "007AFF"
-        self.schedule_type = local.scheduleType.rawValue
+        self.color_hex = nil
+        self.is_rotating = (local.scheduleType == .rotating)
+        self.schedule_type = nil
         self.academic_calendar_id = local.academicCalendarID?.uuidString
         self.created_date = local.createdDate.toISOString()
         self.last_modified = local.lastModified.toISOString()
         self.updated_at = Date().toISOString()
+        self.semester_start_date = local.semesterStartDate?.toDateOnlyString()
+        self.semester_end_date = local.semesterEndDate?.toDateOnlyString()
     }
 }
 
@@ -718,5 +774,61 @@ enum UserRole: String, CaseIterable, Codable {
         case .premium: return .premium
         case .founder: return .founder
         }
+    }
+}
+
+struct DatabaseCourseMeeting: DatabaseModel {
+    static let tableName = "course_meetings"
+    
+    let id: String
+    let user_id: String?
+    let course_id: String
+    let schedule_id: String?
+    let rotation_label: String?
+    let rotation_index: Int?
+    let start_time: String
+    let end_time: String
+    let location: String?
+    let instructor: String?
+    let reminder_time: Int?
+    let is_live_activity_enabled: Bool?
+    let skipped_instances: [String]?
+    let created_at: String?
+    let updated_at: String?
+    
+    func toLocal() -> CourseMeeting {
+        CourseMeeting(
+            id: UUID(uuidString: id) ?? UUID(),
+            userId: user_id.flatMap { UUID(uuidString: $0) },
+            courseId: UUID(uuidString: course_id) ?? UUID(),
+            scheduleId: schedule_id.flatMap { UUID(uuidString: $0) },
+            rotationLabel: rotation_label,
+            rotationIndex: rotation_index,
+            startTime: Date.fromTimeString(start_time),
+            endTime: Date.fromTimeString(end_time),
+            location: location ?? "",
+            instructor: instructor ?? "",
+            reminderTime: reminder_time.flatMap { ReminderTime(rawValue: $0) } ?? .none,
+            isLiveActivityEnabled: is_live_activity_enabled ?? true,
+            skippedInstanceIdentifiers: Set(skipped_instances ?? [])
+        )
+    }
+    
+    init(from local: CourseMeeting, userId: String) {
+        self.id = local.id.uuidString
+        self.user_id = userId
+        self.course_id = local.courseId.uuidString
+        self.schedule_id = local.scheduleId?.uuidString
+        self.rotation_label = local.rotationLabel
+        self.rotation_index = local.rotationIndex
+        self.start_time = local.startTime.toTimeString()
+        self.end_time = local.endTime.toTimeString()
+        self.location = local.location
+        self.instructor = local.instructor
+        self.reminder_time = local.reminderTime.rawValue
+        self.is_live_activity_enabled = local.isLiveActivityEnabled
+        self.skipped_instances = Array(local.skippedInstanceIdentifiers)
+        self.created_at = nil
+        self.updated_at = nil
     }
 }

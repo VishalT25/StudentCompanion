@@ -78,16 +78,41 @@ struct MainContentView: View {
     private var mainNavigationView: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(spacing: 20) {
-                    // Add header section to match GPAView spacing
+                VStack(spacing: 0) { // Changed to 0 to control spacing manually
+                    // Add visible spacing at the top
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(height: 60) // Explicit spacer
+                    
+                    // Make header section more visible
                     homeHeaderSection
                     
+                    // Add spacing before schedule
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(height: 30)
+                    
                     schedulePreview
+                    
+                    // Spacing between sections
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(height: 24)
+                    
                     eventsPreview
+                    
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(height: 24)
+                    
                     quickActionsView
+                    
+                    // Bottom spacing
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(height: 40)
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 24)
             }
             .background(
                 // Better background separation in dark mode
@@ -172,37 +197,40 @@ struct MainContentView: View {
     }
     
     private var homeHeaderSection: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Dashboard")
-                    .font(.forma(.title2, weight: .bold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                themeManager.currentTheme.primaryColor,
-                                themeManager.currentTheme.secondaryColor
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
+        VStack(spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Dashboard")
+                        .font(.forma(.title2, weight: .bold))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [
+                                    themeManager.currentTheme.primaryColor,
+                                    themeManager.currentTheme.secondaryColor
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
                         )
-                    )
+                    
+                    Text("Welcome back")
+                        .font(.forma(.caption, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
                 
-                Text("Welcome back")
-                    .font(.forma(.caption, weight: .medium))
-                    .foregroundColor(.secondary)
+                Spacer()
             }
-            
-            Spacer()
         }
+        .padding(.bottom, 8)
+        .background(Color.red.opacity(0.1)) // Temporary background to see if it's visible
     }
     
     private var schedulePreview: some View {
-        NavigationLink(value: AppRoute.schedule) {
-            TodayScheduleView()
-                .environmentObject(viewModel)
-                .environmentObject(themeManager)
-        }
-        .buttonStyle(.plain)
+        TodayScheduleView(onNavigateToSchedule: {
+            selectedRoute = .schedule
+        })
+            .environmentObject(viewModel)
+            .environmentObject(themeManager)
     }
     
     private var eventsPreview: some View {

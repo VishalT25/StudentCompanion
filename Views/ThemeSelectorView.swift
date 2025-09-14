@@ -81,7 +81,7 @@ struct ThemeSelectorView: View {
                                     Text(theme.displayName)
                                         .font(.forma(.body, weight: .semibold))
                                         .foregroundColor(.primary)
-                                    Text("\(theme.displayName) theme with matching colors")
+                                    Text(themeTagline(for: theme))
                                         .font(.forma(.subheadline))
                                         .foregroundColor(.secondary)
                                 }
@@ -243,6 +243,17 @@ struct ThemeSelectorView: View {
             return "Always use dark appearance"
         case .system:
             return "Match system settings"
+        }
+    }
+
+    private func themeTagline(for theme: AppTheme) -> String {
+        switch theme {
+        case .forest:
+            return "Earthy greens with tranquil neutrals — balanced and focus‑friendly."
+        case .ice:
+            return "Crisp, frosty blues with airy contrast — cool and calming."
+        case .fire:
+            return "Warm coral and berry hues — bold, energetic, and motivating."
         }
     }
 }

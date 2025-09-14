@@ -7,67 +7,128 @@ struct EnhancedCourseDetailView: View {
     @EnvironmentObject private var scheduleManager: ScheduleManager
     @EnvironmentObject private var themeManager: ThemeManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isInteracting = false
     
     @State private var course: Course?
     @State private var showingEditSheet = false
     @State private var showingDeleteAlert = false
     @State private var scrollOffset: CGFloat = 0
+    @State private var isViewReady = false
     
     private let headerHeight: CGFloat = 200
     
+    // PERFORMANCE: Use let constants instead of computed properties to avoid recalculation
+    private let cachedIconForegroundColor: Color
+    private let cachedBackgroundGradient: LinearGradient
+
+    private var darkSectionBackground: LinearGradient {
+        LinearGradient(
+            colors: [
+                themeManager.currentTheme.darkModeBackgroundFill.opacity(0.38),
+                themeManager.currentTheme.darkModeBackgroundFill.opacity(0.28),
+                themeManager.currentTheme.darkModeHue.opacity(0.08)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+    private var darkNavBackground: LinearGradient {
+        LinearGradient(
+            colors: [
+                themeManager.currentTheme.darkModeBackgroundFill.opacity(0.6),
+                themeManager.currentTheme.darkModeBackgroundFill.opacity(0.4)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+    
+    // PERFORMANCE: Initialize cached values in init to avoid state modification during view updates
+    init(scheduleItem: ScheduleItem, scheduleID: UUID) {
+        self.scheduleItem = scheduleItem
+        self.scheduleID = scheduleID
+        self.cachedIconForegroundColor = scheduleItem.color.isDark ? .white : .black
+        self.cachedBackgroundGradient = LinearGradient(
+            colors: [
+                scheduleItem.color.opacity(0.8),
+                scheduleItem.color.opacity(0.6),
+                scheduleItem.color.opacity(0.4),
+                Color.clear,
+                Color(.systemGroupedBackground)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
     var body: some View {
         ZStack {
-            // Background with gorgeous gradient
-            backgroundGradient
+            // PERFORMANCE: Use pre-computed gradient
+            cachedBackgroundGradient
                 .ignoresSafeArea()
             
             ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 0) {
-                    // Hero Header with parallax effect
+                    // Hero Header with minimal parallax effect
                     heroHeaderSection
-                        .offset(y: max(-scrollOffset * 0.3, -100))
+                        .offset(y: isViewReady ? max(-scrollOffset * 0.1, -20) : 0) // PERFORMANCE: Even more reduced parallax
                     
-                    // Main Content
+                    // Main Content - simplified loading
                     VStack(spacing: 24) {
                         // Quick Stats Cards
                         quickStatsSection
+                            .opacity(isViewReady ? 1 : 0)
                         
                         // Schedule Information
                         scheduleInfoSection
+                            .opacity(isViewReady ? 1 : 0)
                         
                         // Create Course Prompt (if no course exists)
                         if course == nil {
                             createCoursePrompt
+                                .opacity(isViewReady ? 1 : 0)
                         }
                         
                         // Action Buttons
                         actionButtonsSection
+                            .opacity(isViewReady ? 1 : 0)
                         
                         Spacer(minLength: 40)
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, 20)
+                    .padding(.top, 28)
                     .background {
-                        // Elegant content background
                         RoundedRectangle(cornerRadius: 32)
-                            .fill(.ultraThinMaterial)
-                            .shadow(color: Color.black.opacity(0.1), radius: 20, x: 0, y: -10)
-                            .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 32)
+                            .fill(colorScheme == .dark ? AnyShapeStyle(darkSectionBackground) : AnyShapeStyle(.ultraThinMaterial))
                     }
-                    .offset(y: -16)
                 }
                 .background(GeometryReader { geometry in
                     Color.clear
                         .preference(key: ScrollOffsetPreferenceKey.self, value: geometry.frame(in: .named("scroll")).minY)
                 })
                 .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-                    scrollOffset = value
+                    if isViewReady && abs(scrollOffset - value) > 5 {
+                        scrollOffset = value
+                    }
                 }
             }
             .coordinateSpace(name: "scroll")
             .scrollBounceBehavior(.basedOnSize)
+            .transaction { $0.disablesAnimations = true }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { _ in
+                        if !isInteracting { isInteracting = true }
+                    }
+                    .onEnded { _ in
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            isInteracting = false
+                        }
+                    }
+            )
             
-            // Custom Navigation Bar with blur effect
+            // Custom Navigation Bar
             VStack {
                 customNavigationBar
                 Spacer()
@@ -75,7 +136,13 @@ struct EnhancedCourseDetailView: View {
         }
         .navigationBarHidden(true)
         .onAppear {
+            // PERFORMANCE: Load data immediately, animate UI separately
             loadCourseData()
+            
+            // PERFORMANCE: Single animation for all content
+            withAnimation(.easeOut(duration: 0.3)) {
+                isViewReady = true
+            }
         }
         .sheet(isPresented: $showingEditSheet) {
             if let schedule = scheduleManager.schedule(for: scheduleID) {
@@ -94,39 +161,24 @@ struct EnhancedCourseDetailView: View {
         }
     }
     
-    // MARK: - Background Gradient
-    
-    private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [
-                scheduleItem.color.opacity(0.8),
-                scheduleItem.color.opacity(0.6),
-                scheduleItem.color.opacity(0.4),
-                themeManager.currentTheme.quaternaryColor.opacity(0.3),
-                Color(.systemGroupedBackground)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-    
     // MARK: - Custom Navigation Bar
     
     private var customNavigationBar: some View {
         HStack {
-            Button(action: { dismiss() }) {
+            Button(action: { 
+                dismiss() 
+            }) {
                 Image(systemName: "chevron.left")
                     .font(.forma(.body, weight: .semibold))
                     .foregroundColor(.white)
                     .frame(width: 40, height: 40)
                     .background {
                         Circle()
-                            .fill(.ultraThinMaterial)
+                            .fill(colorScheme == .dark ? AnyShapeStyle(darkSectionBackground) : AnyShapeStyle(.ultraThinMaterial))
                             .overlay {
                                 Circle()
                                     .stroke(Color.white.opacity(0.3), lineWidth: 1)
                             }
-                            .shadow(color: Color.black.opacity(0.2), radius: 6, x: 0, y: 3)
                     }
             }
             
@@ -139,12 +191,11 @@ struct EnhancedCourseDetailView: View {
                     .frame(width: 40, height: 40)
                     .background {
                         Circle()
-                            .fill(.ultraThinMaterial)
+                            .fill(colorScheme == .dark ? AnyShapeStyle(darkSectionBackground) : AnyShapeStyle(.ultraThinMaterial))
                             .overlay {
                                 Circle()
                                     .stroke(Color.white.opacity(0.3), lineWidth: 1)
                             }
-                            .shadow(color: Color.black.opacity(0.2), radius: 6, x: 0, y: 3)
                     }
             }
         }
@@ -152,7 +203,7 @@ struct EnhancedCourseDetailView: View {
         .padding(.top, 16)
         .background {
             Rectangle()
-                .fill(.ultraThinMaterial)
+                .fill(colorScheme == .dark ? AnyShapeStyle(darkNavBackground) : AnyShapeStyle(.ultraThinMaterial))
                 .opacity(min(max(scrollOffset / -100, 0), 1))
                 .ignoresSafeArea(edges: .top)
         }
@@ -162,73 +213,28 @@ struct EnhancedCourseDetailView: View {
     
     private var heroHeaderSection: some View {
         VStack(spacing: 16) {
-            // Course Icon - much smaller and more compact
             ZStack {
-                // Subtle outer glow
                 Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                Color.white.opacity(0.1),
-                                Color.clear
-                            ],
-                            center: .center,
-                            startRadius: 25,
-                            endRadius: 45
-                        )
-                    )
-                    .frame(width: 90, height: 90)
-                
-                // Main icon container
-                Circle()
-                    .fill(.ultraThinMaterial)
+                    .fill(colorScheme == .dark ? AnyShapeStyle(darkSectionBackground) : AnyShapeStyle(.ultraThinMaterial))
                     .frame(width: 70, height: 70)
                     .overlay {
                         Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.2),
-                                        Color.white.opacity(0.05)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
+                            .stroke(Color.white.opacity(0.3), lineWidth: 1)
                     }
-                    .overlay {
-                        Circle()
-                            .stroke(
-                                Color.white.opacity(0.3),
-                                lineWidth: 1
-                            )
-                    }
-                    .shadow(color: Color.black.opacity(0.1), radius: 12, x: 0, y: 6)
                 
-                // Course icon
                 Image(systemName: course?.iconName ?? "book.closed.fill")
                     .font(.system(size: 28, weight: .medium, design: .rounded))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                scheduleItem.color,
-                                scheduleItem.color.opacity(0.8)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    .foregroundColor(cachedIconForegroundColor)
             }
+            .compositingGroup()
+            .drawingGroup()
             
-            // Course Title - more compact
             Text(scheduleItem.title)
                 .font(.forma(.title2, weight: .bold))
                 .foregroundColor(.white)
                 .multilineTextAlignment(.center)
-                .shadow(color: Color.black.opacity(0.25), radius: 6, x: 0, y: 3)
                 .padding(.horizontal, 20)
             
-            // Professor and Location on same line - compact
             if !scheduleItem.instructor.isEmpty || !scheduleItem.location.isEmpty {
                 HStack(spacing: 16) {
                     if !scheduleItem.instructor.isEmpty {
@@ -259,13 +265,12 @@ struct EnhancedCourseDetailView: View {
                 .padding(.vertical, 8)
                 .background {
                     Capsule()
-                        .fill(.ultraThinMaterial)
+                        .fill(colorScheme == .dark ? AnyShapeStyle(darkSectionBackground) : AnyShapeStyle(.ultraThinMaterial))
                         .overlay {
                             Capsule()
                                 .stroke(Color.white.opacity(0.2), lineWidth: 1)
                         }
                 }
-                .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
             }
         }
         .frame(maxWidth: .infinity)
@@ -284,19 +289,36 @@ struct EnhancedCourseDetailView: View {
                 color: themeManager.currentTheme.primaryColor
             )
             
-            StatCard(
-                icon: "calendar.badge.clock",
-                title: "Days",
-                value: "\(scheduleItem.daysOfWeek.count)",
-                color: themeManager.currentTheme.secondaryColor
-            )
-            
-            StatCard(
-                icon: "calendar.circle.fill",
-                title: "Weekly Hours",
-                value: String(format: "%.1f", scheduleItem.weeklyHours),
-                color: themeManager.currentTheme.tertiaryColor
-            )
+            // PERFORMANCE: Show different stats based on schedule type
+            if let schedule = scheduleManager.schedule(for: scheduleID), schedule.scheduleType == .rotating {
+                StatCard(
+                    icon: "arrow.triangle.2.circlepath",
+                    title: "Schedule",
+                    value: "Rotating",
+                    color: themeManager.currentTheme.secondaryColor
+                )
+                
+                StatCard(
+                    icon: "calendar.circle.fill",
+                    title: "Pattern",
+                    value: "Day 1/2",
+                    color: themeManager.currentTheme.tertiaryColor
+                )
+            } else {
+                StatCard(
+                    icon: "calendar.badge.clock",
+                    title: "Days",
+                    value: "\(scheduleItem.daysOfWeek.count)",
+                    color: themeManager.currentTheme.secondaryColor
+                )
+                
+                StatCard(
+                    icon: "calendar.circle.fill",
+                    title: "Weekly Hours",
+                    value: String(format: "%.1f", scheduleItem.weeklyHours),
+                    color: themeManager.currentTheme.tertiaryColor
+                )
+            }
         }
     }
     
@@ -314,12 +336,22 @@ struct EnhancedCourseDetailView: View {
                     color: scheduleItem.color
                 )
                 
-                ScheduleDetailRow(
-                    icon: "calendar.badge.checkmark",
-                    title: "Days",
-                    detail: scheduleItem.daysOfWeek.map { $0.short }.joined(separator: ", "),
-                    color: scheduleItem.color
-                )
+                // PERFORMANCE: Show different day information based on schedule type
+                if let schedule = scheduleManager.schedule(for: scheduleID), schedule.scheduleType == .rotating {
+                    ScheduleDetailRow(
+                        icon: "arrow.triangle.2.circlepath",
+                        title: "Schedule Type",
+                        detail: "Rotating (Day 1/Day 2)",
+                        color: scheduleItem.color
+                    )
+                } else {
+                    ScheduleDetailRow(
+                        icon: "calendar.badge.checkmark",
+                        title: "Days",
+                        detail: scheduleItem.daysOfWeek.map { $0.short }.joined(separator: ", "),
+                        color: scheduleItem.color
+                    )
+                }
                 
                 if !scheduleItem.location.isEmpty {
                     ScheduleDetailRow(
@@ -353,8 +385,6 @@ struct EnhancedCourseDetailView: View {
         .background {
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 4)
-                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 18)
         }
     }
     
@@ -389,18 +419,7 @@ struct EnhancedCourseDetailView: View {
                 .frame(height: 44)
                 .background {
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    scheduleItem.color,
-                                    scheduleItem.color.opacity(0.8)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .shadow(color: scheduleItem.color.opacity(0.3), radius: 8, x: 0, y: 4)
-                        .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 12)
+                        .fill(scheduleItem.color)
                 }
                 .buttonStyle(.plain)
             }
@@ -409,12 +428,10 @@ struct EnhancedCourseDetailView: View {
         .background {
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 4)
-                .adaptiveCardDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity, cornerRadius: 18)
         }
     }
     
-    // MARK: - Action Buttons Section (Simplified)
+    // MARK: - Action Buttons Section
     
     private var actionButtonsSection: some View {
         VStack(spacing: 14) {
@@ -445,7 +462,6 @@ struct EnhancedCourseDetailView: View {
                             RoundedRectangle(cornerRadius: 12)
                                 .stroke(Color.orange.opacity(0.3), lineWidth: 1)
                         }
-                        .adaptiveButtonDarkModeHue(using: themeManager.currentTheme, intensity: themeManager.darkModeHueIntensity * 0.3, cornerRadius: 12)
                 }
             }
             
@@ -478,38 +494,25 @@ struct EnhancedCourseDetailView: View {
     }
     
     private func loadCourseData() {
-        // Check if a course already exists for this schedule item
-        // In a real implementation, you'd query your course manager
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            // Create a sample course for demonstration
-            course = Course(
-                id: scheduleItem.id,
-                scheduleId: scheduleID,
-                name: scheduleItem.title,
-                iconName: "book.closed.fill",
-                colorHex: scheduleItem.color.toHex() ?? "",
-                assignments: [
-                    Assignment(courseId: scheduleItem.id, name: "Homework 1", grade: "95", weight: "15"),
-                    Assignment(courseId: scheduleItem.id, name: "Midterm Exam", grade: "87", weight: "25"),
-                    Assignment(courseId: scheduleItem.id, name: "Quiz 1", grade: "92", weight: "10")
-                ]
-            )
-        }
+        // PERFORMANCE: Immediate synchronous load for demo data
+        course = Course(
+            id: scheduleItem.id,
+            scheduleId: scheduleID,
+            name: scheduleItem.title,
+            iconName: "book.closed.fill",
+            colorHex: scheduleItem.color.toHex() ?? "",
+            assignments: []
+        )
     }
     
     private func createCourseFromScheduleItem() {
         course = Course.from(scheduleItem: scheduleItem, scheduleId: scheduleID)
-        // In practice, save this to your course manager
     }
     
     private func toggleSkipToday() {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
-        
-        // Update the schedule item through the schedule manager
         scheduleManager.toggleSkip(forItem: scheduleItem, onDate: today, in: scheduleID)
-        
-        // The UI will automatically update since scheduleManager is @EnvironmentObject
     }
     
     private func deleteScheduleItem() {

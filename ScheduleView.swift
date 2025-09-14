@@ -1,32 +1,46 @@
 import SwiftUI
 import Combine
 
-enum ScheduleViewType: CaseIterable {
-    case cards
-    case timeline
-
-    var icon: String {
-        switch self {
-        case .cards: return "square.grid.2x2"
-        case .timeline: return "rectangle.split.3x1"
-        }
-    }
-}
-
 struct ScheduleView: View {
     @EnvironmentObject private var scheduleManager: ScheduleManager
     @EnvironmentObject var themeManager: ThemeManager
     @EnvironmentObject var academicCalendarManager: AcademicCalendarManager
-    @StateObject private var courseManager = UnifiedCourseManager()
+    @EnvironmentObject private var viewModel: EventViewModel 
+    @EnvironmentObject private var courseManager: UnifiedCourseManager
     @State private var showingScheduleManager = false
+    @State private var showingAcademicCalendarManager = false
+    @State private var showingAcademicCalendarSelection = false
     @State private var selectedDate = Date()
     @State private var currentWeekOffset = 0
-    @State private var viewType: ScheduleViewType = .cards
     @State private var showingCalendarView = false
     @State private var showingAddCourse = false
     @State private var pulseAnimation: Double = 1.0
     @Environment(\.colorScheme) var colorScheme
     
+    @State private var weekItemsCache: [Date: [ScheduleItem]] = [:]
+    @State private var pendingRebuild = false
+    @State private var coursesCountSnapshot: Int = 0
+
+    @State private var selectedDetail: SelectedScheduleDetail?
+
+    @State private var isInteracting = false
+
+    private var darkSectionBackground: LinearGradient {
+        LinearGradient(
+            colors: [
+                themeManager.currentTheme.darkModeBackgroundFill.opacity(0.4),
+                themeManager.currentTheme.darkModeBackgroundFill.opacity(0.3),
+                themeManager.currentTheme.darkModeHue.opacity(0.08)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var shouldPulse: Bool {
+        colorScheme == .dark && !isInteracting
+    }
+
     private var currentWeekDates: [Date] {
         let calendar = Calendar.current
         let today = Date()
@@ -42,8 +56,7 @@ struct ScheduleView: View {
         if currentWeekOffset == 0 { return "This Week" }
         if currentWeekOffset == 1 { return "Next Week" }
         if currentWeekOffset == -1 { return "Last Week" }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
+        let formatter = DateFormatterCache.mmmdd
         return "\(formatter.string(from: firstDay)) - \(formatter.string(from: lastDay))"
     }
     
@@ -74,22 +87,92 @@ struct ScheduleView: View {
                 .environmentObject(themeManager)
                 .environmentObject(scheduleManager)
         }
+        .onChange(of: showingAddCourse) { _, isPresented in
+            if !isPresented {
+                courseManager.loadCourses()
+            }
+        }
+        .sheet(isPresented: $showingAcademicCalendarManager) {
+            AcademicCalendarManagementView()
+                .environmentObject(academicCalendarManager)
+                .environmentObject(scheduleManager)
+                .environmentObject(themeManager)
+        }
+        .sheet(isPresented: $showingAcademicCalendarSelection) {
+            if let activeSchedule = scheduleManager.activeSchedule {
+                AcademicCalendarSelectionView(schedule: activeSchedule)
+                    .environmentObject(academicCalendarManager)
+                    .environmentObject(scheduleManager)
+                    .environmentObject(themeManager)
+            }
+        }
+        .sheet(item: $selectedDetail) { detail in
+            EnhancedCourseDetailView(
+                scheduleItem: detail.item,
+                scheduleID: detail.scheduleID
+            )
+            .environmentObject(scheduleManager)
+            .environmentObject(themeManager)
+            .interactiveDismissDisabled(false)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+        }
         .onAppear {
             setupInitialDate()
-            courseManager.setScheduleManager(scheduleManager)
             scheduleManager.setCourseManager(courseManager)
-            startAnimations()
+            courseManager.setScheduleManager(scheduleManager)
+
+            coursesCountSnapshot = courseManager.courses.count
+            if let active = scheduleManager.activeSchedule {
+                rebuildWeekCache(for: active)
+            }
+
+            updatePulseAnimation()
+
+            Task { await courseManager.refreshCourseData() }
+        }
+        .onChange(of: scheduleManager.activeScheduleID) { _, _ in
+            Task { await courseManager.refreshCourseData() }
+            if let active = scheduleManager.activeSchedule {
+                requestCoalescedRebuild(for: active)
+            }
+        }
+        .onChange(of: currentWeekOffset) { _, _ in
+            if let active = scheduleManager.activeSchedule {
+                requestCoalescedRebuild(for: active)
+            }
+        }
+        .onChange(of: courseManager.courses.count) { _, _ in
+            coursesCountSnapshot = courseManager.courses.count
+            if let active = scheduleManager.activeSchedule {
+                requestCoalescedRebuild(for: active)
+            }
+        }
+        .onReceive(scheduleManager.objectWillChange) { _ in
+            if let active = scheduleManager.activeSchedule {
+                requestCoalescedRebuild(for: active)
+            }
+        }
+        .onChange(of: colorScheme) { _, _ in
+            updatePulseAnimation()
+        }
+        .onChange(of: isInteracting) { _, _ in
+            updatePulseAnimation()
         }
     }
-    
-    // MARK: - Spectacular Background
-    
-    private func startAnimations() {
-        withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
-            pulseAnimation = 1.15
+
+    private func updatePulseAnimation() {
+        if shouldPulse {
+            withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
+                pulseAnimation = 1.15
+            }
+        } else {
+            withAnimation(.easeOut(duration: 0.2)) {
+                pulseAnimation = 1.0
+            }
         }
     }
-    
+
     private var calendarOverlay: some View {
         Color.black.opacity(0.3)
             .ignoresSafeArea()
@@ -117,7 +200,6 @@ struct ScheduleView: View {
     
     private var headerView: some View {
         VStack(spacing: 16) {
-            // Main header with title and view selector
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("My Schedule")
@@ -135,24 +217,64 @@ struct ScheduleView: View {
                     
                     if let activeSchedule = scheduleManager.activeSchedule {
                         HStack(spacing: 8) {
-                            Image(systemName: "calendar.badge.checkmark")
-                                .font(.forma(.caption))
-                                .foregroundColor(themeManager.currentTheme.primaryColor.opacity(0.8))
-                            
-                            Text(activeSchedule.displayName)
-                                .font(.forma(.caption, weight: .medium))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(.ultraThinMaterial)
-                                .overlay(
+                            Button {
+                                showingScheduleManager = true
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "calendar.badge.checkmark")
+                                        .font(.forma(.caption))
+                                        .foregroundColor(themeManager.currentTheme.primaryColor.opacity(0.8))
+                                    
+                                    Text(activeSchedule.displayName)
+                                        .font(.forma(.caption, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(
                                     Capsule()
-                                        .stroke(themeManager.currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
+                                        .fill(.ultraThinMaterial)
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(themeManager.currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
+                                        )
                                 )
-                        )
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                showingAcademicCalendarSelection = true
+                            } label: {
+                                let academicCalendar = scheduleManager.getAcademicCalendar(for: activeSchedule, from: academicCalendarManager)
+                                
+                                HStack(spacing: 4) {
+                                    Image(systemName: "calendar.badge.clock")
+                                        .font(.forma(.caption2))
+                                        .foregroundColor(academicCalendar != nil ? themeManager.currentTheme.primaryColor : .orange)
+                                    
+                                    if let calendar = academicCalendar {
+                                        Text(calendar.academicYear)
+                                            .font(.forma(.caption2, weight: .medium))
+                                            .foregroundColor(.secondary)
+                                    } else {
+                                        Text("Setup")
+                                            .font(.forma(.caption2, weight: .medium))
+                                            .foregroundColor(.orange)
+                                    }
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill((academicCalendar != nil ? themeManager.currentTheme.primaryColor : .orange).opacity(0.1))
+                                        .overlay(
+                                            Capsule()
+                                                .stroke((academicCalendar != nil ? themeManager.currentTheme.primaryColor : .orange).opacity(0.3), lineWidth: 1)
+                                        )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
                     } else {
                         HStack(spacing: 6) {
                             Image(systemName: "calendar.badge.exclamationmark")
@@ -177,53 +299,14 @@ struct ScheduleView: View {
                 }
                 
                 Spacer()
-                
-                viewTypeSelector
             }
             
-            // Week navigation
             weekNavigationView
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
         .padding(.bottom, 16)
         .background(Color.clear)
-    }
-
-    private var viewTypeSelector: some View {
-        HStack(spacing: 6) {
-            ForEach(ScheduleViewType.allCases, id: \.self) { type in
-                Button(action: { 
-                    withAnimation(.easeInOut(duration: 0.2)) { 
-                        viewType = type 
-                    } 
-                }) {
-                    Image(systemName: type.icon)
-                        .font(.forma(.callout, weight: .medium))
-                        .foregroundColor(viewType == type ? .white : themeManager.currentTheme.primaryColor)
-                        .frame(width: 32, height: 32)
-                        .background(
-                            Circle()
-                                .fill(viewType == type ? themeManager.currentTheme.primaryColor : .clear)
-                        )
-                        .overlay(
-                            Circle()
-                                .stroke(themeManager.currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
-                                .opacity(viewType == type ? 0 : 1)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(3)
-        .background(
-            Capsule()
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    Capsule()
-                        .stroke(themeManager.currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
-                )
-        )
     }
 
     private var weekNavigationView: some View {
@@ -302,124 +385,158 @@ struct ScheduleView: View {
             }
         }
     }
-    
+
+    private var magicalFloatingButtons: some View {
+        VStack(spacing: 16) {
+            Button(action: { 
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { 
+                    showingCalendarView.toggle() 
+                } 
+            }) {
+                Image(systemName: "calendar")
+                    .font(.forma(.body, weight: .medium))
+                    .foregroundColor(.white)
+                    .frame(width: 52, height: 52)
+                    .background(
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            themeManager.currentTheme.secondaryColor,
+                                            themeManager.currentTheme.secondaryColor.opacity(0.8)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            Circle()
+                                .fill(
+                                    RadialGradient(
+                                        colors: [
+                                            themeManager.currentTheme.darkModeAccentHue.opacity(0.4),
+                                            Color.clear
+                                        ],
+                                        center: .center,
+                                        startRadius: 0,
+                                        endRadius: 30
+                                    )
+                                )
+                                .scaleEffect(shouldPulse ? (pulseAnimation * 0.3 + 0.7) : 1.0)
+                                .opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity : 0.2)
+                        }
+                        .compositingGroup()
+                        .drawingGroup()
+                        .shadow(
+                            color: themeManager.currentTheme.secondaryColor.opacity(0.4),
+                            radius: 12, x: 0, y: 6
+                        )
+                        .shadow(
+                            color: themeManager.currentTheme.darkModeAccentHue.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.6 : 0.1),
+                            radius: 8, x: 0, y: 4
+                        )
+                    )
+            }
+            .buttonStyle(MagicalButtonStyle())
+            
+            Button(action: { showingAddCourse = true }) {
+                Image(systemName: "plus")
+                    .font(.forma(.title2, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 64, height: 64)
+                    .background(
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            themeManager.currentTheme.primaryColor,
+                                            themeManager.currentTheme.primaryColor.opacity(0.8)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            Circle()
+                                .fill(
+                                    RadialGradient(
+                                        colors: [
+                                            themeManager.currentTheme.darkModeAccentHue.opacity(0.6),
+                                            Color.clear
+                                        ],
+                                        center: .center,
+                                        startRadius: 0,
+                                        endRadius: 40
+                                    )
+                                )
+                                .scaleEffect(shouldPulse ? (pulseAnimation * 0.3 + 0.7) : 1.0)
+                                .opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity : 0.3)
+                            Circle()
+                                .fill(
+                                    AngularGradient(
+                                        colors: [
+                                            Color.clear,
+                                            Color.white.opacity(0.4),
+                                            Color.clear,
+                                            Color.clear
+                                        ],
+                                        center: .center,
+                                        angle: .degrees(0)
+                                    )
+                                )
+                        }
+                        .compositingGroup()
+                        .drawingGroup()
+                        .shadow(
+                            color: themeManager.currentTheme.primaryColor.opacity(0.4),
+                            radius: 20, x: 0, y: 10
+                        )
+                        .shadow(
+                            color: themeManager.currentTheme.darkModeAccentHue.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.6 : 0.2),
+                            radius: 12, x: 0, y: 6
+                        )
+                    )
+            }
+            .buttonStyle(MagicalButtonStyle())
+        }
+        .padding(.trailing, 24)
+        .padding(.bottom, 32)
+    }
+
     @ViewBuilder
     private var contentView: some View {
         if let activeSchedule = scheduleManager.activeSchedule {
             ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 24) {
-                    if viewType == .cards {
-                        weekOverviewSection(activeSchedule)
-                        dayScheduleSection(activeSchedule)
-                    } else {
-                        spectacularTimelineComingSoon
-                    }
-                    
-                    Spacer(minLength: 120)
+                    weekOverviewSection(activeSchedule)
+                    dayScheduleSection(activeSchedule)
+                    Spacer(minLength: 160)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
             }
+            .transaction { $0.disablesAnimations = true }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { _ in
+                        if !isInteracting { isInteracting = true }
+                    }
+                    .onEnded { _ in
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            isInteracting = false
+                        }
+                    }
+            )
         } else {
             spectacularEmptyState
         }
     }
 
-    private var spectacularTimelineComingSoon: some View {
-        VStack(spacing: 32) {
-            // Animated illustration
-            ZStack {
-                // Background circles with animation
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    themeManager.currentTheme.secondaryColor.opacity(0.1 - Double(index) * 0.03),
-                                    Color.clear
-                                ],
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: 60 + CGFloat(index * 20)
-                            )
-                        )
-                        .frame(width: 120 + CGFloat(index * 40), height: 120 + CGFloat(index * 40))
-                        .scaleEffect(pulseAnimation + Double(index) * 0.1)
-                        .animation(
-                            .easeInOut(duration: 3.0 + Double(index) * 0.5)
-                                .repeatForever(autoreverses: true),
-                            value: pulseAnimation
-                        )
-                }
-                
-                // Main icon
-                Image(systemName: "clock.badge.questionmark")
-                    .font(.system(size: 48, weight: .light))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                themeManager.currentTheme.secondaryColor,
-                                themeManager.currentTheme.tertiaryColor
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .scaleEffect(pulseAnimation * 0.95 + 0.05)
-            }
-            
-            VStack(spacing: 16) {
-                Text("Timeline View")
-                    .font(.forma(.title2, weight: .bold))
-                    .foregroundColor(.primary)
-                
-                Text("Coming in a future update with beautiful timeline visualization and enhanced scheduling features")
-                    .font(.forma(.body))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 60)
-        .padding(.horizontal, 40)
-        .background(
-            RoundedRectangle(cornerRadius: 32)
-                .fill(.regularMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 32)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    themeManager.currentTheme.secondaryColor.opacity(0.3),
-                                    themeManager.currentTheme.tertiaryColor.opacity(0.2)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 2
-                        )
-                )
-                .shadow(
-                    color: themeManager.currentTheme.secondaryColor.opacity(0.1),
-                    radius: 24, x: 0, y: 12
-                )
-        )
-    }
-    
-    private func setupInitialDate() {
-        selectedDate = Date()
-    }
-    
-    private func refreshScheduleData() async {
-        try? await Task.sleep(nanoseconds: 500_000_000)
-    }
-    
     @ViewBuilder
     private func weekOverviewSection(_ schedule: ScheduleCollection) -> some View {
         weekOverviewGrid(schedule)
     }
-    
+
     @ViewBuilder
     private func weekOverviewGrid(_ schedule: ScheduleCollection) -> some View {
         VStack(spacing: 16) {
@@ -443,6 +560,7 @@ struct ScheduleView: View {
                 ForEach(currentWeekDates, id: \.self) { date in
                     let dayOfWeek = DayOfWeek.from(weekday: Calendar.current.component(.weekday, from: date))
                     let academicCalendar = scheduleManager.getAcademicCalendar(for: schedule, from: academicCalendarManager)
+                    
                     Button(action: {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                             selectedDate = date
@@ -451,7 +569,7 @@ struct ScheduleView: View {
                         WeekDayCard(
                             date: date,
                             dayOfWeek: dayOfWeek,
-                            classCount: schedule.getScheduleItems(for: date, usingCalendar: academicCalendar).count,
+                            classCount: cachedClassCount(for: date, schedule: schedule, academicCalendar: academicCalendar),
                             isSelected: Calendar.current.isDate(selectedDate, inSameDayAs: date),
                             isToday: Calendar.current.isDate(date, inSameDayAs: Date()),
                             schedule: schedule
@@ -465,7 +583,7 @@ struct ScheduleView: View {
         .padding(24)
         .background(
             RoundedRectangle(cornerRadius: 24)
-                .fill(.regularMaterial)
+                .fill(colorScheme == .dark ? AnyShapeStyle(darkSectionBackground) : AnyShapeStyle(.regularMaterial))
                 .overlay(
                     RoundedRectangle(cornerRadius: 24)
                         .stroke(
@@ -486,34 +604,18 @@ struct ScheduleView: View {
                 )
         )
     }
-    
+
     @ViewBuilder
     private func dayScheduleSection(_ schedule: ScheduleCollection) -> some View {
         let academicCalendar = scheduleManager.getAcademicCalendar(for: schedule, from: academicCalendarManager)
-        let dayClasses = schedule.getScheduleItems(for: selectedDate, usingCalendar: academicCalendar).sorted { $0.startTime < $1.startTime }
+        let dayClasses = itemsFor(date: selectedDate, schedule: schedule, academicCalendar: academicCalendar).sorted { $0.startTime < $1.startTime }
         
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(formatSelectedDate())
                         .font(.forma(.headline, weight: .bold))
                         .foregroundColor(.primary)
-                    
-                    if let dayType = getDayType(for: schedule, date: selectedDate) {
-                        Text(dayType)
-                            .font(.forma(.caption, weight: .medium))
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule()
-                                    .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(themeManager.currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                    }
                 }
                 
                 Spacer()
@@ -545,20 +647,42 @@ struct ScheduleView: View {
                 EmptyDayView(date: selectedDate, schedule: schedule)
                     .environmentObject(themeManager)
             } else {
-                LazyVStack(spacing: 16) {
-                    ForEach(dayClasses) { item in
-                        ModernScheduleRow(item: item, date: selectedDate, scheduleID: schedule.id)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Image(systemName: "calendar")
+                            .font(.forma(.subheadline, weight: .medium))
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                        Text("Classes")
+                            .font(.forma(.subheadline, weight: .semibold))
+                            .foregroundColor(.primary)
+                        Spacer()
+                    }
+                    
+                    LazyVStack(spacing: 16) {
+                        ForEach(dayClasses) { item in
+                            ModernScheduleRow(
+                                item: item,
+                                date: selectedDate,
+                                scheduleID: schedule.id,
+                                onTap: {
+                                    selectedDetail = SelectedScheduleDetail(item: item, scheduleID: schedule.id)
+                                }
+                            )
                             .environmentObject(scheduleManager)
                             .environmentObject(themeManager)
-                            .id(item.id)
+                        }
                     }
                 }
             }
+            
+            RemindersSection(selectedDate: selectedDate)
+                .environmentObject(themeManager)
+                .environmentObject(viewModel)
         }
         .padding(24)
         .background(
             RoundedRectangle(cornerRadius: 24)
-                .fill(.regularMaterial)
+                .fill(colorScheme == .dark ? AnyShapeStyle(darkSectionBackground) : AnyShapeStyle(.regularMaterial))
                 .overlay(
                     RoundedRectangle(cornerRadius: 24)
                         .stroke(
@@ -579,15 +703,13 @@ struct ScheduleView: View {
                 )
         )
     }
-    
+
     private func getDayType(for schedule: ScheduleCollection, date: Date) -> String? {
-        guard schedule.scheduleType.supportsRotation,
-              let pattern = schedule.rotationPattern else { return nil }
-        
-        let academicCalendar = scheduleManager.getAcademicCalendar(for: schedule, from: academicCalendarManager)
-        guard !(academicCalendar?.isBreakDay(date) ?? false) else { return nil }
-        
-        return pattern.dayType(for: date)
+        if schedule.scheduleType == .rotating {
+            let day = Calendar.current.component(.day, from: date)
+            return day % 2 == 1 ? "Day 1" : "Day 2"
+        }
+        return nil
     }
     
     private func formatSelectedDate() -> String {
@@ -601,111 +723,16 @@ struct ScheduleView: View {
     
     private var spectacularEmptyState: some View {
         VStack(spacing: 32) {
-            // Animated illustration
-            ZStack {
-                // Background circles with animation
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    themeManager.currentTheme.primaryColor.opacity(0.1 - Double(index) * 0.03),
-                                    Color.clear
-                                ],
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: 60 + CGFloat(index * 20)
-                            )
-                        )
-                        .frame(width: 120 + CGFloat(index * 40), height: 120 + CGFloat(index * 40))
-                        .scaleEffect(pulseAnimation + Double(index) * 0.1)
-                        .animation(
-                            .easeInOut(duration: 3.0 + Double(index) * 0.5)
-                                .repeatForever(autoreverses: true),
-                            value: pulseAnimation
-                        )
-                }
-                
-                // Main icon
-                Image(systemName: "calendar.badge.plus")
-                    .font(.system(size: 48, weight: .light))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                themeManager.currentTheme.primaryColor,
-                                themeManager.currentTheme.secondaryColor
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .scaleEffect(pulseAnimation * 0.95 + 0.05)
-            }
-            
-            VStack(spacing: 16) {
-                Text("Welcome to Your Schedule")
-                    .font(.forma(.title, weight: .bold))
-                    .foregroundColor(.primary)
-                    .multilineTextAlignment(.center)
-                
-                Text("Create your first schedule to see your classes, track your time, and never miss an important session again.")
-                    .font(.forma(.body))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(4)
-            }
-            
-            // Gorgeous call-to-action button
-            Button("Create Your First Schedule") {
-                showingScheduleManager = true
-            }
-            .font(.forma(.headline, weight: .semibold))
-            .foregroundColor(.white)
-            .padding(.horizontal, 32)
-            .padding(.vertical, 16)
-            .background(
-                ZStack {
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    themeManager.currentTheme.primaryColor,
-                                    themeManager.currentTheme.secondaryColor
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.3),
-                                    Color.clear
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                }
-                .shadow(
-                    color: themeManager.currentTheme.primaryColor.opacity(0.4),
-                    radius: 16, x: 0, y: 8
-                )
-                .shadow(
-                    color: themeManager.currentTheme.primaryColor.opacity(0.2),
-                    radius: 8, x: 0, y: 4
-                )
-            )
-            .buttonStyle(EnhancedButtonStyle())
+            spectacularEmptyIllustration
+            spectacularEmptyTextContent
+            spectacularEmptyCTAButton
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
         .padding(.horizontal, 40)
         .background(
             RoundedRectangle(cornerRadius: 32)
-                .fill(.regularMaterial)
+                .fill(colorScheme == .dark ? AnyShapeStyle(darkSectionBackground) : AnyShapeStyle(.regularMaterial))
                 .overlay(
                     RoundedRectangle(cornerRadius: 32)
                         .stroke(
@@ -727,6 +754,200 @@ struct ScheduleView: View {
         )
         .padding(.horizontal, 20)
     }
+
+    private var spectacularEmptyIllustration: some View {
+        ZStack {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                themeManager.currentTheme.primaryColor.opacity(0.1 - Double(index) * 0.03),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 60 + CGFloat(index * 20)
+                        )
+                    )
+                    .frame(width: 120 + CGFloat(index * 40), height: 120 + CGFloat(index * 40))
+                    .scaleEffect(pulseAnimation + Double(index) * 0.1)
+                    .animation(
+                        .easeInOut(duration: 3.0 + Double(index) * 0.5)
+                            .repeatForever(autoreverses: true),
+                        value: pulseAnimation
+                    )
+            }
+            Image(systemName: "calendar.badge.plus")
+                .font(.system(size: 48, weight: .light))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [
+                            themeManager.currentTheme.primaryColor,
+                            themeManager.currentTheme.secondaryColor
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .scaleEffect(pulseAnimation * 0.95 + 0.05)
+        }
+    }
+
+    private var spectacularEmptyTextContent: some View {
+        VStack(spacing: 16) {
+            Text("Welcome to Your Schedule")
+                .font(.forma(.title, weight: .bold))
+                .foregroundColor(.primary)
+                .multilineTextAlignment(.center)
+            
+            Text("Create your first schedule to see your classes, track your time, and never miss an important session again.")
+                .font(.forma(.body))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(4)
+        }
+    }
+
+    private var spectacularEmptyCTAButton: some View {
+        Button("Create Your First Schedule") {
+            showingScheduleManager = true
+        }
+        .font(.forma(.headline, weight: .semibold))
+        .foregroundColor(.white)
+        .padding(.horizontal, 32)
+        .padding(.vertical, 16)
+        .background(
+            ZStack {
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                themeManager.currentTheme.primaryColor,
+                                themeManager.currentTheme.secondaryColor
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.3),
+                                Color.clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
+            .shadow(
+                color: themeManager.currentTheme.primaryColor.opacity(0.4),
+                radius: 16, x: 0, y: 8
+            )
+            .shadow(
+                color: themeManager.currentTheme.primaryColor.opacity(0.2),
+                radius: 8, x: 0, y: 4
+            )
+        )
+        .buttonStyle(EnhancedButtonStyle())
+    }
+    
+    private func setupInitialDate() {
+        selectedDate = Date()
+    }
+    
+    private func refreshScheduleData() async {
+        try? await Task.sleep(nanoseconds: 500_000_000)
+    }
+    
+    private func scheduleItemsForDate(schedule: ScheduleCollection, date: Date, academicCalendar: AcademicCalendar?) -> [ScheduleItem] {
+        let cal = Calendar.current
+        let weekday = cal.component(.weekday, from: date)
+        if weekday == 1 || weekday == 7 {
+            return []
+        }
+        
+        if let start = schedule.semesterStartDate,
+           let end = schedule.semesterEndDate {
+            let day = cal.startOfDay(for: date)
+            let s = cal.startOfDay(for: start)
+            let e = cal.startOfDay(for: end)
+            if day < s || day > e { return [] }
+        }
+        
+        if let calendar = academicCalendar {
+            if !calendar.isDateWithinSemester(date) { return [] }
+            if calendar.isBreakDay(date) { return [] }
+        }
+        
+        var items: [ScheduleItem] = []
+        
+        let coursesInSchedule = courseManager.courses.filter { $0.scheduleId == schedule.id }
+        var seenCourseIDs = Set<Course.ID>()
+        for course in coursesInSchedule {
+            guard seenCourseIDs.insert(course.id).inserted else { continue }
+            if let item = course.toScheduleItem(for: date, in: schedule, calendar: academicCalendar) {
+                items.append(item)
+            }
+        }
+        
+        let dayOfWeek = DayOfWeek.from(weekday: weekday)
+        let legacy = schedule.scheduleItems.filter { item in
+            let notSkipped = !item.isSkipped(onDate: date)
+            if item.daysOfWeek.isEmpty {
+                return notSkipped
+            }
+            return item.daysOfWeek.contains(dayOfWeek) && notSkipped
+        }
+        items.append(contentsOf: legacy)
+        
+        var seenItemIDs = Set<ScheduleItem.ID>()
+        items = items.filter { seenItemIDs.insert($0.id).inserted }
+        
+        return items
+    }
+
+    private func sod(_ d: Date) -> Date {
+        Calendar.current.startOfDay(for: d)
+    }
+
+    private func rebuildWeekCache(for schedule: ScheduleCollection) {
+        var newCache: [Date: [ScheduleItem]] = [:]
+        let academicCalendar = scheduleManager.getAcademicCalendar(for: schedule, from: academicCalendarManager)
+        for date in currentWeekDates {
+            let key = sod(date)
+            newCache[key] = scheduleItemsForDate(schedule: schedule, date: key, academicCalendar: academicCalendar)
+        }
+        weekItemsCache = newCache
+    }
+
+    private func requestCoalescedRebuild(for schedule: ScheduleCollection) {
+        DispatchQueue.main.async {
+            if pendingRebuild { return }
+            pendingRebuild = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                pendingRebuild = false
+                rebuildWeekCache(for: schedule)
+            }
+        }
+    }
+
+    private func itemsFor(date: Date, schedule: ScheduleCollection, academicCalendar: AcademicCalendar?) -> [ScheduleItem] {
+        let key = sod(date)
+        if let cached = weekItemsCache[key] {
+            return cached
+        }
+        return scheduleItemsForDate(schedule: schedule, date: key, academicCalendar: academicCalendar)
+    }
+
+    private func cachedClassCount(for date: Date, schedule: ScheduleCollection, academicCalendar: AcademicCalendar?) -> Int {
+        let key = sod(date)
+        if let cached = weekItemsCache[key] { return cached.count }
+        return scheduleItemsForDate(schedule: schedule, date: key, academicCalendar: academicCalendar).count
+    }
 }
 
 struct ModernScheduleRow: View {
@@ -735,8 +956,10 @@ struct ModernScheduleRow: View {
     let scheduleID: UUID
     @EnvironmentObject var scheduleManager: ScheduleManager
     @EnvironmentObject var themeManager: ThemeManager
-    @State private var showingDetailView = false
-    
+    @Environment(\.colorScheme) var colorScheme
+
+    var onTap: (() -> Void)?
+
     private var isSkipped: Bool {
         item.isSkipped(onDate: date)
     }
@@ -746,9 +969,9 @@ struct ModernScheduleRow: View {
     }
     
     private var duration: String {
-        let duration = item.endTime.timeIntervalSince(item.startTime)
-        let hours = Int(duration) / 3600
-        let minutes = Int(duration) % 3600 / 60
+        let durationTime = item.endTime.timeIntervalSince(item.startTime)
+        let hours = Int(durationTime) / 3600
+        let minutes = Int(durationTime) % 3600 / 60
         
         if hours > 0 {
             return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h"
@@ -756,13 +979,32 @@ struct ModernScheduleRow: View {
             return "\(minutes)m"
         }
     }
-    
+
+    private var rowBackgroundStyle: AnyShapeStyle {
+        if colorScheme == .dark {
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [
+                        themeManager.currentTheme.darkModeBackgroundFill.opacity(0.32),
+                        themeManager.currentTheme.darkModeBackgroundFill.opacity(0.24)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        } else {
+            return AnyShapeStyle(.thinMaterial)
+        }
+    }
+
     var body: some View {
         Button(action: {
-            showingDetailView = true
+            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+            impactFeedback.impactOccurred()
+            
+            onTap?()
         }) {
             HStack(spacing: 16) {
-                // Beautiful color indicator with gradient
                 RoundedRectangle(cornerRadius: 6)
                     .fill(
                         LinearGradient(
@@ -804,7 +1046,6 @@ struct ModernScheduleRow: View {
                         
                         Spacer()
                         
-                        // Enhanced duration badge
                         Text(duration)
                             .font(.forma(.caption2, weight: .semibold))
                             .foregroundColor(isSkipped ? .secondary : item.color)
@@ -856,7 +1097,7 @@ struct ModernScheduleRow: View {
             .padding(.vertical, 16)
             .background(
                 RoundedRectangle(cornerRadius: 18)
-                    .fill(.thinMaterial)
+                    .fill(rowBackgroundStyle)
                     .overlay(
                         RoundedRectangle(cornerRadius: 18)
                             .stroke(
@@ -869,211 +1110,377 @@ struct ModernScheduleRow: View {
             )
             .opacity(isSkipped ? 0.7 : 1.0)
         }
-        .buttonStyle(SmoothButtonStyle())
-        .animation(nil, value: showingDetailView)
-        .sheet(isPresented: $showingDetailView) {
-            NavigationView {
-                EnhancedCourseDetailView(
-                    scheduleItem: item,
-                    scheduleID: scheduleID
+        .buttonStyle(UltraFastButtonStyle())
+    }
+}
+
+struct UltraFastButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.99 : 1.0)
+            .opacity(configuration.isPressed ? 0.95 : 1.0)
+            .animation(.easeOut(duration: 0.05), value: configuration.isPressed)
+    }
+}
+
+struct SmoothButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.99 : 1.0)
+            .opacity(configuration.isPressed ? 0.95 : 1.0)
+            .animation(.easeOut(duration: 0.05), value: configuration.isPressed)
+    }
+}
+
+struct ScheduleReminderRow: View {
+    let reminder: Event
+    @EnvironmentObject private var themeManager: ThemeManager
+    @EnvironmentObject private var viewModel: EventViewModel
+    @State private var showingDetail = false
+    @State private var isCompletedLocal: Bool
+
+    init(reminder: Event) {
+        self.reminder = reminder
+        _isCompletedLocal = State(initialValue: reminder.isCompleted)
+    }
+    
+    private var isOverdue: Bool {
+        reminder.date < Date() && !isCompletedLocal
+    }
+    
+    private var isPastDue: Bool {
+        reminder.date < Date()
+    }
+    
+    private var categoryColor: Color {
+        let category = reminder.category(from: viewModel.categories)
+        return category.color
+    }
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .center, spacing: 4) {
+                Text(reminder.date.formatted(date: .omitted, time: .shortened))
+                    .font(.forma(.caption, weight: .bold))
+                    .foregroundColor(isOverdue ? .red : (isPastDue ? .secondary : themeManager.currentTheme.tertiaryColor))
+                
+                if isCompletedLocal {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.forma(.caption2))
+                        .foregroundColor(.green)
+                } else if isOverdue {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.forma(.caption2))
+                        .foregroundColor(.red)
+                } else {
+                    Circle()
+                        .fill(categoryColor)
+                        .frame(width: 8, height: 8)
+                }
+            }
+            .frame(width: 50)
+            
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(reminder.title)
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(isCompletedLocal ? .secondary : .primary)
+                        .strikethrough(isCompletedLocal, color: .secondary)
+                        .lineLimit(1)
+                    
+                    Spacer()
+                    
+                    if reminder.reminderTime != .none {
+                        Image(systemName: "bell.fill")
+                            .font(.forma(.caption2))
+                            .foregroundColor(.secondary.opacity(0.7))
+                    }
+                }
+                
+                HStack(spacing: 8) {
+                    let category = reminder.category(from: viewModel.categories)
+                    if category.name != "Unknown" {
+                        HStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(category.color)
+                                .frame(width: 8, height: 8)
+                            Text(category.name)
+                                .font(.forma(.caption2, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    Spacer()
+                    
+                    if !isCompletedLocal {
+                        Text(timeDescription)
+                            .font(.forma(.caption2))
+                            .foregroundColor(isOverdue ? .red : .secondary.opacity(0.8))
+                    }
+                }
+            }
+            
+            Button(action: {
+                let haptic = UIImpactFeedbackGenerator(style: .light)
+                haptic.impactOccurred()
+                
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    isCompletedLocal.toggle()
+                }
+                viewModel.toggleEventCompleted(reminder)
+            }) {
+                Image(systemName: isCompletedLocal ? "checkmark.circle.fill" : "circle")
+                    .font(.forma(.title3))
+                    .foregroundColor(isCompletedLocal ? .green : themeManager.currentTheme.tertiaryColor)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(
+                            isCompletedLocal 
+                                ? Color.green.opacity(0.3) 
+                                : (isOverdue ? Color.red.opacity(0.3) : categoryColor.opacity(0.2)),
+                            lineWidth: 1
+                        )
                 )
-                .environmentObject(scheduleManager)
-                .environmentObject(themeManager)
+        )
+        .opacity(isCompletedLocal ? 0.7 : 1.0)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            showingDetail = true
+        }
+        .sheet(isPresented: $showingDetail) {
+            NavigationView {
+                EventEditView(event: reminder, isNew: false)
+                    .environmentObject(viewModel)
+                    .environmentObject(themeManager)
+            }
+        }
+        .onReceive(viewModel.eventOperationsManager.$events) { events in
+            if let updated = events.first(where: { $0.id == reminder.id }) {
+                if updated.isCompleted != isCompletedLocal {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isCompletedLocal = updated.isCompleted
+                    }
+                }
+            }
+        }
+    }
+    
+    private var timeDescription: String {
+        let now = Date()
+        let timeInterval = reminder.date.timeIntervalSince(now)
+        
+        if timeInterval < 0 {
+            let pastInterval = -timeInterval
+            if pastInterval < 3600 {
+                let minutes = Int(pastInterval / 60)
+                return "\(minutes)m ago"
+            } else if pastInterval < 86400 {
+                let hours = Int(pastInterval / 3600)
+                return "\(hours)h ago"
+            } else {
+                let days = Int(pastInterval / 86400)
+                return "\(days)d ago"
+            }
+        } else {
+            if timeInterval < 3600 {
+                let minutes = Int(timeInterval / 60)
+                return "in \(minutes)m"
+            } else if timeInterval < 86400 {
+                let hours = Int(timeInterval / 3600)
+                return "in \(hours)h"
+            } else {
+                let days = Int(timeInterval / 86400)
+                return "in \(days)d"
             }
         }
     }
 }
 
-extension ModernScheduleRow: Equatable {
-    static func == (lhs: ModernScheduleRow, rhs: ModernScheduleRow) -> Bool {
-        lhs.item.id == rhs.item.id &&
-        Calendar.current.isDate(lhs.date, inSameDayAs: rhs.date) &&
-        lhs.scheduleID == rhs.scheduleID
-    }
-}
+struct AddReminderSheet: View {
+    let selectedDate: Date
+    @Binding var isPresented: Bool
+    @EnvironmentObject private var viewModel: EventViewModel
+    @EnvironmentObject private var themeManager: ThemeManager
 
-// MARK: - Button Styles
-struct SmoothButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .opacity(configuration.isPressed ? 0.9 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
-    }
-}
-
-struct EnhancedButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
+    var body: some View {
+        AddEventView(
+            isPresented: $isPresented,
+            preselectedDate: selectedDate
+        )
+        .environmentObject(viewModel)
+        .environmentObject(themeManager)
     }
 }
 
 struct MagicalButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .animation(.spring(), value: configuration.isPressed)
     }
 }
 
-extension ScheduleView {
-    @ViewBuilder
-    private var magicalFloatingButtons: some View {
-        VStack(spacing: 16) {
-            Button(action: { 
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { 
-                    showingCalendarView.toggle() 
-                } 
-            }) {
-                Image(systemName: "calendar")
-                    .font(.forma(.body, weight: .medium))
-                    .foregroundColor(.white)
-                    .frame(width: 52, height: 52)
-                    .background(
-                        ZStack {
+struct RemindersSection: View {
+    let selectedDate: Date
+    @EnvironmentObject private var themeManager: ThemeManager
+    @EnvironmentObject private var viewModel: EventViewModel
+    @State private var showingAddReminder = false
+    @Environment(\.colorScheme) private var colorScheme
+    
+    private var dayReminders: [Event] {
+        let calendar = Calendar.current
+        let filtered = viewModel.events.filter { event in
+            calendar.isDate(event.date, inSameDayAs: selectedDate)
+        }.sorted { $0.date < $1.date }
+        var seen = Set<Event.ID>()
+        return filtered.filter { seen.insert($0.id).inserted }
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "bell.fill")
+                    .font(.forma(.subheadline, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.tertiaryColor)
+                Text("Reminders")
+                    .font(.forma(.subheadline, weight: .semibold))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                if !dayReminders.isEmpty {
+                    Text("\(dayReminders.count)")
+                        .font(.forma(.caption, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
                             Circle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            themeManager.currentTheme.secondaryColor,
-                                            themeManager.currentTheme.secondaryColor.opacity(0.8)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                )
-                            Circle()
-                                .fill(
-                                    RadialGradient(
-                                        colors: [
-                                            themeManager.currentTheme.darkModeAccentHue.opacity(0.4),
-                                            Color.clear
-                                        ],
-                                        center: .center,
-                                        startRadius: 0,
-                                        endRadius: 30
-                                    )
-                                )
-                                .scaleEffect(pulseAnimation * 0.3 + 0.7)
-                                .opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity : 0.2)
-                        }
-                        .compositingGroup()
-                        .shadow(
-                            color: themeManager.currentTheme.secondaryColor.opacity(0.4),
-                            radius: 12, x: 0, y: 6
+                                .fill(themeManager.currentTheme.tertiaryColor)
                         )
-                        .shadow(
-                            color: themeManager.currentTheme.darkModeAccentHue.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.6 : 0.1),
-                            radius: 8, x: 0, y: 4
-                        )
-                    )
+                }
+                
+                Button(action: { showingAddReminder = true }) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.tertiaryColor)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(MagicalButtonStyle())
             
-            Button(action: { showingScheduleManager = true }) {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.forma(.body, weight: .medium))
+            if dayReminders.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "bell.circle")
+                        .font(.system(size: 32, weight: .light))
+                        .foregroundColor(themeManager.currentTheme.tertiaryColor.opacity(0.6))
+                    
+                    VStack(spacing: 4) {
+                        Text("No reminders")
+                            .font(.forma(.subheadline, weight: .medium))
+                            .foregroundColor(.secondary)
+                        
+                        Text("for \(selectedDate.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.forma(.caption))
+                            .foregroundColor(.secondary.opacity(0.8))
+                    }
+                    
+                    Button("Add Reminder") {
+                        showingAddReminder = true
+                    }
+                    .font(.forma(.caption, weight: .semibold))
                     .foregroundColor(.white)
-                    .frame(width: 52, height: 52)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                     .background(
-                        ZStack {
-                            Circle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            themeManager.currentTheme.tertiaryColor,
-                                            themeManager.currentTheme.tertiaryColor.opacity(0.8)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        themeManager.currentTheme.tertiaryColor,
+                                        themeManager.currentTheme.tertiaryColor.opacity(0.8)
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
                                 )
-                            Circle()
-                                .fill(
-                                    RadialGradient(
-                                        colors: [
-                                            themeManager.currentTheme.darkModeAccentHue.opacity(0.3),
-                                            Color.clear
-                                        ],
-                                        center: .center,
-                                        startRadius: 0,
-                                        endRadius: 30
-                                    )
-                                )
-                                .scaleEffect(pulseAnimation * 0.2 + 0.8)
-                                .opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity : 0.15)
-                        }
-                        .compositingGroup()
-                        .shadow(
-                            color: themeManager.currentTheme.tertiaryColor.opacity(0.3),
-                            radius: 8, x: 0, y: 4
-                        )
+                            )
                     )
-            }
-            .buttonStyle(MagicalButtonStyle())
-            
-            Button(action: { showingAddCourse = true }) {
-                Image(systemName: "plus")
-                    .font(.forma(.title2, weight: .bold))
-                    .foregroundColor(.white)
-                    .frame(width: 64, height: 64)
-                    .background(
-                        ZStack {
-                            Circle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            themeManager.currentTheme.primaryColor,
-                                            themeManager.currentTheme.primaryColor.opacity(0.8)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
+                    .buttonStyle(.plain)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(
+                            colorScheme == .dark
+                            ? AnyShapeStyle(
+                                LinearGradient(
+                                    colors: [
+                                        themeManager.currentTheme.darkModeBackgroundFill.opacity(0.28),
+                                        themeManager.currentTheme.darkModeBackgroundFill.opacity(0.22)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
                                 )
-                            Circle()
-                                .fill(
-                                    RadialGradient(
-                                        colors: [
-                                            themeManager.currentTheme.darkModeAccentHue.opacity(0.6),
-                                            Color.clear
-                                        ],
-                                        center: .center,
-                                        startRadius: 0,
-                                        endRadius: 40
-                                    )
-                                )
-                                .scaleEffect(pulseAnimation * 0.3 + 0.7)
-                                .opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity : 0.3)
-                            Circle()
-                                .fill(
-                                    AngularGradient(
-                                        colors: [
-                                            Color.clear,
-                                            Color.white.opacity(0.4),
-                                            Color.clear,
-                                            Color.clear
-                                        ],
-                                        center: .center,
-                                        angle: .degrees(0)
-                                    )
-                                )
-                        }
-                        .compositingGroup()
-                        .shadow(
-                            color: themeManager.currentTheme.primaryColor.opacity(0.4),
-                            radius: 20, x: 0, y: 10
+                            )
+                            : AnyShapeStyle(.ultraThinMaterial)
                         )
-                        .shadow(
-                            color: themeManager.currentTheme.darkModeAccentHue.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.6 : 0.2),
-                            radius: 12, x: 0, y: 6
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(
+                                    themeManager.currentTheme.tertiaryColor.opacity(0.2),
+                                    lineWidth: 1
+                                )
                         )
-                    )
+                )
+            } else {
+                LazyVStack(spacing: 12) {
+                    ForEach(dayReminders) { reminder in
+                        ScheduleReminderRow(reminder: reminder)
+                            .environmentObject(themeManager)
+                            .environmentObject(viewModel)
+                    }
+                }
             }
-            .buttonStyle(MagicalButtonStyle())
         }
-        .padding(.trailing, 24)
-        .padding(.bottom, 32)
+        .sheet(isPresented: $showingAddReminder) {
+            AddReminderSheet(selectedDate: selectedDate, isPresented: $showingAddReminder)
+                .environmentObject(viewModel)
+                .environmentObject(themeManager)
+        }
+    }
+}
+
+private enum DateFormatterCache {
+    static let mmmdd: DateFormatter = {
+        let df = DateFormatter()
+        df.dateFormat = "MMM d"
+        return df
+    }()
+}
+
+private struct SelectedScheduleDetail: Identifiable {
+    let item: ScheduleItem
+    let scheduleID: UUID
+    var id: ScheduleItem.ID { item.id }
+}
+
+struct ScheduleView_Previews: PreviewProvider {
+    static var previews: some View {
+        ScheduleView()
+            .environmentObject(ThemeManager())
+            .environmentObject(ScheduleManager())
+            .environmentObject(AcademicCalendarManager())
+            .environmentObject(EventViewModel())
+            .environmentObject(UnifiedCourseManager())
     }
 }

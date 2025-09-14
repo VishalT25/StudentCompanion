@@ -19,7 +19,7 @@ struct ProgressiveEnhancementView: View {
     @State private var isCompleting = false
     @State private var showingAIClassImport = false
     
-    private let totalSteps = 6 // Increased to include AI import step
+    private let totalSteps = 5 // Reduced since we removed schedule type step
     
     init(scheduleID: UUID, importedItems: [ScheduleItem], onEnhancementCompleted: (() -> Void)? = nil) {
         self.scheduleID = scheduleID
@@ -93,24 +93,20 @@ struct ProgressiveEnhancementView: View {
                 .environmentObject(themeManager)
                 .tag(0)
             
-            EnhancementScheduleTypeStep(scheduleType: $scheduleType)
-                .environmentObject(themeManager)
-                .tag(1)
-            
             EnhancementSemesterLengthStep(
                 semesterLength: $semesterLength,
                 semesterStartDate: $semesterStartDate,
                 semesterEndDate: $semesterEndDate
             )
             .environmentObject(themeManager)
-            .tag(2)
+            .tag(1)
             
             EnhancementAcademicCalendarStep(
                 academicCalendar: $academicCalendar,
                 showingImport: $showingAcademicCalendarImport
             )
             .environmentObject(themeManager)
-            .tag(3)
+            .tag(2)
             
             EnhancementReviewStep(
                 scheduleType: scheduleType,
@@ -121,13 +117,13 @@ struct ProgressiveEnhancementView: View {
                 importedItemsCount: 0
             )
             .environmentObject(themeManager)
-            .tag(4)
+            .tag(3)
 
             EnhancementAddClassesStep(onImportWithAI: {
                 showingAIClassImport = true
             })
             .environmentObject(themeManager)
-            .tag(5)
+            .tag(4)
         }
         .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
         .animation(.easeInOut(duration: 0.3), value: currentStep)
@@ -190,7 +186,7 @@ struct ProgressiveEnhancementView: View {
     
     private var canProceedFromCurrentStep: Bool {
         switch currentStep {
-        case 0...4: return !isCompleting
+        case 0...3: return !isCompleting
         default: return true
         }
     }
@@ -233,11 +229,6 @@ struct ProgressiveEnhancementView: View {
                     schedule.academicCalendar = nil
                 }
                 
-                // Set up rotation pattern if needed
-                if scheduleType.supportsRotation {
-                    schedule.rotationPattern = createDefaultRotationPattern()
-                }
-                
                 // We are not handling imported items here anymore
                 schedule.enhancedScheduleItems = []
                 schedule.scheduleItems = []
@@ -247,25 +238,6 @@ struct ProgressiveEnhancementView: View {
                 
                 isCompleting = false
             }
-        }
-    }
-    
-    private func createDefaultRotationPattern() -> RotationPattern {
-        switch scheduleType {
-        case .rotatingDays:
-            return RotationPattern(
-                type: .rotatingDays,
-                cycleLength: 6,
-                dayLabels: ["Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6"],
-                startDate: semesterStartDate
-            )
-        case .traditional:
-            return RotationPattern(
-                type: .traditional,
-                cycleLength: 2,
-                dayLabels: ["A", "B"],
-                startDate: semesterStartDate
-            )
         }
     }
 }
@@ -322,55 +294,6 @@ struct EnhancementAddClassesStep: View {
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 30)
-    }
-}
-
-struct EnhancementScheduleTypeStep: View {
-    @EnvironmentObject var themeManager: ThemeManager
-    @Binding var scheduleType: ScheduleType
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("What type of schedule do you have?")
-                .font(.title2)
-                .fontWeight(.bold)
-
-            VStack(spacing: 12) {
-                scheduleTypeButton(type: .traditional, title: "Traditional", subtitle: "Weekly repeating schedule")
-                scheduleTypeButton(type: .rotatingDays, title: "Rotating Days", subtitle: "A/B days, 6-day cycles, etc.")
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 20)
-    }
-
-    private func scheduleTypeButton(type: ScheduleType, title: String, subtitle: String) -> some View {
-        Button {
-            scheduleType = type
-        } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                if scheduleType == type {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                }
-            }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemGray6))
-            )
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -545,8 +468,6 @@ struct EnhancementFeatureRow: View {
     }
 }
 
-// ... existing code ...
-
 struct EnhancementWelcomeStep: View {
     @EnvironmentObject var themeManager: ThemeManager
     let importedItemsCount: Int // This will now be 0
@@ -570,7 +491,7 @@ struct EnhancementWelcomeStep: View {
                     .multilineTextAlignment(.center)
                 
                 VStack(alignment: .leading, spacing: 12) {
-                    EnhancementFeatureRow(icon: "arrow.triangle.2.circlepath", title: "Rotating Schedules", description: "Handle A/B days, block schedules, and more")
+                    EnhancementFeatureRow(icon: "calendar", title: "Traditional Schedule", description: "Weekly repeating schedule structure")
                     EnhancementFeatureRow(icon: "calendar.badge.minus", title: "Academic Calendar", description: "Respect breaks, holidays, and exam periods")
                     EnhancementFeatureRow(icon: "clock", title: "Smart Scheduling", description: "Understand your semester timeline")
                 }

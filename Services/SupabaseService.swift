@@ -140,6 +140,14 @@ class SupabaseService: ObservableObject {
                             object: true
                         )
                         
+                        // Post notification for data refresh after sign in
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            NotificationCenter.default.post(
+                                name: .init("UserSignedInDataRefresh"),
+                                object: self.currentUser
+                            )
+                        }
+                        
                     case .signedOut:
                         print("🔒 User signed out")
                         self.isAuthenticated = false
@@ -228,7 +236,7 @@ class SupabaseService: ObservableObject {
             return .failure(AuthError.invalidEmail)
         }
         
-        guard isValidPassword(password) else {
+        guard password.count >= 6 else {
             return .failure(AuthError.weakPassword)
         }
         
@@ -237,14 +245,22 @@ class SupabaseService: ObservableObject {
             
             // Authentication state will be updated via listener
             print("🔒 User authenticated successfully")
+            
+            // Check connection after successful sign-in
+            await checkConnectionQuality()
+            
             return .success(response.user)
         } catch {
             print("🔒 SECURITY: Authentication failed: \(error)")
+            // Check if it's an email not confirmed error
+            if error.localizedDescription.contains("email not confirmed") || error.localizedDescription.contains("Email not confirmed") {
+                return .failure(AuthError.emailNotConfirmed)
+            }
             return .failure(AuthError.authenticationFailed)
         }
     }
     
-    func signUp(email: String, password: String) async -> Result<User, AuthError> {
+    func signUp(email: String, password: String) async -> Result<SignUpResult, AuthError> {
         guard isValidEmail(email) else {
             return .failure(AuthError.invalidEmail)
         }
@@ -253,6 +269,31 @@ class SupabaseService: ObservableObject {
             return .failure(AuthError.weakPassword)
         }
         
+        // Pre-check: Try to reset password for this email
+        // If successful, user exists. If it fails with "user not found", user doesn't exist
+        do {
+            let redirectToURL = URL(string: "stuco://auth.reset-check")!
+            try await client.auth.resetPasswordForEmail(email, redirectTo: redirectToURL)
+            
+            // If reset password succeeds, user exists
+            print("🔒 SECURITY: User exists (detected via password reset check)")
+            return .failure(AuthError.emailAlreadyExists)
+        } catch {
+            let errorDescription = error.localizedDescription.lowercased()
+            
+            // If we get "user not found" or similar, user doesn't exist - proceed with signup
+            if errorDescription.contains("user not found") || 
+               errorDescription.contains("not found") ||
+               errorDescription.contains("no user") {
+                print("🔒 User not found, proceeding with signup")
+                // Continue to actual signup below
+            } else {
+                print("🔒 Password reset check inconclusive, proceeding with signup: \(error)")
+                // Continue to actual signup below - better safe than sorry
+            }
+        }
+        
+        // Proceed with actual signup
         do {
             let redirectToURL = URL(string: "stuco://auth.callback")!
             
@@ -262,16 +303,40 @@ class SupabaseService: ObservableObject {
                 redirectTo: redirectToURL
             )
             
-            // Create default data entries
+            // Create default data entries if user has a session (confirmed immediately)
             if let session = response.session {
                 await createDefaultUserData(for: response.user)
+                print("🔒 User registered and confirmed successfully")
+                return .success(.confirmedImmediately(response.user))
+            } else {
+                // User needs to confirm email
+                print("🔒 User registered, confirmation email sent")
+                return .success(.needsEmailConfirmation(response.user))
             }
-            
-            print("🔒 User registered successfully")
-            return .success(response.user)
         } catch {
             print("🔒 SECURITY: Registration failed: \(error)")
             return .failure(AuthError.registrationFailed)
+        }
+    }
+    
+    func resetPassword(email: String) async -> Result<Void, AuthError> {
+        guard isValidEmail(email) else {
+            return .failure(AuthError.invalidEmail)
+        }
+        
+        do {
+            let redirectToURL = URL(string: "stuco://auth.reset-password")!
+            
+            try await client.auth.resetPasswordForEmail(
+                email,
+                redirectTo: redirectToURL
+            )
+            
+            print("🔒 Password reset email sent successfully")
+            return .success(())
+        } catch {
+            print("🔒 Password reset failed: \(error)")
+            return .failure(AuthError.resetPasswordFailed)
         }
     }
     
@@ -285,7 +350,64 @@ class SupabaseService: ObservableObject {
         // Clear local tokens regardless of server response
         _ = keychainService.clearAllTokens()
         
-        print("🔒 User signed out and tokens cleared")
+        // CRITICAL: Clear all local user data
+        await clearAllUserData()
+        
+        print("🔒 User signed out and all local data cleared")
+    }
+    
+    // MARK: - Data Cleanup
+    
+    /// Clears all user-specific data from local storage when signing out
+    private func clearAllUserData() async {
+        print("🧹 SupabaseService: Clearing all local user data...")
+        
+        await MainActor.run {
+            // Clear UserDefaults for all data managers
+            let userDefaults = UserDefaults.standard
+            
+            // EventViewModel/EventsModule data
+            userDefaults.removeObject(forKey: "savedCategories")
+            userDefaults.removeObject(forKey: "savedEvents")
+            userDefaults.removeObject(forKey: "savedSchedule")
+            userDefaults.removeObject(forKey: "savedCourses")
+            
+            // AcademicCalendarManager data
+            userDefaults.removeObject(forKey: "savedAcademicCalendars")
+            
+            // ScheduleManager data
+            userDefaults.removeObject(forKey: "savedScheduleCollections")
+            userDefaults.removeObject(forKey: "activeScheduleID")
+            
+            // Course data from CourseStorage
+            userDefaults.removeObject(forKey: "courses_key")
+            
+            // Theme preferences (optional - keep user's theme preference)
+            // userDefaults.removeObject(forKey: "selectedTheme")
+            
+            // Calendar sync preferences
+            userDefaults.removeObject(forKey: "GoogleCalendarIntegrationEnabled")
+            userDefaults.removeObject(forKey: "AppleCalendarIntegrationEnabled")
+            
+            // Clear any other user-specific preferences
+            userDefaults.removeObject(forKey: "lastDataSync")
+            userDefaults.removeObject(forKey: "userOnboardingCompleted")
+            
+            print("🧹 SupabaseService: Cleared UserDefaults data")
+        }
+        
+        // Clear caches
+        await CacheSystem.shared.clearAllUserData()
+        
+        // Post notification for data managers to clear their in-memory state
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .init("UserDataCleared"),
+                object: nil
+            )
+            
+            print("🧹 SupabaseService: Posted UserDataCleared notification")
+        }
     }
     
     // MARK: - User Data Management
@@ -610,6 +732,9 @@ enum AuthError: Error, LocalizedError {
     case weakPassword
     case authenticationFailed
     case registrationFailed
+    case emailAlreadyExists
+    case emailNotConfirmed
+    case resetPasswordFailed
     case storageError
     
     var errorDescription: String? {
@@ -622,8 +747,20 @@ enum AuthError: Error, LocalizedError {
             return "Authentication failed. Please check your credentials"
         case .registrationFailed:
             return "Registration failed. Please try again"
+        case .emailAlreadyExists:
+            return "An account with this email already exists. Please sign in instead"
+        case .emailNotConfirmed:
+            return "Please check your email and click the confirmation link before signing in"
+        case .resetPasswordFailed:
+            return "Failed to send password reset email. Please try again"
         case .storageError:
             return "Failed to store authentication data securely"
         }
     }
+}
+
+// MARK: - Sign Up Result
+enum SignUpResult {
+    case confirmedImmediately(User)
+    case needsEmailConfirmation(User)
 }

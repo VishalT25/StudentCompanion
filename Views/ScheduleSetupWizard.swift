@@ -10,7 +10,7 @@ struct ScheduleSetupWizard: View {
     @State private var newSchedule = ScheduleCollection(name: "", semester: "", scheduleType: .traditional)
     @State private var showingPreview = false
     
-    private let totalSteps = 7
+    private let totalSteps = 4 // Reduced further by removing schedule type step
     
     @StateObject private var supabaseService = SupabaseService.shared
     @State private var showAuthAlert = false
@@ -29,17 +29,11 @@ struct ScheduleSetupWizard: View {
                     case 0:
                         BasicInfoStep(schedule: $newSchedule)
                     case 1:
-                        ScheduleTypeStep(schedule: $newSchedule)
-                    case 2:
-                        RotationPatternStep(schedule: $newSchedule)
-                    case 3:
                         SemesterDurationStep(schedule: $newSchedule)
-                    case 4:
+                    case 2:
                         AcademicCalendarStep(schedule: $newSchedule)
-                    case 5:
+                    case 3:
                         ClassImportStep(schedule: $newSchedule, scheduleManager: scheduleManager)
-                    case 6:
-                        ReviewStep(schedule: $newSchedule)
                     default:
                         BasicInfoStep(schedule: $newSchedule)
                     }
@@ -116,24 +110,13 @@ struct ScheduleSetupWizard: View {
             return !newSchedule.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                    !newSchedule.semester.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case 1:
-            return true // Schedule type is always selected
-        case 2:
-            // For rotating schedule, ensure rotation pattern is set
-            if newSchedule.scheduleType == .rotatingDays {
-                return newSchedule.rotationPattern != nil
-            }
-            return true
-        case 3:
             // Semester duration is always valid with defaults
             return true
-        case 4:
+        case 2:
             // Academic calendar is optional but if set, it should be valid
             return true
-        case 5:
+        case 3:
             // Class import is optional
-            return true
-        case 6:
-            // Review step - always proceed
             return true
         default:
             return true
@@ -170,7 +153,7 @@ struct BasicInfoStep: View {
                     .font(.title2)
                     .fontWeight(.bold)
                 
-                Text("Start by giving your schedule a name and selecting the academic period.")
+                Text("Start by giving your schedule a name, period, and pattern.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -191,248 +174,71 @@ struct BasicInfoStep: View {
                     TextField("Fall 2024", text: $schedule.semester)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                 }
-            }
-            
-            Spacer()
-        }
-    }
-}
-
-// MARK: - Step 2: Schedule Type Selection
-struct ScheduleTypeStep: View {
-    @Binding var schedule: ScheduleCollection
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("What type of schedule do you have?")
-                    .font(.title2)
-                    .fontWeight(.bold)
                 
-                Text("Choose the pattern that best matches your school's schedule system.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 2), spacing: 16) {
-                ForEach([ScheduleType.traditional, ScheduleType.rotatingDays], id: \.self) { type in
-                    ScheduleTypeCard(
-                        type: type,
-                        isSelected: schedule.scheduleType == type
-                    ) {
-                        schedule.scheduleType = type
-                        
-                        // Reset rotation pattern when type changes
-                        if type == .traditional {
-                            schedule.rotationPattern = nil
-                        }
-                    }
-                }
-            }
-            
-            Spacer()
-        }
-    }
-}
-
-struct ScheduleTypeCard: View {
-    let type: ScheduleType
-    let isSelected: Bool
-    let onTap: () -> Void
-    
-    var body: some View {
-        Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: type.icon)
-                        .font(.title2)
-                        .foregroundColor(isSelected ? .white : .blue)
-                    
-                    Spacer()
-                    
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.white)
-                    }
-                }
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(type.displayName)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Schedule Pattern")
                         .font(.headline)
-                        .foregroundColor(isSelected ? .white : .primary)
-                        .multilineTextAlignment(.leading)
                     
-                    Text(type.description)
-                        .font(.caption)
-                        .foregroundColor(isSelected ? .white.opacity(0.8) : .secondary)
-                        .multilineTextAlignment(.leading)
+                    HStack(spacing: 16) {
+                        Button(action: {
+                            schedule.scheduleType = .traditional
+                        }) {
+                            VStack(spacing: 8) {
+                                Image(systemName: "calendar")
+                                    .font(.title2)
+                                    .foregroundColor(schedule.scheduleType == .traditional ? .white : .blue)
+                                
+                                Text("Traditional")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(schedule.scheduleType == .traditional ? .white : .primary)
+                                
+                                Text("Mon-Fri")
+                                    .font(.caption2)
+                                    .foregroundColor(schedule.scheduleType == .traditional ? .white.opacity(0.8) : .secondary)
+                            }
+                            .frame(width: 120, height: 80)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(schedule.scheduleType == .traditional ? Color.blue : Color(.systemGray5))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {
+                            schedule.scheduleType = .rotating
+                        }) {
+                            VStack(spacing: 8) {
+                                Image(systemName: "repeat")
+                                    .font(.title2)
+                                    .foregroundColor(schedule.scheduleType == .rotating ? .white : .blue)
+                                
+                                Text("Rotating")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(schedule.scheduleType == .rotating ? .white : .primary)
+                                
+                                Text("Day 1/2")
+                                    .font(.caption2)
+                                    .foregroundColor(schedule.scheduleType == .rotating ? .white.opacity(0.8) : .secondary)
+                            }
+                            .frame(width: 120, height: 80)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(schedule.scheduleType == .rotating ? Color.blue : Color(.systemGray5))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Spacer()
+                    }
                 }
-            }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.blue : Color(.systemGray6))
-            .cornerRadius(12)
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
-
-// MARK: - Step 3: Rotation Pattern Setup (for rotating schedules)
-struct RotationPatternStep: View {
-    @Binding var schedule: ScheduleCollection
-    @State private var cycleLength = 2
-    @State private var dayLabels: [String] = ["Day 1", "Day 2"]
-    @State private var startDate = Date()
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Configure rotation pattern")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                
-                if schedule.scheduleType == .rotatingDays {
-                    Text("Set up how your rotating schedule works.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                } else {
-                    Text("Your traditional schedule doesn't need a rotation pattern.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-            }
-            
-            if schedule.scheduleType == .rotatingDays {
-                rotationPatternEditor()
-            } else {
-                nonRotatingScheduleInfo()
             }
             
             Spacer()
         }
-        .onAppear {
-            setupDefaultPattern()
-        }
-    }
-    
-    @ViewBuilder
-    private func rotationPatternEditor() -> some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Cycle Length")
-                    .font(.headline)
-                
-                HStack {
-                    Text("Number of days in rotation:")
-                    
-                    Spacer()
-                    
-                    Stepper(value: $cycleLength, in: 2...10) {
-                        Text("\(cycleLength) days")
-                            .fontWeight(.medium)
-                    }
-                }
-            }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Day Labels")
-                    .font(.headline)
-                
-                ForEach(0..<cycleLength, id: \.self) { index in
-                    HStack {
-                        Text("Day \(index + 1):")
-                        TextField("Label", text: Binding(
-                            get: { index < dayLabels.count ? dayLabels[index] : "" },
-                            set: { newValue in
-                                while dayLabels.count <= index {
-                                    dayLabels.append("")
-                                }
-                                dayLabels[index] = newValue
-                            }
-                        ))
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                    }
-                }
-            }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Start Date")
-                    .font(.headline)
-                
-                DatePicker("First day of rotation", selection: $startDate, displayedComponents: .date)
-                    .datePickerStyle(CompactDatePickerStyle())
-            }
-            
-            Button("Save Rotation Pattern") {
-                updateRotationPattern()
-            }
-            .buttonStyle(.borderedProminent)
-            .frame(maxWidth: .infinity)
-        }
-        .onChange(of: cycleLength) { _, newValue in
-            updateDayLabels(for: newValue)
-        }
-    }
-    
-    @ViewBuilder
-    private func nonRotatingScheduleInfo() -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "calendar")
-                .font(.system(size: 50))
-                .foregroundColor(.green)
-            
-            Text("No rotation needed!")
-                .font(.title3)
-                .fontWeight(.medium)
-            
-            Text("Your traditional weekly schedule will repeat Monday through Friday.")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-    }
-    
-    private func setupDefaultPattern() {
-        if schedule.scheduleType == .rotatingDays {
-            dayLabels = (1...cycleLength).map { "Day \($0)" }
-            updateRotationPattern()
-        }
-    }
-    
-    private func updateDayLabels(for length: Int) {
-        let oldLength = dayLabels.count
-        
-        if length > oldLength {
-            // Add new labels
-            for i in oldLength..<length {
-                dayLabels.append("Day \(i + 1)")
-            }
-        } else if length < oldLength {
-            // Remove excess labels
-            dayLabels = Array(dayLabels.prefix(length))
-        }
-        
-        updateRotationPattern()
-    }
-    
-    private func updateRotationPattern() {
-        guard schedule.scheduleType == .rotatingDays else {
-            schedule.rotationPattern = nil
-            return
-        }
-        
-        schedule.rotationPattern = RotationPattern(
-            type: schedule.scheduleType,
-            cycleLength: cycleLength,
-            dayLabels: dayLabels,
-            startDate: startDate
-        )
     }
 }
 
-// MARK: - Step 4: Semester Duration
+// MARK: - Step 2: Semester Duration
 struct SemesterDurationStep: View {
     @Binding var schedule: ScheduleCollection
     @State private var semesterWeeks = 16
@@ -594,7 +400,7 @@ struct SemesterLengthCard: View {
     }
 }
 
-// MARK: - Step 5: Academic Calendar Setup
+// MARK: - Step 3: Academic Calendar Setup
 struct AcademicCalendarStep: View {
     @Binding var schedule: ScheduleCollection
     @EnvironmentObject var academicCalendarManager: AcademicCalendarManager
@@ -778,7 +584,7 @@ struct AcademicCalendarStep: View {
     }
     
     private func addCommonBreaks(to calendar: inout AcademicCalendar) {
-        // Add common academic breaks
+        // Add common academic breaks without affectsRotation
         let year = Calendar.current.component(.year, from: Date())
         
         // Fall Break
@@ -788,8 +594,7 @@ struct AcademicCalendarStep: View {
                 name: "Fall Break",
                 type: .custom,
                 startDate: fallBreakStart,
-                endDate: fallBreakEnd,
-                affectsRotation: true
+                endDate: fallBreakEnd
             ))
         }
         
@@ -800,8 +605,7 @@ struct AcademicCalendarStep: View {
                 name: "Thanksgiving Break",
                 type: .holiday,
                 startDate: thanksgivingStart,
-                endDate: thanksgivingEnd,
-                affectsRotation: true
+                endDate: thanksgivingEnd
             ))
         }
         
@@ -812,8 +616,7 @@ struct AcademicCalendarStep: View {
                 name: "Winter Break",
                 type: .winterBreak,
                 startDate: winterBreakStart,
-                endDate: winterBreakEnd,
-                affectsRotation: true
+                endDate: winterBreakEnd
             ))
         }
         
@@ -824,8 +627,7 @@ struct AcademicCalendarStep: View {
                 name: "Spring Break",
                 type: .springBreak,
                 startDate: springBreakStart,
-                endDate: springBreakEnd,
-                affectsRotation: true
+                endDate: springBreakEnd
             ))
         }
     }
@@ -974,7 +776,7 @@ struct BreakRow: View {
     }
 }
 
-// MARK: - Step 6: Class Import
+// MARK: - Step 4: Class Import
 struct ClassImportStep: View {
     @Binding var schedule: ScheduleCollection
     @ObservedObject var scheduleManager: ScheduleManager
@@ -1045,82 +847,6 @@ struct ClassImportStep: View {
     }
 }
 
-// MARK: - Step 7: Review
-struct ReviewStep: View {
-    @Binding var schedule: ScheduleCollection
-    
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Review your schedule")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                    
-                    Text("Check that everything looks correct before creating your schedule.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                
-                VStack(alignment: .leading, spacing: 16) {
-                    ReviewRow(title: "Schedule Name", value: schedule.name)
-                    ReviewRow(title: "Academic Period", value: schedule.semester)
-                    ReviewRow(title: "Schedule Type", value: schedule.scheduleType.displayName)
-                    
-                    if schedule.scheduleType == .rotatingDays, let pattern = schedule.rotationPattern {
-                        ReviewRow(title: "Rotation Pattern", value: "\(pattern.cycleLength)-day cycle")
-                        ReviewRow(title: "Day Labels", value: pattern.dayLabels.joined(separator: ", "))
-                    }
-                    
-                    if let calendar = schedule.academicCalendar {
-                        ReviewRow(title: "Academic Year", value: calendar.academicYear)
-                        ReviewRow(title: "Breaks & Holidays", value: "\(calendar.breaks.count) breaks added")
-                    }
-                }
-                
-                if schedule.scheduleType == .rotatingDays, let pattern = schedule.rotationPattern {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Sample Rotation Preview")
-                            .font(.headline)
-                        
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: min(pattern.dayLabels.count, 3)), spacing: 8) {
-                            ForEach(pattern.dayLabels.indices, id: \.self) { index in
-                                Text(pattern.dayLabels[index])
-                                    .font(.caption)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(Color.blue.opacity(0.2))
-                                    .foregroundColor(.blue)
-                                    .cornerRadius(8)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct ReviewRow: View {
-    let title: String
-    let value: String
-    
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            
-            Spacer()
-            
-            Text(value)
-                .font(.subheadline)
-                .fontWeight(.medium)
-        }
-        .padding(.vertical, 2)
-    }
-}
-
 // MARK: - Break Editor View
 struct BreakEditorView: View {
     @Environment(\.dismiss) private var dismiss
@@ -1131,7 +857,6 @@ struct BreakEditorView: View {
     @State private var type = BreakType.custom
     @State private var startDate = Date()
     @State private var endDate = Date()
-    @State private var affectsRotation = true
     @State private var description = ""
     
     private var isEditing: Bool {
@@ -1155,11 +880,6 @@ struct BreakEditorView: View {
                 Section("Dates") {
                     DatePicker("Start Date", selection: $startDate, displayedComponents: .date)
                     DatePicker("End Date", selection: $endDate, displayedComponents: .date)
-                }
-                
-                Section("Options") {
-                    Toggle("Affects Rotation Cycle", isOn: $affectsRotation)
-                        .help("Whether this break pauses the rotation cycle")
                 }
                 
                 Section("Description") {
@@ -1195,19 +915,18 @@ struct BreakEditorView: View {
             type = existingBreak.type
             startDate = existingBreak.startDate
             endDate = existingBreak.endDate
-            affectsRotation = existingBreak.affectsRotation
             description = existingBreak.description
         }
     }
     
     private func saveBreak() {
-        let newBreak = AcademicBreak(
+        var newBreak = AcademicBreak(
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             type: type,
             startDate: startDate,
-            endDate: endDate,
-            affectsRotation: affectsRotation
+            endDate: endDate
         )
+        newBreak.description = description
         
         var updatedCalendar = academicCalendar
         

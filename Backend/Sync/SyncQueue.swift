@@ -81,6 +81,8 @@ struct AnyCodable: Codable {
             value = array.map { $0.value }
         } else if let dictionary = try? container.decode([String: AnyCodable].self) {
             value = dictionary.mapValues { $0.value }
+        } else if container.decodeNil() {
+            value = NSNull()
         } else {
             value = NSNull()
         }
@@ -88,6 +90,17 @@ struct AnyCodable: Codable {
     
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
+
+        let mirror = Mirror(reflecting: value)
+        if mirror.displayStyle == .optional {
+            if mirror.children.count == 0 {
+                try container.encodeNil()
+                return
+            } else if let wrapped = mirror.children.first?.value {
+                try AnyCodable(wrapped).encode(to: encoder)
+                return
+            }
+        }
         
         switch value {
         case let bool as Bool:
@@ -105,10 +118,7 @@ struct AnyCodable: Codable {
         case is NSNull:
             try container.encodeNil()
         default:
-            throw EncodingError.invalidValue(value, EncodingError.Context(
-                codingPath: encoder.codingPath,
-                debugDescription: "Cannot encode value of type \(type(of: value))"
-            ))
+            try container.encodeNil()
         }
     }
 }
@@ -139,7 +149,6 @@ class SyncQueue: ObservableObject {
     func enqueue(_ operation: SyncOperation) {
         // DROP: schedule_items operations (schema no longer uses this table)
         if operation.type == .scheduleItems {
-            print("📥 SyncQueue: Dropping legacy schedule_items operation \(operation.action)")
             return
         }
         
@@ -147,7 +156,6 @@ class SyncQueue: ObservableObject {
         queueStatistics.incrementQueued(for: operation.type)
         persistOperations()
         
-        print("📥 SyncQueue: Enqueued \(operation.action) operation for \(operation.type)")
         
         if supabaseService.isAuthenticated && !isProcessing {
             Task {
@@ -166,7 +174,6 @@ class SyncQueue: ObservableObject {
         queueStatistics.reset()
         persistOperations()
         
-        print("📥 SyncQueue: Queue cleared")
     }
     
     func clearStaleOperations() {
@@ -175,7 +182,6 @@ class SyncQueue: ObservableObject {
         
         if staleCount > 0 {
             persistOperations()
-            print("📥 SyncQueue: Removed \(staleCount) stale operations")
         }
     }
     
@@ -189,7 +195,6 @@ class SyncQueue: ObservableObject {
         isProcessing = true
         processingProgress = 0.0
         
-        print("📥 SyncQueue: Processing \(queuedOperations.count) operations")
 
         // Filter out schedule_items if any slipped through persisted storage
         queuedOperations.removeAll { $0.type == .scheduleItems }
@@ -215,7 +220,6 @@ class SyncQueue: ObservableObject {
                     queuedOperations[operationIndex].isProcessing = false
                     if queuedOperations[operationIndex].retryCount >= maxRetries {
                         queueStatistics.incrementFailed(for: operation.type)
-                        print("📥 SyncQueue: Operation \(operation.id) failed after \(maxRetries) retries")
                     }
                 }
                 queueStatistics.incrementRetried(for: operation.type)
@@ -229,7 +233,6 @@ class SyncQueue: ObservableObject {
         processingProgress = 0.0
         lastProcessTime = Date()
 
-        print("📥 SyncQueue: Processing complete")
     }
     
     private func processOperation(_ operation: SyncOperation) async -> Bool {
@@ -245,7 +248,6 @@ class SyncQueue: ObservableObject {
                 
             case .update:
                 guard let id = extractId(from: operation.data) else {
-                    print("📥 SyncQueue: Update operation missing ID")
                     return false
                 }
                 
@@ -257,7 +259,6 @@ class SyncQueue: ObservableObject {
                 
             case .delete:
                 guard let id = extractId(from: operation.data) else {
-                    print("📥 SyncQueue: Delete operation missing ID")
                     return false
                 }
                 
@@ -268,11 +269,9 @@ class SyncQueue: ObservableObject {
                     .execute()
             }
             
-            print("📥 SyncQueue: Successfully processed \(operation.action) for \(operation.type)")
             return true
             
         } catch {
-            print("📥 SyncQueue: Failed to process operation \(operation.id): \(error)")
             return false
         }
     }
@@ -293,6 +292,17 @@ class SyncQueue: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isConnected in
                 if isConnected {
+                    Task { @MainActor in
+                        await self?.processQueue()
+                    }
+                }
+            }
+            .store(in: &cancellables)
+        
+        supabaseService.$isAuthenticated
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isAuth in
+                if isAuth {
                     Task { @MainActor in
                         await self?.processQueue()
                     }
@@ -323,7 +333,6 @@ class SyncQueue: ObservableObject {
             let data = try JSONEncoder().encode(queuedOperations)
             UserDefaults.standard.set(data, forKey: persistenceKey)
         } catch {
-            print("📥 SyncQueue: Failed to persist operations: \(error)")
         }
     }
     
@@ -332,9 +341,7 @@ class SyncQueue: ObservableObject {
         
         do {
             queuedOperations = try JSONDecoder().decode([SyncOperation].self, from: data)
-            print("📥 SyncQueue: Loaded \(queuedOperations.count) persisted operations")
         } catch {
-            print("📥 SyncQueue: Failed to load persisted operations: \(error)")
             queuedOperations = []
         }
     }

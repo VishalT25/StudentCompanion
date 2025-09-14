@@ -34,9 +34,19 @@ class AcademicCalendarManager: ObservableObject, RealtimeSyncDelegate {
                 if isAuthenticated {
                     Task { await self?.syncFromSupabaseIfPossible() }
                 } else {
-                    self?.clearData()
+                    // Data will be cleared by UserDataCleared notification
                 }
             }
+        }
+        
+        // CRITICAL: Listen for data clearing when user signs out
+        NotificationCenter.default.addObserver(
+            forName: .init("UserDataCleared"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            print("🧹 AcademicCalendarManager: Received UserDataCleared notification")
+            self?.clearData()
         }
         
         // Listen for post sign-in data refresh notification
@@ -45,7 +55,7 @@ class AcademicCalendarManager: ObservableObject, RealtimeSyncDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            print("🗓️ AcademicCalendarManager: Received post sign-in data refresh notification")
+            print("📢 AcademicCalendarManager: Received post sign-in data refresh notification")
             Task { await self?.syncFromSupabaseIfPossible() }
         }
         
@@ -55,7 +65,7 @@ class AcademicCalendarManager: ObservableObject, RealtimeSyncDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            print("🗓️ AcademicCalendarManager: Received data sync completed notification")
+            print("📢 AcademicCalendarManager: Received data sync completed notification")
             self?.loadAcademicCalendars()  // Reload from UserDefaults
         }
     }

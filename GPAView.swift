@@ -2,7 +2,7 @@ import SwiftUI
 
 struct GPAView: View {
     @EnvironmentObject private var themeManager: ThemeManager
-    @StateObject private var courseManager = UnifiedCourseManager()
+    @EnvironmentObject private var courseManager: UnifiedCourseManager
     @EnvironmentObject private var scheduleManager: ScheduleManager
     @StateObject private var bulkSelectionManager = BulkCourseSelectionManager()
     @State private var showingAddCourseSheet = false
@@ -22,51 +22,53 @@ struct GPAView: View {
     @State private var showingSemesterDetail = false
     @State private var showingYearDetail = false
     @State private var selectedYearScheduleIDs: Set<UUID> = []
+    @AppStorage("YearDetail_SelectedScheduleIDs") private var selectedYearScheduleIDsStorage: String = ""
 
     // Analytics computed properties
     private var activeScheduleCourses: [Course] {
-        guard let activeScheduleId = scheduleManager.activeScheduleID else { return [] }
-        return courseManager.courses.filter { $0.scheduleId == activeScheduleId }
+        guard let activeSchedule = scheduleManager.activeSchedule else { return [] }
+        return courseManager.courses.filter { $0.scheduleId == activeSchedule.id }
     }
     
     private var semesterAverage: Double? {
-        let coursesWithGrades = activeScheduleCourses.compactMap { course -> (Double, Double)? in
+        let coursesWithGrades = activeScheduleCourses.compactMap { course -> (grade: Double, creditHours: Double)? in
             guard let grade = course.calculateCurrentGrade() else { return nil }
-            return (grade, course.creditHours)
+            return (grade: grade, creditHours: course.creditHours)
         }
         
         guard !coursesWithGrades.isEmpty else { return nil }
         
-        let totalWeightedGrade = coursesWithGrades.reduce(0) { $0 + ($1.0 * $1.1) }
-        let totalCredits = coursesWithGrades.reduce(0) { $0 + $1.1 }
+        let totalWeightedGrade = coursesWithGrades.reduce(0) { $0 + ($1.grade * $1.creditHours) }
+        let totalCredits = coursesWithGrades.reduce(0) { $0 + $1.creditHours }
         
         return totalCredits > 0 ? totalWeightedGrade / totalCredits : nil
     }
     
     private var semesterGPA: Double? {
-        let coursesWithGPA = activeScheduleCourses.compactMap { course -> (Double, Double)? in
+        let coursesWithGPA = activeScheduleCourses.compactMap { course -> (gpaPoints: Double, creditHours: Double)? in
             guard let gpaPoints = course.gpaPoints else { return nil }
-            return (gpaPoints, course.creditHours)
+            return (gpaPoints: gpaPoints, creditHours: course.creditHours)
         }
         
         guard !coursesWithGPA.isEmpty else { return nil }
         
-        let totalQualityPoints = coursesWithGPA.reduce(0) { $0 + ($1.0 * $1.1) }
-        let totalCredits = coursesWithGPA.reduce(0) { $0 + $1.1 }
+        let totalQualityPoints = coursesWithGPA.reduce(0) { $0 + ($1.gpaPoints * $1.creditHours) }
+        let totalCredits = coursesWithGPA.reduce(0) { $0 + $1.creditHours }
         
         return totalCredits > 0 ? totalQualityPoints / totalCredits : nil
     }
     
     private var yearAverage: Double? {
-        let allCoursesWithGrades = courseManager.courses.compactMap { course -> (Double, Double)? in
+        let selectedCourses = courseManager.courses.filter { selectedYearScheduleIDs.contains($0.scheduleId) }
+        let allCoursesWithGrades = selectedCourses.compactMap { course -> (grade: Double, creditHours: Double)? in
             guard let grade = course.calculateCurrentGrade() else { return nil }
-            return (grade, course.creditHours)
+            return (grade: grade, creditHours: course.creditHours)
         }
         
         guard !allCoursesWithGrades.isEmpty else { return nil }
         
-        let totalWeightedGrade = allCoursesWithGrades.reduce(0) { $0 + ($1.0 * $1.1) }
-        let totalCredits = allCoursesWithGrades.reduce(0) { $0 + $1.1 }
+        let totalWeightedGrade = allCoursesWithGrades.reduce(0) { $0 + ($1.grade * $1.creditHours) }
+        let totalCredits = allCoursesWithGrades.reduce(0) { $0 + $1.creditHours }
         
         return totalCredits > 0 ? totalWeightedGrade / totalCredits : nil
     }
@@ -74,10 +76,6 @@ struct GPAView: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
-                if bulkSelectionManager.isSelecting {
-                    enhancedSelectionToolbar
-                }
-                
                 // Stunning header section with analytics
                 spectacularHeaderSection
                     .padding(.top, 24)
@@ -146,8 +144,7 @@ struct GPAView: View {
         .onAppear {
             courseManager.loadCourses()
             startAnimations()
-            // Initialize with all schedules selected for year view
-            selectedYearScheduleIDs = Set(scheduleManager.scheduleCollections.map { $0.id })
+            loadYearSelectionFromStorage()
             
             // NEW: Set up cross-references between managers
             courseManager.setScheduleManager(scheduleManager)
@@ -155,6 +152,12 @@ struct GPAView: View {
         }
         .refreshable {
             await refreshData()
+        }
+        .onChange(of: selectedYearScheduleIDs) { oldValue, newValue in
+            saveYearSelectionToStorage()
+        }
+        .onChange(of: scheduleManager.scheduleCollections.map { $0.id }) {
+            syncSelectionWithAvailableSchedules()
         }
         .toolbar {
             toolbarContent
@@ -644,6 +647,34 @@ struct GPAView: View {
             bulkSelectionManager.selectAll(items: activeScheduleCourses)
         }
     }
+
+    private func loadYearSelectionFromStorage() {
+        let availableIDs = Set(scheduleManager.scheduleCollections.map { $0.id })
+        if selectedYearScheduleIDsStorage.isEmpty {
+            selectedYearScheduleIDs = availableIDs
+            saveYearSelectionToStorage()
+            return
+        }
+        let stored = selectedYearScheduleIDsStorage
+            .split(separator: ",")
+            .compactMap { UUID(uuidString: String($0)) }
+        let parsed = Set(stored).intersection(availableIDs)
+        selectedYearScheduleIDs = parsed.isEmpty ? availableIDs : parsed
+    }
+    
+    private func saveYearSelectionToStorage() {
+        selectedYearScheduleIDsStorage = selectedYearScheduleIDs.map { $0.uuidString }.joined(separator: ",")
+    }
+    
+    private func syncSelectionWithAvailableSchedules() {
+        let availableIDs = Set(scheduleManager.scheduleCollections.map { $0.id })
+        selectedYearScheduleIDs = selectedYearScheduleIDs.intersection(availableIDs)
+        if selectedYearScheduleIDs.isEmpty {
+            selectedYearScheduleIDs = availableIDs
+        }
+        saveYearSelectionToStorage()
+    }
+
 }
 
 // MARK: - Mini Average Pill Component

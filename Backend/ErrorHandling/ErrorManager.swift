@@ -454,6 +454,12 @@ class ErrorManager: ObservableObject {
             return .invalidCredentials
         case .registrationFailed:
             return .emailNotVerified
+        case .emailAlreadyExists:
+            return .invalidCredentials // User trying to register with existing email
+        case .emailNotConfirmed:
+            return .emailNotVerified
+        case .resetPasswordFailed:
+            return .tokenInvalid // Generic token/auth issue for password reset failures
         case .storageError:
             return .tokenInvalid
         }

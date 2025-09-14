@@ -276,7 +276,6 @@ class LoggingManager: ObservableObject {
         
         // Console log for debugging
         #if DEBUG
-        print(entry.formattedMessage)
         #endif
         
         // File logging
@@ -725,7 +724,6 @@ class RemoteLogger {
         uploadQueue.async {
             // Implementation would depend on your logging service
             // e.g., Sentry, LogRocket, custom analytics
-            print("📡 RemoteLogger: Would send \(entry.level.rawValue) log to remote service")
         }
     }
 }

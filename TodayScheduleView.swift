@@ -5,8 +5,10 @@ struct TodayScheduleView: View {
     @EnvironmentObject var themeManager: ThemeManager
     @EnvironmentObject var academicCalendarManager: AcademicCalendarManager
     @EnvironmentObject private var scheduleManager: ScheduleManager
+    @EnvironmentObject private var courseManager: UnifiedCourseManager
     @State private var showingAddSchedule = false
     @State private var selectedSchedule: ScheduleItem?
+    var onNavigateToSchedule: (() -> Void)? = nil
     
     private let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -23,22 +25,37 @@ struct TodayScheduleView: View {
                 
                 Spacer()
                 
-                NavigationLink(value: AppRoute.schedule) {
-                    Image(systemName: "arrow.right.circle.fill")
-                        .foregroundColor(.white)
-                        .font(.forma(.title3))
-                        .frame(width: 32, height: 32)
-                        .background(
-                            Circle()
-                                .fill(.white.opacity(0.2))
-                        )
+                Group {
+                    if let onNavigateToSchedule {
+                        Button(action: onNavigateToSchedule) {
+                            Image(systemName: "arrow.right.circle.fill")
+                                .foregroundColor(.white)
+                                .font(.forma(.title3))
+                                .frame(width: 32, height: 32)
+                                .background(
+                                    Circle()
+                                        .fill(.white.opacity(0.2))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        NavigationLink(value: AppRoute.schedule) {
+                            Image(systemName: "arrow.right.circle.fill")
+                                .foregroundColor(.white)
+                                .font(.forma(.title3))
+                                .frame(width: 32, height: 32)
+                                .background(
+                                    Circle()
+                                        .fill(.white.opacity(0.2))
+                                )
+                        }
+                    }
                 }
             }
             
             let schedule = todaysScheduleItems()
-            let events = viewModel.todaysEvents()
             
-            if schedule.isEmpty && events.isEmpty {
+            if schedule.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "calendar")
                         .font(.system(size: 24))
@@ -56,25 +73,10 @@ struct TodayScheduleView: View {
                 .padding(.vertical, 20)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    if !schedule.isEmpty {
-                        ForEach(schedule) { item in
-                            CompactScheduleItemView(item: item, scheduleID: activeScheduleID())
-                                .environmentObject(themeManager)
-                                .environmentObject(scheduleManager)
-                        }
-                    }
-                    
-                    if !events.isEmpty {
-                        if !schedule.isEmpty {
-                            Divider()
-                                .background(.white.opacity(0.3))
-                                .padding(.vertical, 8)
-                        }
-                        
-                        ForEach(events) { event in
-                            CompactEventItemView(event: event)
-                                .environmentObject(viewModel)
-                        }
+                    ForEach(schedule) { item in
+                        CompactScheduleItemView(item: item, scheduleID: activeScheduleID())
+                            .environmentObject(themeManager)
+                            .environmentObject(scheduleManager)
                     }
                 }
             }
@@ -101,8 +103,45 @@ struct TodayScheduleView: View {
         guard let activeSchedule = scheduleManager.activeSchedule else {
             return []
         }
+        let today = Date()
+        let cal = Calendar.current
+        let weekday = cal.component(.weekday, from: today)
+        if weekday == 1 || weekday == 7 {
+            return []
+        }
+        
+        if let start = activeSchedule.semesterStartDate,
+           let end = activeSchedule.semesterEndDate {
+            let d = cal.startOfDay(for: today)
+            let s = cal.startOfDay(for: start)
+            let e = cal.startOfDay(for: end)
+            if d < s || d > e {
+                return []
+            }
+        }
+        
         let academicCalendar = scheduleManager.getAcademicCalendar(for: activeSchedule, from: academicCalendarManager)
-        return activeSchedule.getScheduleItems(for: Date(), usingCalendar: academicCalendar)
+        
+        if let calendar = academicCalendar, calendar.isBreakDay(today) {
+            return []
+        }
+        
+        var uniqueById: [UUID: ScheduleItem] = [:]
+        
+        let scheduleItems = activeSchedule.getScheduleItems(for: today, usingCalendar: academicCalendar)
+        for item in scheduleItems where item.endTime > item.startTime {
+            uniqueById[item.id] = item
+        }
+        
+        let coursesInSchedule = courseManager.courses.filter { $0.scheduleId == activeSchedule.id }
+        let courseItems = coursesInSchedule.compactMap { $0.toScheduleItem(for: today, in: activeSchedule, calendar: academicCalendar) }
+        for item in courseItems where item.endTime > item.startTime {
+            if uniqueById[item.id] == nil {
+                uniqueById[item.id] = item
+            }
+        }
+        
+        return uniqueById.values.sorted { $0.startTime < $1.startTime }
     }
     
     private func activeScheduleID() -> UUID? {

@@ -1,8 +1,10 @@
 import SwiftUI
 
+// MARK: - Simplified Schedule View (Traditional Only)
 struct EnhancedScheduleView: View {
     @EnvironmentObject var scheduleManager: ScheduleManager
     @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var courseManager: UnifiedCourseManager
     @State private var selectedDate = Date()
     @State private var showingDatePicker = false
     
@@ -16,15 +18,9 @@ struct EnhancedScheduleView: View {
         return formatter
     }
     
-    private var shortDateFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        return formatter
-    }
-    
     var body: some View {
         VStack(spacing: 0) {
-            // Header with date and day type
+            // Header with date
             headerView
             
             // Schedule content
@@ -37,6 +33,9 @@ struct EnhancedScheduleView: View {
         .background(Color(.systemGroupedBackground))
         .sheet(isPresented: $showingDatePicker) {
             DatePickerSheet(selectedDate: $selectedDate)
+        }
+        .onAppear {
+            print("🔍 SCHEDULE: View appeared for date \(selectedDate.formatted(date: .abbreviated, time: .omitted))")
         }
     }
     
@@ -52,12 +51,10 @@ struct EnhancedScheduleView: View {
                             .fontWeight(.bold)
                             .foregroundColor(.primary)
                         
-                        if let schedule = activeSchedule, let dayType = getDayType(for: schedule) {
-                            Text(dayType)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(themeManager.currentTheme.primaryColor)
-                        }
+                        Text(headerSubtitle)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(themeManager.currentTheme.primaryColor)
                     }
                     
                     Spacer()
@@ -86,7 +83,6 @@ struct EnhancedScheduleView: View {
                     WeekDayButton(
                         date: date,
                         isSelected: Calendar.current.isDate(date, inSameDayAs: selectedDate),
-                        dayType: activeSchedule?.scheduleType.supportsRotation == true ? activeSchedule?.rotationPattern?.dayType(for: date) : nil,
                         onTap: { selectedDate = date }
                     )
                 }
@@ -106,12 +102,12 @@ struct EnhancedScheduleView: View {
     
     @ViewBuilder
     private func scheduleContentView(for schedule: ScheduleCollection) -> some View {
-        let dayScheduleItems = getDayScheduleItems(for: schedule)
+        let scheduleItems = getScheduleItems(for: schedule)
         
-        if dayScheduleItems.isEmpty {
+        if scheduleItems.isEmpty {
             emptyScheduleView
         } else {
-            scheduleListView(items: dayScheduleItems, schedule: schedule)
+            scheduleListView(items: scheduleItems, schedule: schedule)
         }
     }
     
@@ -188,39 +184,76 @@ struct EnhancedScheduleView: View {
         .padding(.horizontal, 40)
     }
     
-    // Helper methods
-    private func getDayType(for schedule: ScheduleCollection) -> String? {
-        guard schedule.scheduleType.supportsRotation,
-              let pattern = schedule.rotationPattern else {
-            return nil
-        }
+    // MARK: - Simplified Schedule Logic (Traditional Only)
+    private func getScheduleItems(for schedule: ScheduleCollection) -> [ScheduleItem] {
+        print("🔍 SCHEDULE: Getting schedule items for \(selectedDate.formatted(date: .abbreviated, time: .omitted))")
         
-        if let calendar = schedule.academicCalendar, calendar.isBreakDay(selectedDate) {
-            return nil
-        }
-        
-        return pattern.dayType(for: selectedDate)
-    }
-    
-    private func getDayScheduleItems(for schedule: ScheduleCollection) -> [ScheduleItem] {
-        // Check if it's a break day
-        if let calendar = schedule.academicCalendar, calendar.isBreakDay(selectedDate) {
+        let cal = Calendar.current
+        let weekday = cal.component(.weekday, from: selectedDate)
+        if weekday == 1 || weekday == 7 {
+            print("🔍 SCHEDULE: Weekend, returning empty")
             return []
         }
         
-        // For backward compatibility, check traditional schedule items
+        if let start = schedule.semesterStartDate,
+           let end = schedule.semesterEndDate {
+            let d = cal.startOfDay(for: selectedDate)
+            let s = cal.startOfDay(for: start)
+            let e = cal.startOfDay(for: end)
+            if d < s || d > e {
+                print("🔍 SCHEDULE: Date outside schedule's semester bounds, returning empty")
+                return []
+            }
+        }
+        
+        if let calendar = schedule.academicCalendar {
+            if !calendar.isDateWithinSemester(selectedDate) {
+                print("🔍 SCHEDULE: Date outside academic calendar bounds, returning empty")
+                return []
+            }
+            if calendar.isBreakDay(selectedDate) {
+                print("🔍 SCHEDULE: Date is a break day, returning empty")
+                return []
+            }
+        }
+        
+        let coursesInSchedule = courseManager.courses.filter { $0.scheduleId == schedule.id }
+        print("🔍 SCHEDULE: Found \(coursesInSchedule.count) courses in schedule")
+        
+        var scheduleItems: [ScheduleItem] = []
+        
+        for course in coursesInSchedule {
+            print("🔍 SCHEDULE: Checking course '\(course.name)'")
+            
+            if let scheduleItem = course.toScheduleItem(for: selectedDate, in: schedule, calendar: schedule.academicCalendar) {
+                scheduleItems.append(scheduleItem)
+                print("🔍 SCHEDULE: ✅ Added '\(course.name)' at \(scheduleItem.startTime.formatted(date: .omitted, time: .shortened))")
+            } else {
+                print("🔍 SCHEDULE: ❌ Course '\(course.name)' should not appear today")
+            }
+        }
+        
+        let traditionalItems = getTraditionalScheduleItems(for: schedule)
+        scheduleItems.append(contentsOf: traditionalItems)
+        
+        print("🔍 SCHEDULE: Total schedule items: \(scheduleItems.count)")
+        return scheduleItems
+    }
+    
+    // Legacy support for traditional schedule items
+    private func getTraditionalScheduleItems(for schedule: ScheduleCollection) -> [ScheduleItem] {
         let calendar = Calendar.current
         let weekday = calendar.component(.weekday, from: selectedDate)
         let dayOfWeek = DayOfWeek.from(weekday: weekday)
         
         return schedule.scheduleItems.filter { item in
-            if item.isSkipped(onDate: selectedDate) {
-                return false
-            }
-            return item.daysOfWeek.contains(dayOfWeek)
+            let dayMatches = item.daysOfWeek.contains(dayOfWeek)
+            let notSkipped = !item.isSkipped(onDate: selectedDate)
+            return dayMatches && notSkipped
         }
     }
     
+    // MARK: - Helper Methods
     private var isBreakDay: Bool {
         guard let schedule = activeSchedule,
               let calendar = schedule.academicCalendar else {
@@ -237,12 +270,24 @@ struct EnhancedScheduleView: View {
         }
         return breakInfo.name
     }
+    
+    private var headerSubtitle: String {
+        if let schedule = activeSchedule {
+            return schedule.scheduleType == .rotating ? "Day 1 / Day 2 Schedule" : "Weekly Schedule"
+        }
+        return "Weekly Schedule"
+    }
+    
+    private func rotatingDayLabel(for date: Date) -> String {
+        let day = Calendar.current.component(.day, from: date)
+        return day % 2 == 1 ? "Day 1" : "Day 2"
+    }
 }
 
+// MARK: - Supporting Views (Simplified)
 struct WeekDayButton: View {
     let date: Date
     let isSelected: Bool
-    let dayType: String?
     let onTap: () -> Void
     
     private var dayFormatter: DateFormatter {
@@ -270,16 +315,8 @@ struct WeekDayButton: View {
                     .fontWeight(.bold)
                     .foregroundColor(isSelected ? .white : .primary)
                 
-                if let dayType = dayType {
-                    Text(dayType)
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(isSelected ? .white.opacity(0.8) : .blue)
-                        .lineLimit(1)
-                } else {
-                    Spacer()
-                        .frame(height: 12)
-                }
+                Spacer()
+                    .frame(height: 12)
             }
             .frame(width: 50, height: 70)
             .background(
@@ -368,6 +405,13 @@ struct EnhancedScheduleItemCard: View {
                         .font(.caption)
                         .foregroundColor(isCurrentClass ? .white.opacity(0.8) : .secondary)
                     
+                    if !item.location.isEmpty {
+                        Label(item.location, systemImage: "location")
+                            .font(.caption)
+                            .foregroundColor(isCurrentClass ? .white.opacity(0.8) : .secondary)
+                            .lineLimit(1)
+                    }
+                    
                     if item.reminderTime != .none {
                         Label(item.reminderTime.shortDisplayName, systemImage: "bell")
                             .font(.caption)
@@ -439,4 +483,5 @@ struct DatePickerSheet: View {
     EnhancedScheduleView()
         .environmentObject(ScheduleManager())
         .environmentObject(ThemeManager())
+        .environmentObject(UnifiedCourseManager())
 }
