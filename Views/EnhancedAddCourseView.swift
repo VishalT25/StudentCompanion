@@ -1,11 +1,11 @@
 import SwiftUI
 
-// MARK: - Simplified Course Creation (Traditional Only)
+// MARK: - Enhanced Course Creation with Meetings Support
 struct EnhancedAddCourseView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var themeManager: ThemeManager
     @EnvironmentObject var scheduleManager: ScheduleManager
-    @ObservedObject var courseManager: UnifiedCourseManager
+    @EnvironmentObject var courseManager: UnifiedCourseManager // Use the shared course manager
     
     let existingCourse: Course?
     
@@ -19,7 +19,7 @@ struct EnhancedAddCourseView: View {
     @State private var selectedIconName: String = "book.closed.fill"
     @State private var selectedColor: Color = .blue
     
-    // Traditional schedule only
+    // Traditional schedule only (for backward compatibility)
     @State private var startTime = Date()
     @State private var endTime = Date().addingTimeInterval(3600)
     @State private var selectedDays: Set<DayOfWeek> = []
@@ -66,8 +66,7 @@ struct EnhancedAddCourseView: View {
     }
     
     // Initialize with existing course if editing
-    init(courseManager: UnifiedCourseManager, existingCourse: Course? = nil) {
-        self.courseManager = courseManager
+    init(existingCourse: Course? = nil) {
         self.existingCourse = existingCourse
         
         // Pre-populate fields if editing
@@ -80,11 +79,28 @@ struct EnhancedAddCourseView: View {
             _creditHours = State(initialValue: course.creditHours)
             _selectedIconName = State(initialValue: course.iconName)
             _selectedColor = State(initialValue: course.color)
-            _reminderTime = State(initialValue: course.reminderTime)
-            _isLiveActivityEnabled = State(initialValue: course.isLiveActivityEnabled)
-            _startTime = State(initialValue: course.startTime ?? Date())
-            _endTime = State(initialValue: course.endTime ?? Date().addingTimeInterval(3600))
-            _selectedDays = State(initialValue: Set(course.daysOfWeek))
+            
+            // Handle legacy data if available
+            if let firstMeeting = course.meetings.first {
+                _reminderTime = State(initialValue: firstMeeting.reminderTime)
+                _isLiveActivityEnabled = State(initialValue: firstMeeting.isLiveActivityEnabled)
+                _startTime = State(initialValue: firstMeeting.startTime)
+                _endTime = State(initialValue: firstMeeting.endTime)
+                _selectedDays = State(initialValue: Set(firstMeeting.daysOfWeek.compactMap { DayOfWeek(rawValue: $0) }))
+            }
+            
+            // Handle rotating schedule data
+            if let meeting1 = course.meetings.first(where: { $0.rotationIndex == 1 }) {
+                _day1Enabled = State(initialValue: true)
+                _day1Start = State(initialValue: meeting1.startTime)
+                _day1End = State(initialValue: meeting1.endTime)
+            }
+            
+            if let meeting2 = course.meetings.first(where: { $0.rotationIndex == 2 }) {
+                _day2Enabled = State(initialValue: true)
+                _day2Start = State(initialValue: meeting2.startTime)
+                _day2End = State(initialValue: meeting2.endTime)
+            }
         }
     }
     
@@ -158,7 +174,7 @@ struct EnhancedAddCourseView: View {
             }
             
             Text("Step \(currentStep) of \(totalSteps)")
-                .font(.forma(.subheadline, weight: .medium))
+                .font(.subheadline.weight(.medium))
                 .foregroundColor(.secondary)
         }
         .padding(.horizontal, 24)
@@ -176,7 +192,7 @@ struct EnhancedAddCourseView: View {
                     .progressViewStyle(CircularProgressViewStyle(tint: themeManager.currentTheme.primaryColor))
                 
                 Text("Creating Course...")
-                    .font(.forma(.subheadline, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.primary)
             }
             .padding(32)
@@ -193,11 +209,11 @@ struct EnhancedAddCourseView: View {
             VStack(spacing: 24) {
                 VStack(spacing: 8) {
                     Text("Course Information")
-                        .font(.forma(.title2, weight: .bold))
+                        .font(.title2.bold())
                         .foregroundColor(.primary)
                     
                     Text(existingCourse != nil ? "Edit course information" : "Let's start with the basic course details")
-                        .font(.forma(.subheadline))
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -220,7 +236,7 @@ struct EnhancedAddCourseView: View {
             // Course Name
             VStack(alignment: .leading, spacing: 8) {
                 Text("Course Name *")
-                    .font(.forma(.subheadline, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.primary)
                 
                 TextField("e.g., Introduction to Computer Science", text: $courseName)
@@ -231,7 +247,7 @@ struct EnhancedAddCourseView: View {
                 // Course Code
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Course Code")
-                        .font(.forma(.subheadline, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundColor(.primary)
                     
                     TextField("e.g., CS 101", text: $courseCode)
@@ -241,7 +257,7 @@ struct EnhancedAddCourseView: View {
                 // Section
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Section")
-                        .font(.forma(.subheadline, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundColor(.primary)
                     
                     TextField("e.g., A", text: $section)
@@ -252,7 +268,7 @@ struct EnhancedAddCourseView: View {
             // Instructor
             VStack(alignment: .leading, spacing: 8) {
                 Text("Instructor")
-                    .font(.forma(.subheadline, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.primary)
                 
                 TextField("e.g., Dr. Smith", text: $instructor)
@@ -262,7 +278,7 @@ struct EnhancedAddCourseView: View {
             // Location
             VStack(alignment: .leading, spacing: 8) {
                 Text("Location")
-                    .font(.forma(.subheadline, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.primary)
                 
                 TextField("e.g., Room 101, Science Building", text: $location)
@@ -272,7 +288,7 @@ struct EnhancedAddCourseView: View {
             // Credit Hours
             VStack(alignment: .leading, spacing: 8) {
                 Text("Credit Hours")
-                    .font(.forma(.subheadline, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.primary)
                 
                 HStack {
@@ -282,7 +298,7 @@ struct EnhancedAddCourseView: View {
                         step: 0.5
                     ) {
                         Text("\(String(format: creditHours.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", creditHours)) credits")
-                            .font(.forma(.subheadline, weight: .medium))
+                            .font(.subheadline.weight(.medium))
                             .foregroundColor(.primary)
                     }
                 }
@@ -299,7 +315,7 @@ struct EnhancedAddCourseView: View {
     private var iconSelection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Course Icon")
-                .font(.forma(.subheadline, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundColor(.primary)
             
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
@@ -325,7 +341,7 @@ struct EnhancedAddCourseView: View {
     private var colorSelection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Course Color")
-                .font(.forma(.subheadline, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundColor(.primary)
             
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
@@ -352,11 +368,11 @@ struct EnhancedAddCourseView: View {
             VStack(spacing: 24) {
                 VStack(spacing: 8) {
                     Text("Schedule Details")
-                        .font(.forma(.title2, weight: .bold))
+                        .font(.title2.bold())
                         .foregroundColor(.primary)
                     
                     Text(isActiveScheduleRotating ? "Configure Day 1 / Day 2 times" : "When does this course meet?")
-                        .font(.forma(.subheadline))
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -381,7 +397,7 @@ struct EnhancedAddCourseView: View {
             // Days of Week
             VStack(alignment: .leading, spacing: 12) {
                 Text("Days of the Week *")
-                    .font(.forma(.subheadline, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.primary)
                 
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
@@ -404,14 +420,14 @@ struct EnhancedAddCourseView: View {
             // Time Selection
             VStack(alignment: .leading, spacing: 16) {
                 Text("Class Time")
-                    .font(.forma(.subheadline, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.primary)
                 
                 VStack(spacing: 16) {
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Start Time")
-                                .font(.forma(.caption, weight: .medium))
+                                .font(.caption.weight(.medium))
                                 .foregroundColor(.secondary)
                             
                             DatePicker("", selection: $startTime, displayedComponents: .hourAndMinute)
@@ -425,7 +441,7 @@ struct EnhancedAddCourseView: View {
                         
                         VStack(alignment: .leading, spacing: 8) {
                             Text("End Time")
-                                .font(.forma(.caption, weight: .medium))
+                                .font(.caption.weight(.medium))
                                 .foregroundColor(.secondary)
                             
                             DatePicker("", selection: $endTime, displayedComponents: .hourAndMinute)
@@ -437,7 +453,7 @@ struct EnhancedAddCourseView: View {
                     if duration > 0 {
                         HStack {
                             Text("Duration: \(formatDuration(duration))")
-                                .font(.forma(.subheadline, weight: .medium))
+                                .font(.subheadline.weight(.medium))
                                 .foregroundColor(selectedColor)
                             
                             Spacer()
@@ -457,7 +473,7 @@ struct EnhancedAddCourseView: View {
         VStack(spacing: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Days")
-                    .font(.forma(.subheadline, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.primary)
                 
                 // Day 1
@@ -465,10 +481,10 @@ struct EnhancedAddCourseView: View {
                     Toggle(isOn: $day1Enabled) {
                         HStack {
                             Text("Day 1")
-                                .font(.forma(.subheadline, weight: .semibold))
+                                .font(.subheadline.weight(.semibold))
                             Spacer()
                             Text("Odd dates")
-                                .font(.forma(.caption))
+                                .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -478,7 +494,7 @@ struct EnhancedAddCourseView: View {
                         HStack(spacing: 16) {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Start")
-                                    .font(.forma(.caption, weight: .medium))
+                                    .font(.caption.weight(.medium))
                                     .foregroundColor(.secondary)
                                 DatePicker("", selection: $day1Start, displayedComponents: .hourAndMinute)
                                     .labelsHidden()
@@ -490,7 +506,7 @@ struct EnhancedAddCourseView: View {
                             }
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("End")
-                                    .font(.forma(.caption, weight: .medium))
+                                    .font(.caption.weight(.medium))
                                     .foregroundColor(.secondary)
                                 DatePicker("", selection: $day1End, displayedComponents: .hourAndMinute)
                                     .labelsHidden()
@@ -509,10 +525,10 @@ struct EnhancedAddCourseView: View {
                     Toggle(isOn: $day2Enabled) {
                         HStack {
                             Text("Day 2")
-                                .font(.forma(.subheadline, weight: .semibold))
+                                .font(.subheadline.weight(.semibold))
                             Spacer()
                             Text("Even dates")
-                                .font(.forma(.caption))
+                                .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -522,7 +538,7 @@ struct EnhancedAddCourseView: View {
                         HStack(spacing: 16) {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Start")
-                                    .font(.forma(.caption, weight: .medium))
+                                    .font(.caption.weight(.medium))
                                     .foregroundColor(.secondary)
                                 DatePicker("", selection: $day2Start, displayedComponents: .hourAndMinute)
                                     .labelsHidden()
@@ -534,7 +550,7 @@ struct EnhancedAddCourseView: View {
                             }
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("End")
-                                    .font(.forma(.caption, weight: .medium))
+                                    .font(.caption.weight(.medium))
                                     .foregroundColor(.secondary)
                                 DatePicker("", selection: $day2End, displayedComponents: .hourAndMinute)
                                     .labelsHidden()
@@ -556,11 +572,11 @@ struct EnhancedAddCourseView: View {
             VStack(spacing: 24) {
                 VStack(spacing: 8) {
                     Text("Final Settings")
-                        .font(.forma(.title2, weight: .bold))
+                        .font(.title2.bold())
                         .foregroundColor(.primary)
                     
                     Text("Configure reminders and notifications")
-                        .font(.forma(.subheadline))
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -581,7 +597,7 @@ struct EnhancedAddCourseView: View {
     private var reminderSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Reminders")
-                .font(.forma(.subheadline, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundColor(.primary)
             
             Picker("Reminder Time", selection: $reminderTime) {
@@ -597,16 +613,16 @@ struct EnhancedAddCourseView: View {
     private var liveActivityToggle: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Live Activities")
-                .font(.forma(.subheadline, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundColor(.primary)
             
             Toggle(isOn: $isLiveActivityEnabled) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Show on Lock Screen")
-                        .font(.forma(.subheadline))
+                        .font(.subheadline)
                     
                     Text("Display class progress on your lock screen during class time")
-                        .font(.forma(.caption))
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
@@ -622,7 +638,7 @@ struct EnhancedAddCourseView: View {
     private var courseSummary: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Course Summary")
-                .font(.forma(.subheadline, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundColor(.primary)
             
             VStack(spacing: 12) {
@@ -682,7 +698,7 @@ struct EnhancedAddCourseView: View {
                         currentStep -= 1
                     }
                 }
-                .font(.forma(.subheadline, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundColor(themeManager.currentTheme.primaryColor)
                 .frame(maxWidth: .infinity)
                 .frame(height: 50)
@@ -704,7 +720,7 @@ struct EnhancedAddCourseView: View {
                     }
                 }
             }
-            .font(.forma(.subheadline, weight: .semibold))
+            .font(.subheadline.weight(.semibold))
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)
             .frame(height: 50)
@@ -722,7 +738,7 @@ struct EnhancedAddCourseView: View {
         .padding(.bottom, 32)
     }
     
-    // MARK: - Simplified Course Saving (Traditional Only)
+    // MARK: - Course Saving with New Architecture
     private func saveCourse() async {
         guard !courseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let activeScheduleId = scheduleManager.activeScheduleID else {
@@ -735,7 +751,7 @@ struct EnhancedAddCourseView: View {
         isSaving = true
         
         if let existingCourse = existingCourse {
-            updateExistingCourse(existingCourse)
+            await updateExistingCourse(existingCourse)
         } else {
             await createNewCourse(activeScheduleId: activeScheduleId)
         }
@@ -744,7 +760,8 @@ struct EnhancedAddCourseView: View {
         dismiss()
     }
     
-    private func updateExistingCourse(_ course: Course) {
+    private func updateExistingCourse(_ course: Course) async {
+        // Update course metadata
         course.name = courseName.trimmingCharacters(in: .whitespacesAndNewlines)
         course.courseCode = courseCode.trimmingCharacters(in: .whitespacesAndNewlines)
         course.section = section.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -753,29 +770,67 @@ struct EnhancedAddCourseView: View {
         course.creditHours = creditHours
         course.iconName = selectedIconName
         course.colorHex = selectedColor.toHex() ?? Color.blue.toHex()!
-        course.reminderTime = reminderTime
-        course.isLiveActivityEnabled = isLiveActivityEnabled
+        
+        // Clear existing meetings and create new ones
+        course.meetings.removeAll()
         
         if isActiveScheduleRotating {
-            course.isRotating = true
-            course.startTime = nil
-            course.endTime = nil
-            course.daysOfWeek = []
-            course.day1StartTime = day1Enabled ? day1Start : nil
-            course.day1EndTime = day1Enabled ? day1End : nil
-            course.day2StartTime = day2Enabled ? day2Start : nil
-            course.day2EndTime = day2Enabled ? day2End : nil
+            // Create rotation meetings
+            if day1Enabled {
+                let meeting1 = CourseMeeting(
+                    courseId: course.id,
+                    scheduleId: course.scheduleId,
+                    meetingType: .lecture,
+                    isRotating: true,
+                    rotationLabel: "Day 1",
+                    rotationIndex: 1,
+                    startTime: day1Start,
+                    endTime: day1End,
+                    location: location.trimmingCharacters(in: .whitespacesAndNewlines),
+                    instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+                    reminderTime: reminderTime,
+                    isLiveActivityEnabled: isLiveActivityEnabled
+                )
+                course.addMeeting(meeting1)
+            }
+            
+            if day2Enabled {
+                let meeting2 = CourseMeeting(
+                    courseId: course.id,
+                    scheduleId: course.scheduleId,
+                    meetingType: .lecture,
+                    isRotating: true,
+                    rotationLabel: "Day 2",
+                    rotationIndex: 2,
+                    startTime: day2Start,
+                    endTime: day2End,
+                    location: location.trimmingCharacters(in: .whitespacesAndNewlines),
+                    instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+                    reminderTime: reminderTime,
+                    isLiveActivityEnabled: isLiveActivityEnabled
+                )
+                course.addMeeting(meeting2)
+            }
         } else {
-            course.isRotating = false
-            course.day1StartTime = nil
-            course.day1EndTime = nil
-            course.day2StartTime = nil
-            course.day2EndTime = nil
-            course.startTime = startTime
-            course.endTime = endTime
-            course.daysOfWeek = Array(selectedDays)
+            // Create traditional meeting
+            if !selectedDays.isEmpty && startTime < endTime {
+                let meeting = CourseMeeting(
+                    courseId: course.id,
+                    scheduleId: course.scheduleId,
+                    meetingType: .lecture,
+                    startTime: startTime,
+                    endTime: endTime,
+                    daysOfWeek: selectedDays.map { $0.rawValue },
+                    location: location.trimmingCharacters(in: .whitespacesAndNewlines),
+                    instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+                    reminderTime: reminderTime,
+                    isLiveActivityEnabled: isLiveActivityEnabled
+                )
+                course.addMeeting(meeting)
+            }
         }
         
+        // Use the shared course manager
         courseManager.updateCourse(course)
         print("✅ COURSE UPDATE: Successfully updated course '\(course.name)'")
     }
@@ -783,49 +838,83 @@ struct EnhancedAddCourseView: View {
     private func createNewCourse(activeScheduleId: UUID) async {
         print("🔍 COURSE CREATION: Creating new course")
         
+        // Create course metadata
+        let course = Course(
+            scheduleId: activeScheduleId,
+            name: courseName.trimmingCharacters(in: .whitespacesAndNewlines),
+            iconName: selectedIconName,
+            colorHex: selectedColor.toHex() ?? Color.blue.toHex()!,
+            creditHours: creditHours,
+            courseCode: courseCode.trimmingCharacters(in: .whitespacesAndNewlines),
+            section: section.trimmingCharacters(in: .whitespacesAndNewlines),
+            instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+            location: location.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        
+        // Create meetings
+        var meetings: [CourseMeeting] = []
+        
         if isActiveScheduleRotating {
-            let course = Course(
-                scheduleId: activeScheduleId,
-                name: courseName.trimmingCharacters(in: .whitespacesAndNewlines),
-                iconName: selectedIconName,
-                colorHex: selectedColor.toHex() ?? Color.blue.toHex()!,
-                startTime: nil,
-                endTime: nil,
-                daysOfWeek: [],
-                location: location.trimmingCharacters(in: .whitespacesAndNewlines),
-                instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
-                creditHours: creditHours,
-                courseCode: courseCode.trimmingCharacters(in: .whitespacesAndNewlines),
-                section: section.trimmingCharacters(in: .whitespacesAndNewlines),
-                isRotating: true,
-                day1StartTime: day1Enabled ? day1Start : nil,
-                day1EndTime: day1Enabled ? day1End : nil,
-                day2StartTime: day2Enabled ? day2Start : nil,
-                day2EndTime: day2Enabled ? day2End : nil
-            )
-            course.reminderTime = reminderTime
-            course.isLiveActivityEnabled = isLiveActivityEnabled
-            courseManager.addCourse(course)
-            print("✅ COURSE CREATION: Created rotating course '\(course.name)'")
+            if day1Enabled {
+                let meeting1 = CourseMeeting(
+                    courseId: course.id,
+                    scheduleId: activeScheduleId,
+                    meetingType: .lecture,
+                    isRotating: true,
+                    rotationLabel: "Day 1",
+                    rotationIndex: 1,
+                    startTime: day1Start,
+                    endTime: day1End,
+                    location: location.trimmingCharacters(in: .whitespacesAndNewlines),
+                    instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+                    reminderTime: reminderTime,
+                    isLiveActivityEnabled: isLiveActivityEnabled
+                )
+                meetings.append(meeting1)
+            }
+            
+            if day2Enabled {
+                let meeting2 = CourseMeeting(
+                    courseId: course.id,
+                    scheduleId: activeScheduleId,
+                    meetingType: .lecture,
+                    isRotating: true,
+                    rotationLabel: "Day 2",
+                    rotationIndex: 2,
+                    startTime: day2Start,
+                    endTime: day2End,
+                    location: location.trimmingCharacters(in: .whitespacesAndNewlines),
+                    instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+                    reminderTime: reminderTime,
+                    isLiveActivityEnabled: isLiveActivityEnabled
+                )
+                meetings.append(meeting2)
+            }
         } else {
-            let course = Course(
-                scheduleId: activeScheduleId,
-                name: courseName.trimmingCharacters(in: .whitespacesAndNewlines),
-                iconName: selectedIconName,
-                colorHex: selectedColor.toHex() ?? Color.blue.toHex()!,
-                startTime: startTime,
-                endTime: endTime,
-                daysOfWeek: Array(selectedDays),
-                location: location.trimmingCharacters(in: .whitespacesAndNewlines),
-                instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
-                creditHours: creditHours,
-                courseCode: courseCode.trimmingCharacters(in: .whitespacesAndNewlines),
-                section: section.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-            course.reminderTime = reminderTime
-            course.isLiveActivityEnabled = isLiveActivityEnabled
-            courseManager.addCourse(course)
-            print("✅ COURSE CREATION: Created traditional course '\(course.name)'")
+            if !selectedDays.isEmpty && startTime < endTime {
+                let meeting = CourseMeeting(
+                    courseId: course.id,
+                    scheduleId: activeScheduleId,
+                    meetingType: .lecture,
+                    startTime: startTime,
+                    endTime: endTime,
+                    daysOfWeek: selectedDays.map { $0.rawValue },
+                    location: location.trimmingCharacters(in: .whitespacesAndNewlines),
+                    instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+                    reminderTime: reminderTime,
+                    isLiveActivityEnabled: isLiveActivityEnabled
+                )
+                meetings.append(meeting)
+            }
+        }
+        
+        // Use the shared course manager's createCourseWithMeetings method
+        do {
+            try await courseManager.createCourseWithMeetings(course, meetings: meetings)
+            print("✅ COURSE CREATION: Created course '\(course.name)' with \(meetings.count) meetings")
+        } catch {
+            print("❌ COURSE CREATION: Failed to create course: \(error)")
+            // You might want to show an alert to the user here
         }
     }
     
@@ -848,7 +937,7 @@ struct EnhancedAddCourseView: View {
 }
 
 #Preview {
-    EnhancedAddCourseView(courseManager: UnifiedCourseManager())
+    EnhancedAddCourseView()
         .environmentObject(ThemeManager())
         .environmentObject(ScheduleManager())
 }

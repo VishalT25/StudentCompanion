@@ -519,29 +519,44 @@ struct AddCourseView: View {
             scheduleManager.addSchedule(defaultSchedule)
             scheduleManager.setActiveSchedule(defaultSchedule.id)
             activeScheduleId = defaultSchedule.id
-             ("🔧 Created default schedule for course sync: \(defaultSchedule.id)")
+            print("🔧 Created default schedule for course sync: \(defaultSchedule.id)")
         }
         
+        // Create the course with basic information (no time data)
         let newCourse = Course(
             scheduleId: activeScheduleId,
             name: courseName.trimmingCharacters(in: .whitespacesAndNewlines),
             iconName: selectedIconName,
             colorHex: selectedColor.toHex() ?? Color.blue.toHex()!,
-            startTime: startTime,
-            endTime: endTime,
-            daysOfWeek: Array(selectedDays),
-            location: location.trimmingCharacters(in: .whitespacesAndNewlines),
-            instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
             creditHours: creditHours,
             courseCode: courseCode.trimmingCharacters(in: .whitespacesAndNewlines),
-            section: section.trimmingCharacters(in: .whitespacesAndNewlines)
+            section: section.trimmingCharacters(in: .whitespacesAndNewlines),
+            instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+            location: location.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         
-        newCourse.reminderTime = reminderTime
-        newCourse.isLiveActivityEnabled = isLiveActivityEnabled
+        // Create a meeting with the schedule information
+        if !selectedDays.isEmpty && startTime < endTime {
+            let meeting = CourseMeeting(
+                courseId: newCourse.id,
+                scheduleId: activeScheduleId,
+                meetingType: .lecture, // Default to lecture
+                startTime: startTime,
+                endTime: endTime,
+                daysOfWeek: selectedDays.map { $0.rawValue },
+                location: location.trimmingCharacters(in: .whitespacesAndNewlines),
+                instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+                reminderTime: reminderTime,
+                isLiveActivityEnabled: isLiveActivityEnabled
+            )
+            
+            // Add the meeting to the course
+            newCourse.addMeeting(meeting)
+        }
+        
         courses.append(newCourse)
         
-         ("✅ Course created successfully for scheduleId: \(activeScheduleId)")
+        print("✅ Course created successfully for scheduleId: \(activeScheduleId)")
     }
     
     private func formatDuration(_ duration: TimeInterval) -> String {

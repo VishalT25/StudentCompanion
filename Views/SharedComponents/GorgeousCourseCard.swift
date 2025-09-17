@@ -13,8 +13,11 @@ struct GorgeousCourseCard: View {
     @State private var isPressed = false
     @State private var animationOffset: CGFloat = 0
     @State private var shimmerOffset: CGFloat = -200
-    @State private var showingEditCourseSheet = false
+    @State private var showingEditSheet = false
     @Environment(\.colorScheme) var colorScheme
+    
+    // Access ScheduleManager through environment
+    @EnvironmentObject private var scheduleManager: ScheduleManager
     
     private var isSelected: Bool {
         bulkSelectionManager.isSelected(course.id)
@@ -50,12 +53,11 @@ struct GorgeousCourseCard: View {
                 .contextMenu {
                     contextMenuContent
                 }
-                .sheet(isPresented: $showingEditCourseSheet) {
-                    EnhancedAddCourseView(
-                        courseManager: courseManager,
-                        existingCourse: course
-                    )
-                    .environmentObject(themeManager)
+                .sheet(isPresented: $showingEditSheet) {
+                    EnhancedAddCourseWithMeetingsView(existingCourse: course)
+                        .environmentObject(themeManager)
+                        .environmentObject(scheduleManager)
+                        .environmentObject(courseManager)
                 }
                 .onAppear {
                     startAnimations()
@@ -70,12 +72,11 @@ struct GorgeousCourseCard: View {
                 .contextMenu {
                     contextMenuContent
                 }
-                .sheet(isPresented: $showingEditCourseSheet) {
-                    EnhancedAddCourseView(
-                        courseManager: courseManager,
-                        existingCourse: course
-                    )
-                    .environmentObject(themeManager)
+                .sheet(isPresented: $showingEditSheet) {
+                    EnhancedAddCourseWithMeetingsView(existingCourse: course)
+                        .environmentObject(themeManager)
+                        .environmentObject(scheduleManager)
+                        .environmentObject(courseManager)
                 }
                 .onAppear {
                     startAnimations()
@@ -280,7 +281,7 @@ struct GorgeousCourseCard: View {
     private var contextMenuContent: some View {
         Group {
             Button("Edit Course", systemImage: "pencil") {
-                showingEditCourseSheet = true
+                showingEditSheet = true
             }
             
             Divider()

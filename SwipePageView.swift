@@ -33,7 +33,7 @@ struct SwipePageView: View {
     @StateObject private var weatherService = WeatherService()
     @StateObject private var calendarSyncManager = CalendarSyncManager()
     
-    @State private var currentPage: PageType = .home
+    @State private var currentIndex: Int = PageType.home.rawValue
     @State private var dragAmount = CGSize.zero
     @State private var isAnimating = false
     @State private var showMenu = false
@@ -49,75 +49,28 @@ struct SwipePageView: View {
     @State private var showingResources = false
     @State private var showingGame = false
     @State private var showingNotificationCenter = false
-    
+
     init(navigateToPage: Binding<PageType?> = .constant(nil)) {
         self._navigateToPage = navigateToPage
-        // This removes the default background from the PageTabView, making it transparent
         UIScrollView.appearance().backgroundColor = .clear
     }
     
+    private var selectedPage: PageType {
+        PageType(rawValue: currentIndex) ?? .home
+    }
+
     var body: some View {
         ZStack {
-            // Static background that never changes regardless of tab - this stays completely static
-            ZStack {
-                LinearGradient(
-                    colors: [
-                        Color(.systemGroupedBackground),
-                        themeManager.currentTheme.quaternaryColor.opacity(0.3),
-                        themeManager.currentTheme.tertiaryColor.opacity(0.2),
-                        Color(.systemBackground)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea(.all)
-                
-                // Add the animated mesh gradients here so they're also static
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    themeManager.currentTheme.primaryColor.opacity(0.15),
-                                    themeManager.currentTheme.secondaryColor.opacity(0.08),
-                                    Color.clear
-                                ],
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: 200
-                            )
-                        )
-                        .frame(width: 400, height: 400)
-                        .offset(
-                            x: CGFloat(index * 150 - 300) + sin(animationOffset * 0.001 + Double(index)) * 50,
-                            y: CGFloat(index * 200 - 100) + cos(animationOffset * 0.0008 + Double(index * 2)) * 30
-                        )
-                        .blur(radius: 30)
-                }
-                
-                // Subtle noise texture
-                Rectangle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.01),
-                                Color.clear,
-                                Color.black.opacity(0.01)
-                            ],
-                            startPoint: UnitPoint(x: animationOffset * 0.0005, y: 0),
-                            endPoint: UnitPoint(x: 1 + animationOffset * 0.0005, y: 1)
-                        )
-                    )
-            }
+            animatedBackground
             
             VStack(spacing: 0) {
                 topToolbarView
 
-                TabView(selection: $currentPage) {
+                TabView(selection: $currentIndex) {
                     GPAView()
                         .environmentObject(themeManager)
                         .background(Color.clear)
-                        .tag(PageType.courses)
+                        .tag(PageType.courses.rawValue)
                     
                     HomePageView(navigateToPage: $navigateToPage)
                         .environmentObject(viewModel)
@@ -127,20 +80,20 @@ struct SwipePageView: View {
                         .environmentObject(academicCalendarManager)
                         .environmentObject(realtimeSyncManager)
                         .background(Color.clear)
-                        .tag(PageType.home)
+                        .tag(PageType.home.rawValue)
                     
                     ScheduleView()
                         .environmentObject(viewModel)
                         .environmentObject(themeManager)
                         .environmentObject(academicCalendarManager)
                         .background(Color.clear)
-                        .tag(PageType.schedule)
+                        .tag(PageType.schedule.rawValue)
                     
                     EventsListView()
                         .environmentObject(viewModel)
                         .environmentObject(themeManager)
                         .background(Color.clear)
-                        .tag(PageType.reminders)
+                        .tag(PageType.reminders.rawValue)
                 }
                 .background(Color.clear)
                 .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
@@ -151,6 +104,7 @@ struct SwipePageView: View {
             if showMenu {
                 ZStack {
                     Color.black.opacity(0.4)
+                        .contentShape(Rectangle())
                         .ignoresSafeArea()
                         .onTapGesture {
                             withAnimation(.easeInOut(duration: 0.3)) {
@@ -174,6 +128,7 @@ struct SwipePageView: View {
                 ZStack {
                     Color.clear
                         .background(.ultraThinMaterial.opacity(0.7))
+                        .contentShape(Rectangle())
                         .ignoresSafeArea()
                         .onTapGesture {
                             withAnimation(.easeInOut(duration: 0.3)) {
@@ -241,22 +196,16 @@ struct SwipePageView: View {
                 .environmentObject(viewModel)
                 .environmentObject(NotificationManager.shared)
         }
-        .onChange(of: selectedRoute) { newRoute in
+        .onChange(of: selectedRoute) { oldRoute, newRoute in
             if let route = newRoute {
                 showMenu = false
                 switch route {
                 case .schedule:
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                        currentPage = .schedule
-                    }
+                    currentIndex = PageType.schedule.rawValue
                 case .events:
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                        currentPage = .reminders
-                    }
+                    currentIndex = PageType.reminders.rawValue
                 case .gpa:
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                        currentPage = .courses
-                    }
+                    currentIndex = PageType.courses.rawValue
                 case .settings:
                     showingSettings = true
                 case .resources:
@@ -267,15 +216,13 @@ struct SwipePageView: View {
                 selectedRoute = nil
             }
         }
-        .onChange(of: navigateToPage) { newPage in
+        .onChange(of: navigateToPage) { oldPage, newPage in
             if let page = newPage {
-                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                    currentPage = page
-                }
+                currentIndex = page.rawValue
                 navigateToPage = nil
             }
         }
-        .onChange(of: currentPage) { _, _ in
+        .onChange(of: currentIndex) { _, _ in
             if showMenu { showMenu = false }
             if showingWeatherPopover { showingWeatherPopover = false }
         }
@@ -301,9 +248,77 @@ struct SwipePageView: View {
         }
     }
     
+    private var animatedBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(.systemGroupedBackground),
+                    themeManager.currentTheme.quaternaryColor.opacity(0.3),
+                    themeManager.currentTheme.tertiaryColor.opacity(0.2),
+                    Color(.systemBackground)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea(.all)
+            
+            ForEach(0..<3, id: \.self) { index in
+                let baseX: CGFloat = CGFloat(index * 150 - 300)
+                let baseY: CGFloat = CGFloat(index * 200 - 100)
+                let sinComponent: CGFloat = CGFloat(sin(Double(animationOffset) * 0.001 + Double(index)) * 50.0)
+                let cosComponent: CGFloat = CGFloat(cos(Double(animationOffset) * 0.0008 + Double(index * 2)) * 30.0)
+                let xOffset: CGFloat = baseX + sinComponent
+                let yOffset: CGFloat = baseY + cosComponent
+                
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                themeManager.currentTheme.primaryColor.opacity(0.15),
+                                themeManager.currentTheme.secondaryColor.opacity(0.08),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 200
+                        )
+                    )
+                    .frame(width: 400, height: 400)
+                    .offset(x: xOffset, y: yOffset)
+                    .blur(radius: 30)
+            }
+            
+            let progress = Double(animationOffset) * 0.0005
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.01),
+                            Color.clear,
+                            Color.black.opacity(0.01)
+                        ],
+                        startPoint: UnitPoint(x: progress, y: 0),
+                        endPoint: UnitPoint(x: 1 + progress, y: 1)
+                    )
+                )
+                .ignoresSafeArea()
+                .blendMode(.overlay)
+                .allowsHitTesting(false)
+        }
+    }
+    
     private func startAnimations() {
         withAnimation(.linear(duration: 20).repeatForever(autoreverses: false)) {
             animationOffset = 360
+        }
+    }
+
+    private func selectIndex(_ index: Int) {
+        let feedback = UISelectionFeedbackGenerator()
+        feedback.selectionChanged()
+        
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            currentIndex = index
         }
     }
     
@@ -328,6 +343,7 @@ struct SwipePageView: View {
                                     .foregroundColor(themeManager.currentTheme.primaryColor)
                             }
                         }
+                        .buttonStyle(.plain)
                     } else if weatherService.isLoading {
                         ProgressView()
                             .scaleEffect(0.5)
@@ -363,6 +379,7 @@ struct SwipePageView: View {
                 }
                 .scaleEffect(showMenu ? 0.95 : 1.0)
                 .animation(.spring(response: 0.3, dampingFraction: 0.6), value: showMenu)
+                .buttonStyle(.plain)
                 
                 Spacer()
                 
@@ -407,42 +424,51 @@ struct SwipePageView: View {
         HStack(spacing: 7) {
             ForEach(PageType.allCases, id: \.self) { page in
                 Button {
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                        currentPage = page
-                    }
+                    currentIndex = page.rawValue
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: page.icon)
                             .font(.forma(.caption, weight: .medium))
                         
-                        if currentPage == page {
+                        if selectedPage == page {
                             Text(page.title)
                                 .font(.forma(.caption, weight: .semibold))
                                 .transition(.asymmetric(
-                                    insertion: .opacity.combined(with: .scale(scale: 0.8)),
+                                    insertion: .opacity.combined(with: .scale(scale: 0.9)),
                                     removal: .opacity
                                 ))
                         }
                     }
-                    .foregroundColor(currentPage == page ? .white : themeManager.currentTheme.primaryColor)
-                    .padding(.horizontal, currentPage == page ? 14 : 9)
+                    .foregroundColor(selectedPage == page ? .white : themeManager.currentTheme.primaryColor)
+                    .padding(.horizontal, selectedPage == page ? 14 : 9)
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: 18)
-                            .fill(currentPage == page ? themeManager.currentTheme.primaryColor : Color.gray.opacity(0.15))
+                            .fill(selectedPage == page ? themeManager.currentTheme.primaryColor : Color.gray.opacity(0.15))
                             .shadow(
-                                color: currentPage == page ? themeManager.currentTheme.primaryColor.opacity(0.25) : .clear,
-                                radius: currentPage == page ? 4 : 0,
+                                color: selectedPage == page ? themeManager.currentTheme.primaryColor.opacity(0.25) : .clear,
+                                radius: selectedPage == page ? 6 : 0,
                                 x: 0,
-                                y: currentPage == page ? 2 : 0
+                                y: selectedPage == page ? 3 : 0
                             )
                     )
-                    .scaleEffect(currentPage == page ? 1.02 : 0.98)
+                    .contentShape(RoundedRectangle(cornerRadius: 18))
+                    .padding(.vertical, 6)
+                    .accessibilityIdentifier("TopTab_\(page.title)")
                 }
-                .buttonStyle(SpringButtonStyle())
+                .buttonStyle(TabPillButtonStyle())
             }
         }
-        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: currentPage)
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: selectedPage)
+    }
+}
+
+private struct TabPillButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .opacity(configuration.isPressed ? 0.9 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: configuration.isPressed)
     }
 }
 
@@ -496,7 +522,7 @@ struct HomePageView: View {
                 quickActionsView
             }
             .padding(.horizontal, 20)
-            .padding(.top, 16)
+            .padding(.top, 25)
         }
         .refreshable {
             await viewModel.refreshLiveData()
@@ -605,7 +631,7 @@ struct HomePageView: View {
     
     private func openCustomD2LLink() {
         guard let url = URL(string: d2lLink) else {
-             ("Invalid D2L URL: \(d2lLink)")
+            print("Invalid D2L URL: \(d2lLink)")
             return
         }
         UIApplication.shared.open(url)

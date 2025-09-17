@@ -201,6 +201,7 @@ class RealtimeSyncManager: ObservableObject {
             ("assignments", "assignments_channel"),
             ("categories", "categories_channel"),
             ("courses", "courses_channel"),
+            ("course_meetings", "course_meetings_channel"),
             ("events", "events_channel"),
             ("schedules", "schedules_channel")
         ]
@@ -225,7 +226,7 @@ class RealtimeSyncManager: ObservableObject {
 
       let filterString: String? = {
         switch tableName {
-        case "events", "categories", "courses", "schedules", "academic_calendars", "assignments":
+        case "events", "categories", "courses", "schedules", "academic_calendars", "assignments", "course_meetings":
           return "user_id=eq.\(userId)"
         case "schedule_items":
           // Schedule items are filtered by schedule ownership through JOIN
@@ -296,6 +297,12 @@ class RealtimeSyncManager: ObservableObject {
                 let dbModel = try JSONDecoder().decode(DatabaseCourse.self, from: JSONSerialization.data(withJSONObject: data))
                 let localModel = dbModel.toLocal()
                 await cacheSystem.courseCache.store(localModel)
+                courseDelegate?.didReceiveRealtimeUpdate(data, action: "INSERT", table: table)
+                
+            case "course_meetings":
+                let dbModel = try JSONDecoder().decode(DatabaseCourseMeeting.self, from: JSONSerialization.data(withJSONObject: data))
+                let localModel = dbModel.toLocal()
+                await cacheSystem.courseMeetingCache.store(localModel)
                 courseDelegate?.didReceiveRealtimeUpdate(data, action: "INSERT", table: table)
                 
             case "events":
@@ -369,6 +376,12 @@ class RealtimeSyncManager: ObservableObject {
                 await cacheSystem.courseCache.update(localModel)
                 courseDelegate?.didReceiveRealtimeUpdate(data, action: "UPDATE", table: table)
                 
+            case "course_meetings":
+                let dbModel = try JSONDecoder().decode(DatabaseCourseMeeting.self, from: JSONSerialization.data(withJSONObject: data))
+                let localModel = dbModel.toLocal()
+                await cacheSystem.courseMeetingCache.update(localModel)
+                courseDelegate?.didReceiveRealtimeUpdate(data, action: "UPDATE", table: table)
+                
             case "events":
                 let dbModel = try JSONDecoder().decode(DatabaseEvent.self, from: JSONSerialization.data(withJSONObject: data))
                 let localModel = dbModel.toLocal()
@@ -418,6 +431,10 @@ class RealtimeSyncManager: ObservableObject {
                     await cacheSystem.courseCache.delete(id: id)
                     courseDelegate?.didReceiveRealtimeUpdate(data, action: "DELETE", table: table)
                     
+                case "course_meetings":
+                    await cacheSystem.courseMeetingCache.delete(id: id)
+                    courseDelegate?.didReceiveRealtimeUpdate(data, action: "DELETE", table: table)
+                    
                 case "events":
                     await cacheSystem.eventCache.delete(id: id)
                     eventDelegate?.didReceiveRealtimeUpdate(data, action: "DELETE", table: table)
@@ -448,7 +465,7 @@ class RealtimeSyncManager: ObservableObject {
         syncStatus = .syncing
         syncProgress = 0.0
         
-        let tables = ["academic_calendars", "categories", "schedules", "courses", "assignments", "events"]
+        let tables = ["academic_calendars", "categories", "schedules", "courses", "course_meetings", "assignments", "events"]
         let progressStep = 1.0 / Double(tables.count)
         
         for (index, table) in tables.enumerated() {
@@ -554,6 +571,18 @@ class RealtimeSyncManager: ObservableObject {
                 )
             }
             
+            // Course Meetings
+            let courseMeetings = await cacheSystem.courseMeetingCache.retrieve()
+            if let courseDelegate = courseDelegate, !courseMeetings.isEmpty {
+                let dbCourseMeetings = courseMeetings.map { DatabaseCourseMeeting(from: $0, userId: userId) }
+                print("🔄 RealtimeSyncManager: ✅ Notifying courseDelegate with \(dbCourseMeetings.count) course meetings")
+                courseDelegate.didReceiveRealtimeUpdate(
+                    ["course_meetings": dbCourseMeetings],
+                    action: "SYNC",
+                    table: "course_meetings"
+                )
+            }
+            
             // Assignments
             let assignments = await cacheSystem.assignmentCache.retrieve()
             if let assignmentDelegate = assignmentDelegate, !assignments.isEmpty {
@@ -601,6 +630,15 @@ class RealtimeSyncManager: ObservableObject {
                     .execute()
                 let items = try JSONDecoder().decode([DatabaseCourse].self, from: response.data)
                 await cacheSystem.courseCache.store(items.map { $0.toLocal() })
+
+            case "course_meetings":
+                let response = try await supabaseService.client
+                    .from("course_meetings")
+                    .select()
+                    .eq("user_id", value: userId)
+                    .execute()
+                let items = try JSONDecoder().decode([DatabaseCourseMeeting].self, from: response.data)
+                await cacheSystem.courseMeetingCache.store(items.map { $0.toLocal() })
 
             case "events":
                 let response = try await supabaseService.client

@@ -6,6 +6,7 @@ struct EnhancedCourseDetailView: View {
     let scheduleID: UUID
     @EnvironmentObject private var scheduleManager: ScheduleManager
     @EnvironmentObject private var themeManager: ThemeManager
+    @EnvironmentObject private var courseManager: UnifiedCourseManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var isInteracting = false
@@ -145,8 +146,16 @@ struct EnhancedCourseDetailView: View {
             }
         }
         .sheet(isPresented: $showingEditSheet) {
-            if let schedule = scheduleManager.schedule(for: scheduleID) {
-                EnhancedScheduleEditView(scheduleItem: scheduleItem, scheduleID: scheduleID)
+            if let existingCourse = course {
+                // Use enhanced course editor for full course management
+                EnhancedAddCourseWithMeetingsView(existingCourse: existingCourse)
+                    .environmentObject(courseManager)
+                    .environmentObject(scheduleManager)
+                    .environmentObject(themeManager)
+            } else {
+                // Create a new course from the schedule item
+                EnhancedAddCourseWithMeetingsView(existingCourse: createCourseFromScheduleItem())
+                    .environmentObject(courseManager)
                     .environmentObject(scheduleManager)
                     .environmentObject(themeManager)
             }
@@ -411,7 +420,9 @@ struct EnhancedCourseDetailView: View {
                 }
                 
                 Button("Start Tracking Grades") {
-                    createCourseFromScheduleItem()
+                    // This will trigger the sheet with a new course created from the schedule item
+                    course = nil
+                    showingEditSheet = true
                 }
                 .font(.forma(.subheadline, weight: .semibold))
                 .foregroundColor(.white)
@@ -469,7 +480,7 @@ struct EnhancedCourseDetailView: View {
             HStack(spacing: 14) {
                 ActionButton(
                     icon: "pencil",
-                    title: "Edit Class",
+                    title: course != nil ? "Edit Course" : "Edit Class",
                     color: themeManager.currentTheme.primaryColor,
                     action: { showingEditSheet = true }
                 )
@@ -494,19 +505,74 @@ struct EnhancedCourseDetailView: View {
     }
     
     private func loadCourseData() {
-        // PERFORMANCE: Immediate synchronous load for demo data
-        course = Course(
-            id: scheduleItem.id,
-            scheduleId: scheduleID,
-            name: scheduleItem.title,
-            iconName: "book.closed.fill",
-            colorHex: scheduleItem.color.toHex() ?? "",
-            assignments: []
-        )
+        // Find existing course that matches this schedule item
+        course = findMatchingCourse()
+        
+        print("🔍 DEBUG: Found course for schedule item '\(scheduleItem.title)': \(course?.name ?? "None")")
     }
     
-    private func createCourseFromScheduleItem() {
-        course = Course.from(scheduleItem: scheduleItem, scheduleId: scheduleID)
+    private func findMatchingCourse() -> Course? {
+        // Try to find a course that has a meeting matching this schedule item
+        return courseManager.courses.first { course in
+            course.scheduleId == scheduleID && course.meetings.contains { meeting in
+                // Check if this meeting could generate the current schedule item
+                meeting.matchesScheduleItem(scheduleItem)
+            }
+        }
+    }
+    
+    private func createCourseFromScheduleItem() -> Course {
+        // Extract course name from schedule item title
+        let courseName = extractCourseNameFromTitle(scheduleItem.title)
+        
+        // Create a course with a meeting that matches this schedule item
+        let course = Course(
+            scheduleId: scheduleID,
+            name: courseName,
+            iconName: "book.closed.fill",
+            colorHex: scheduleItem.color.toHex() ?? "007AFF",
+            creditHours: 3.0,
+            courseCode: "",
+            section: "",
+            instructor: "", // No longer set at course level
+            location: ""    // No longer set at course level
+        )
+        
+        // Create a meeting that matches this schedule item
+        let meeting = CourseMeeting(
+            courseId: course.id,
+            scheduleId: scheduleID,
+            meetingType: .lecture,
+            meetingLabel: nil,
+            isRotating: scheduleManager.schedule(for: scheduleID)?.scheduleType == .rotating,
+            rotationLabel: nil,
+            rotationIndex: nil,
+            startTime: scheduleItem.startTime,
+            endTime: scheduleItem.endTime,
+            daysOfWeek: scheduleItem.daysOfWeek.map { $0.rawValue },
+            location: scheduleItem.location,   // Set at meeting level
+            instructor: scheduleItem.instructor, // Set at meeting level
+            reminderTime: scheduleItem.reminderTime,
+            isLiveActivityEnabled: scheduleItem.isLiveActivityEnabled
+        )
+        
+        var courseWithMeeting = course
+        courseWithMeeting.meetings = [meeting]
+        
+        return courseWithMeeting
+    }
+    
+    private func extractCourseNameFromTitle(_ title: String) -> String {
+        // Try to extract course name by removing common suffixes like "- Lecture", "- Lab", etc.
+        let patterns = [" - Lecture", " - Lab", " - Tutorial", " - Seminar", " - Workshop"]
+        
+        for pattern in patterns {
+            if title.hasSuffix(pattern) {
+                return String(title.dropLast(pattern.count)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        
+        return title.trimmingCharacters(in: .whitespaces)
     }
     
     private func toggleSkipToday() {
@@ -641,6 +707,24 @@ struct ScrollOffsetPreferenceKey: PreferenceKey {
     }
 }
 
+// MARK: - CourseMeeting Extension
+
+extension CourseMeeting {
+    func matchesScheduleItem(_ item: ScheduleItem) -> Bool {
+        // Check if this meeting could generate the given schedule item
+        let timeMatches = Calendar.current.isDate(startTime, equalTo: item.startTime, toGranularity: .minute) &&
+                         Calendar.current.isDate(endTime, equalTo: item.endTime, toGranularity: .minute)
+        
+        let daysMatch = Set(daysOfWeek) == Set(item.daysOfWeek.map { $0.rawValue })
+        
+        // Basic location/instructor check (could be empty in meeting but populated in schedule item)
+        let locationMatches = location.isEmpty || location == item.location
+        let instructorMatches = instructor.isEmpty || instructor == item.instructor
+        
+        return timeMatches && daysMatch && locationMatches && instructorMatches
+    }
+}
+
 #Preview {
     NavigationView {
         EnhancedCourseDetailView(
@@ -657,5 +741,6 @@ struct ScrollOffsetPreferenceKey: PreferenceKey {
         )
         .environmentObject(ScheduleManager())
         .environmentObject(ThemeManager())
+        .environmentObject(UnifiedCourseManager())
     }
 }

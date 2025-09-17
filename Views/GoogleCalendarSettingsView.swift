@@ -13,34 +13,41 @@ struct GoogleCalendarSettingsView: View {
     @State private var isPerformingSync = false
     
     var body: some View {
-        NavigationView {
-            ZStack {
-                SpectacularBackground(themeManager: themeManager)
-                
-                ScrollView {
-                    VStack(spacing: 24) {
-                        headerSection
-                        accountSection
-                        if calendarSyncManager.isGoogleCalendarAccessGranted {
-                            calendarSelectionSection
-                            if !selectedCalendarIDs.isEmpty {
-                                syncStatusSection
-                            }
+        ZStack {
+            SpectacularBackground(themeManager: themeManager)
+            
+            ScrollView {
+                VStack(spacing: 24) {
+                    headerSection
+                    accountSection
+                    if calendarSyncManager.isGoogleCalendarAccessGranted {
+                        calendarSelectionSection
+                        if !selectedCalendarIDs.isEmpty {
+                            syncStatusSection
                         }
-                        Spacer(minLength: 40)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 10)
+                    Spacer(minLength: 40)
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
             }
-            .navigationTitle("Google Calendar")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                        .font(.forma(.body))
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
+        }
+        .safeAreaInset(edge: .top) {
+            ZStack {
+                Text("Google Calendar")
+                    .font(.forma(.headline, weight: .bold))
+                    .foregroundColor(.primary)
+                
+                HStack {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .font(.forma(.body, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                    .buttonStyle(.plain)
+                    
+                    Spacer()
+                    
                     if calendarSyncManager.isGoogleCalendarAccessGranted && !selectedCalendarIDs.isEmpty {
                         Button {
                             performManualSync()
@@ -48,15 +55,21 @@ struct GoogleCalendarSettingsView: View {
                             if isPerformingSync {
                                 ProgressView()
                                     .scaleEffect(0.8)
+                                    .tint(themeManager.currentTheme.primaryColor)
                             } else {
                                 Image(systemName: "arrow.clockwise")
+                                    .font(.forma(.body, weight: .medium))
                                     .foregroundColor(themeManager.currentTheme.primaryColor)
                             }
                         }
+                        .buttonStyle(.plain)
                         .disabled(isPerformingSync)
                     }
                 }
             }
+            .padding(.horizontal, 16)
+            .frame(height: 52)
+            .background(Color.clear)
         }
         .onAppear {
             if calendarSyncManager.isGoogleCalendarAccessGranted && calendarSyncManager.googleCalendars.isEmpty {

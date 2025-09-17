@@ -426,28 +426,56 @@ struct ScheduleCard: View {
     }
     
     private func weeklyHours(for course: Course) -> Double {
-        if course.isRotating {
-            let d1: Double = {
-                if let s = course.day1StartTime, let e = course.day1EndTime {
-                    return e.timeIntervalSince(s) / 3600.0
-                }
-                return 0.0
-            }()
-            let d2: Double = {
-                if let s = course.day2StartTime, let e = course.day2EndTime {
-                    return e.timeIntervalSince(s) / 3600.0
-                }
-                return 0.0
-            }()
-            let presentCount = (d1 > 0 ? 1.0 : 0.0) + (d2 > 0 ? 1.0 : 0.0)
-            guard presentCount > 0 else { return 0.0 }
-            let averageDaily = (d1 + d2) / presentCount
-            return averageDaily * 5.0 // 5 school days per week
-        } else {
-            guard let s = course.startTime, let e = course.endTime else { return 0.0 }
-            let duration = e.timeIntervalSince(s) / 3600.0
-            return duration * Double(max(1, course.daysOfWeek.count))
+        var totalWeeklyHours = 0.0
+        
+        // Use the new meetings-based approach
+        for meeting in course.meetings {
+            let meetingDuration = meeting.endTime.timeIntervalSince(meeting.startTime) / 3600.0
+            
+            if meeting.isRotating {
+                // For rotating meetings, they typically occur every other day or according to rotation pattern
+                // Since rotation usually means alternating days, approximate as 2.5 days per week
+                totalWeeklyHours += meetingDuration * 2.5
+            } else {
+                // For regular meetings, multiply duration by actual days per week
+                let daysPerWeek = meeting.daysOfWeek.count
+                totalWeeklyHours += meetingDuration * Double(max(1, daysPerWeek))
+            }
         }
+        
+        // If no meetings found, fall back to legacy calculation for backward compatibility
+        if course.meetings.isEmpty {
+            if course.isRotating {
+                let d1: Double = {
+                    if let s = course.day1StartTime, let e = course.day1EndTime {
+                        return e.timeIntervalSince(s) / 3600.0
+                    }
+                    return 0.0
+                }()
+                let d2: Double = {
+                    if let s = course.day2StartTime, let e = course.day2EndTime {
+                        return e.timeIntervalSince(s) / 3600.0
+                    }
+                    return 0.0
+                }()
+                
+                // For rotating schedules, approximate as 2.5 times per week for each rotation day
+                if d1 > 0 && d2 > 0 {
+                    // Both days exist, so average them and multiply by 2.5 (approximate for rotation)
+                    totalWeeklyHours += (d1 + d2) * 2.5 / 2.0
+                } else if d1 > 0 {
+                    totalWeeklyHours += d1 * 2.5
+                } else if d2 > 0 {
+                    totalWeeklyHours += d2 * 2.5
+                }
+            } else {
+                guard let s = course.startTime, let e = course.endTime else { return 0.0 }
+                let duration = e.timeIntervalSince(s) / 3600.0
+                totalWeeklyHours += duration * Double(max(1, course.daysOfWeek.count))
+            }
+        }
+        
+        return totalWeeklyHours
     }
 }
 

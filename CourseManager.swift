@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import Supabase
 
 // MARK: - Bulk Course Selection Manager
 class BulkCourseSelectionManager: ObservableObject {
@@ -210,6 +211,9 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
         // Load assignments from cache
         let cachedAssignments = await CacheSystem.shared.assignmentCache.retrieve()
         
+        // Load course meetings from cache
+        let cachedMeetings = await CacheSystem.shared.courseMeetingCache.retrieve()
+        
         // If cache is empty, do not wipe locally stored courses
         guard !cachedCourses.isEmpty else {
             print("🔄 UnifiedCourseManager: Cache empty, preserving existing local courses")
@@ -220,6 +224,7 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
         for course in cachedCourses {
             var updatedCourse = course
             updatedCourse.assignments = cachedAssignments.filter { $0.courseId == course.id }
+            updatedCourse.meetings = cachedMeetings.filter { $0.courseId == course.id }
             updatedCourses.append(updatedCourse)
         }
         
@@ -229,12 +234,15 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
         
         saveCoursesLocally()
         
-        print("🔄 UnifiedCourseManager: Reloaded \(cachedCourses.count) courses with \(cachedAssignments.count) total assignments from cache")
+        print("🔄 UnifiedCourseManager: Reloaded \(cachedCourses.count) courses with \(cachedAssignments.count) total assignments and \(cachedMeetings.count) total meetings from cache")
     }
     
     // NEW: Set schedule manager for synchronization
     func setScheduleManager(_ scheduleManager: ScheduleManager) {
         self.scheduleManager = scheduleManager
+        print("🔄 UnifiedCourseManager: Schedule manager reference set")
+        
+        // The course manager will be the single source of truth for course data
     }
     
     // MARK: - RealtimeSyncDelegate
@@ -258,6 +266,25 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
         case ("courses", "DELETE"):
             if let courseId = data["id"] as? String {
                 handleCourseDelete(courseId)
+            }
+            
+        case ("course_meetings", "SYNC"):
+            if let meetingsData = data["course_meetings"] as? [DatabaseCourseMeeting] {
+                syncCourseMeetingsFromDatabase(meetingsData)
+            }
+        case ("course_meetings", "INSERT"):
+            if let meetingData = try? JSONSerialization.data(withJSONObject: data),
+               let dbMeeting = try? JSONDecoder().decode(DatabaseCourseMeeting.self, from: meetingData) {
+                handleCourseMeetingInsert(dbMeeting)
+            }
+        case ("course_meetings", "UPDATE"):
+            if let meetingData = try? JSONSerialization.data(withJSONObject: data),
+               let dbMeeting = try? JSONDecoder().decode(DatabaseCourseMeeting.self, from: meetingData) {
+                handleCourseMeetingUpdate(dbMeeting)
+            }
+        case ("course_meetings", "DELETE"):
+            if let meetingId = data["id"] as? String {
+                handleCourseMeetingDelete(meetingId)
             }
             
         case ("assignments", "SYNC"):
@@ -284,20 +311,100 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
         }
     }
     
+    // MARK: - Course Meeting Sync Handlers
+    
+    private func syncCourseMeetingsFromDatabase(_ meetings: [DatabaseCourseMeeting]) {
+        print("🔄 UnifiedCourseManager: Syncing \(meetings.count) course meetings from database")
+        
+        let localMeetings = meetings.map { $0.toLocal() }
+        let groupedMeetings = Dictionary(grouping: localMeetings) { $0.courseId }
+        
+        var coursesUpdated = false
+        
+        for (courseId, meetingsForCourse) in groupedMeetings {
+            if let courseIndex = courses.firstIndex(where: { $0.id == courseId }) {
+                // Replace meetings for this course
+                courses[courseIndex].meetings = meetingsForCourse
+                coursesUpdated = true
+                print("🔄 UnifiedCourseManager: Updated \(meetingsForCourse.count) meetings for course: \(courses[courseIndex].name)")
+            }
+        }
+        
+        // Save to local storage after sync
+        if coursesUpdated {
+            saveCoursesLocally()
+            print("🔄 UnifiedCourseManager: Saved courses with meetings to local storage")
+        }
+        
+        print("🔄 UnifiedCourseManager: Course meeting sync complete")
+    }
+    
+    private func handleCourseMeetingInsert(_ dbMeeting: DatabaseCourseMeeting) {
+        let localMeeting = dbMeeting.toLocal()
+        
+        guard let courseIndex = courses.firstIndex(where: { $0.id == localMeeting.courseId }) else {
+            print("🔄 UnifiedCourseManager: Course not found for meeting: \(localMeeting.displayName)")
+            return
+        }
+        
+        if !courses[courseIndex].meetings.contains(where: { $0.id == localMeeting.id }) {
+            courses[courseIndex].meetings.append(localMeeting)
+            // Force UI update by reassigning the courses array
+            courses = courses
+            saveCoursesLocally() // Save to UserDefaults for UI consistency
+            print("🔄 UnifiedCourseManager: Added meeting \(localMeeting.displayName) to course \(courses[courseIndex].name)")
+        }
+    }
+    
+    private func handleCourseMeetingUpdate(_ dbMeeting: DatabaseCourseMeeting) {
+        let localMeeting = dbMeeting.toLocal()
+        
+        guard let courseIndex = courses.firstIndex(where: { $0.id == localMeeting.courseId }),
+              let meetingIndex = courses[courseIndex].meetings.firstIndex(where: { $0.id == localMeeting.id }) else {
+            print("🔄 UnifiedCourseManager: Meeting or course not found for update: \(localMeeting.displayName)")
+            return
+        }
+        
+        courses[courseIndex].meetings[meetingIndex] = localMeeting
+        // Force UI update by reassigning the courses array  
+        courses = courses
+        saveCoursesLocally() // Save to UserDefaults for UI consistency
+        print("🔄 UnifiedCourseManager: Updated meeting \(localMeeting.displayName) in course \(courses[courseIndex].name)")
+    }
+    
+    private func handleCourseMeetingDelete(_ meetingId: String) {
+        guard let uuid = UUID(uuidString: meetingId) else { return }
+        
+        for courseIndex in courses.indices {
+            if let meetingIndex = courses[courseIndex].meetings.firstIndex(where: { $0.id == uuid }) {
+                let removedMeeting = courses[courseIndex].meetings.remove(at: meetingIndex)
+                // Force UI update by reassigning the courses array
+                courses = courses
+                saveCoursesLocally() // Save to UserDefaults for UI consistency
+                print("🔄 UnifiedCourseManager: Deleted meeting \(removedMeeting.displayName) from course \(courses[courseIndex].name)")
+                break
+            }
+        }
+    }
+    
     // MARK: - Real-time Course Handlers
     
     private func syncCoursesFromDatabase(_ dbCourses: [DatabaseCourse]) {
+        print("🔄 UnifiedCourseManager: Syncing \(dbCourses.count) courses from database")
+        
         let remoteCourses = dbCourses.map { $0.toLocal() }
         
         // Preserve existing locally stored courses (including unsynced ones)
         let existingCourses = CourseStorage.load()
         let remoteIDs = Set(remoteCourses.map { $0.id })
         
-        // Start with remote courses, preserving assignments for matches
+        // Start with remote courses, preserving assignments and meetings for matches
         var updatedCourses: [Course] = remoteCourses.map { remote in
             if let existing = existingCourses.first(where: { $0.id == remote.id }) {
                 var merged = remote
                 merged.assignments = existing.assignments
+                merged.meetings = existing.meetings // Always preserve existing meetings
+                print("🔄 UnifiedCourseManager: Preserved \(existing.meetings.count) meetings for course '\(remote.name)'")
                 return merged
             } else {
                 return remote
@@ -308,10 +415,79 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
         let localOnly = existingCourses.filter { !remoteIDs.contains($0.id) }
         updatedCourses.append(contentsOf: localOnly)
         
+        // Update courses immediately - don't wait for async meeting loading
         self.courses = updatedCourses
         saveCoursesLocally()
         
         print("🔄 UnifiedCourseManager: Synced courses (remote=\(remoteCourses.count), preserved local-only=\(localOnly.count), total=\(updatedCourses.count))")
+        
+        // Load meetings from database for courses that don't have them - but don't block
+        Task {
+            await loadMeetingsForCoursesIfNeeded()
+        }
+    }
+    
+    // MARK: - Load meetings for courses that don't have them (simplified)
+    private func loadMeetingsForCoursesIfNeeded() async {
+        guard SupabaseService.shared.isAuthenticated,
+              let userId = SupabaseService.shared.currentUser?.id.uuidString else { 
+            print("🔄 UnifiedCourseManager: Cannot load meetings - no auth or user ID")
+            return 
+        }
+        
+        print("🔄 UnifiedCourseManager: Loading meetings for courses that need them...")
+        print("🔄 UnifiedCourseManager: User ID: \(userId)")
+        
+        let meetingRepo = CourseMeetingRepository()
+        var coursesNeedingUpdate: [(Int, Course)] = []
+        
+        // Check which courses need meetings loaded
+        for (index, course) in courses.enumerated() {
+            if course.meetings.isEmpty {
+                print("🔄 UnifiedCourseManager: Course '\(course.name)' has no meetings, loading from database...")
+                do {
+                    let meetings = try await meetingRepo.findByCourse(course.id.uuidString, userId: userId)
+                    print("🔄 UnifiedCourseManager: Found \(meetings.count) meetings for course '\(course.name)' in database")
+                    
+                    if !meetings.isEmpty {
+                        var updatedCourse = course
+                        updatedCourse.meetings = meetings
+                        coursesNeedingUpdate.append((index, updatedCourse))
+                        
+                        // Debug each meeting
+                        for meeting in meetings {
+                            print("  - Meeting: \(meeting.displayName) on days \(meeting.daysOfWeek) at \(meeting.timeRange)")
+                        }
+                    } else {
+                        print("🔄 UnifiedCourseManager: No meetings found for course '\(course.name)' in database")
+                    }
+                } catch {
+                    print("❌ UnifiedCourseManager: Failed to load meetings for course '\(course.name)': \(error)")
+                    print("❌ Error type: \(type(of: error))")
+                    print("❌ Error details: \(error.localizedDescription)")
+                }
+            } else {
+                print("🔄 UnifiedCourseManager: Course '\(course.name)' already has \(course.meetings.count) meetings")
+            }
+        }
+        
+        // Update courses with loaded meetings
+        if !coursesNeedingUpdate.isEmpty {
+            await MainActor.run {
+                for (index, updatedCourse) in coursesNeedingUpdate {
+                    if index < self.courses.count && self.courses[index].id == updatedCourse.id {
+                        print("🔄 UnifiedCourseManager: Updating course '\(updatedCourse.name)' with \(updatedCourse.meetings.count) meetings")
+                        self.courses[index] = updatedCourse
+                    }
+                }
+                // Force UI update
+                self.courses = self.courses
+                self.saveCoursesLocally()
+                print("✅ UnifiedCourseManager: Updated \(coursesNeedingUpdate.count) courses with meetings from database")
+            }
+        } else {
+            print("🔄 UnifiedCourseManager: No courses needed meeting updates")
+        }
     }
     
     private func syncAssignmentsFromDatabase(_ assignments: [DatabaseAssignment]) {
@@ -425,7 +601,7 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
         if SupabaseService.shared.isAuthenticated {
             syncCourseToDatabase(course, action: .create)
         } else {
-             ("🔒 UnifiedCourseManager: Added course locally (offline). Will sync when signed in.")
+            print("🔒 UnifiedCourseManager: Added course locally (offline). Will sync when signed in.")
         }
     }
     
@@ -449,7 +625,7 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
     
     func addAssignment(_ assignment: Assignment, to courseId: UUID) {
         guard SupabaseService.shared.isAuthenticated else {
-             ("🔒 UnifiedCourseManager: Add assignment blocked - user not authenticated")
+            print("🔒 UnifiedCourseManager: Add assignment blocked - user not authenticated")
             return
         }
         guard let courseIndex = courses.firstIndex(where: { $0.id == courseId }) else { return }
@@ -607,11 +783,16 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
         print("🔄 DEBUG: refreshCourseData started")
         isSyncing = true
         
-        // Load current courses from storage first
+        // Load current courses from storage first - this preserves meetings
         loadCourses()
         print("🔄 DEBUG: Loaded \(courses.count) courses from local storage")
         
-        // Refresh real-time sync data
+        // If authenticated, load fresh course and meeting data from database
+        if SupabaseService.shared.isAuthenticated {
+            await loadCoursesWithMeetingsFromDatabase()
+        }
+        
+        // Refresh real-time sync data (this might override some data, but we've already loaded meetings)
         await realtimeSyncManager.refreshAllData()
         
         await backfillUnsyncedCourses()
@@ -622,6 +803,66 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
         print("🔄 UnifiedCourseManager: Course data refresh completed. Loaded \(courses.count) courses.")
     }
     
+    // MARK: - New method to load courses with meetings from database
+    private func loadCoursesWithMeetingsFromDatabase() async {
+        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else { 
+            print("🔄 UnifiedCourseManager: Cannot load from database - no user ID")
+            return 
+        }
+        
+        do {
+            print("🔄 UnifiedCourseManager: Loading courses with meetings from database...")
+            print("🔄 UnifiedCourseManager: User ID: \(userId)")
+            
+            // Load courses from database
+            let courseRepo = CourseRepository()
+            let dbCourses = try await courseRepo.readAll(userId: userId)
+            print("🔄 UnifiedCourseManager: Loaded \(dbCourses.count) courses from database")
+            
+            // Load all course meetings from database in one go
+            let meetingRepo = CourseMeetingRepository()
+            let allMeetings = try await meetingRepo.readAll(userId: userId)
+            let meetingsByCode = Dictionary(grouping: allMeetings) { $0.courseId }
+            print("🔄 UnifiedCourseManager: Loaded \(allMeetings.count) total meetings from database")
+            
+            // Debug: Print all meetings
+            for meeting in allMeetings {
+                print("  - Meeting ID: \(meeting.id), Course: \(meeting.courseId), Type: \(meeting.meetingType.displayName), Days: \(meeting.daysOfWeek)")
+            }
+            
+            var coursesWithMeetings: [Course] = []
+            
+            for course in dbCourses {
+                var enrichedCourse = course
+                
+                // Assign meetings for this course
+                let courseMeetings = meetingsByCode[course.id] ?? []
+                enrichedCourse.meetings = courseMeetings
+                print("🔄 UnifiedCourseManager: Course '\(course.name)' (ID: \(course.id)) has \(enrichedCourse.meetings.count) meetings from database")
+                
+                // Preserve any local assignments
+                if let existingCourse = courses.first(where: { $0.id == course.id }) {
+                    enrichedCourse.assignments = existingCourse.assignments
+                }
+                
+                coursesWithMeetings.append(enrichedCourse)
+            }
+            
+            // Update courses with database data - this should make meetings appear immediately
+            self.courses = coursesWithMeetings
+            
+            // Save to local storage so meetings persist across app restarts
+            saveCoursesLocally()
+            
+            print("✅ UnifiedCourseManager: Successfully loaded \(coursesWithMeetings.count) courses with meetings from database")
+            
+        } catch {
+            print("❌ UnifiedCourseManager: Failed to load courses with meetings from database: \(error)")
+            print("❌ Error type: \(type(of: error))")
+            print("❌ Error details: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Sync Status Observation
     
     private func setupSyncStatusObservation() {
@@ -641,85 +882,168 @@ class UnifiedCourseManager: ObservableObject, RealtimeSyncDelegate {
     }
     
     func loadCourses() {
-        self.courses = CourseStorage.load()
-        print("🔄 UnifiedCourseManager: Loaded \(courses.count) courses from storage")
+        let storedCourses = CourseStorage.load()
         
-        // Debug: Print course and assignment counts
+        // CRITICAL FIX: Don't overwrite courses if they already have meetings and we're loading from storage
+        // This prevents the sync process from wiping out meetings that were just loaded
+        if courses.isEmpty {
+            // Only load from storage if we have no courses yet
+            self.courses = storedCourses
+            print("🔄 UnifiedCourseManager: Loaded \(storedCourses.count) courses from storage (initial load)")
+        } else if !storedCourses.isEmpty {
+            // Merge stored courses with existing courses, preserving meetings
+            print("🔄 UnifiedCourseManager: Merging \(storedCourses.count) stored courses with \(courses.count) existing courses")
+            
+            var mergedCourses = courses
+            
+            for storedCourse in storedCourses {
+                if let existingIndex = mergedCourses.firstIndex(where: { $0.id == storedCourse.id }) {
+                    // Preserve meetings from existing course if stored course doesn't have them
+                    if !mergedCourses[existingIndex].meetings.isEmpty && storedCourse.meetings.isEmpty {
+                        print("🔄 UnifiedCourseManager: Preserving \(mergedCourses[existingIndex].meetings.count) meetings for course '\(storedCourse.name)'")
+                        var updatedCourse = storedCourse
+                        updatedCourse.meetings = mergedCourses[existingIndex].meetings
+                        mergedCourses[existingIndex] = updatedCourse
+                    } else {
+                        // Use stored version (it has more recent data or meetings)
+                        mergedCourses[existingIndex] = storedCourse
+                    }
+                } else {
+                    // Add new course from storage
+                    mergedCourses.append(storedCourse)
+                }
+            }
+            
+            self.courses = mergedCourses
+            print("🔄 UnifiedCourseManager: Merged courses - total: \(mergedCourses.count)")
+        } else {
+            print("🔄 UnifiedCourseManager: No stored courses to load, keeping existing \(courses.count) courses")
+        }
+        
+        // Debug: Print course and meeting counts
         for course in courses {
-            print("🔄 Course: \(course.name) has \(course.assignments.count) assignments")
+            if !course.meetings.isEmpty {
+                print("🔄 Course: \(course.name) has \(course.meetings.count) meetings")
+            }
         }
     }
 
-    func createCourseWithMeetings(_ course: Course, meetings: [CourseMeeting]) async {
+    func createCourseWithMeetings(_ course: Course, meetings: [CourseMeeting]) async throws {
         print("🔍 DEBUG: createCourseWithMeetings called")
         print("🔍 DEBUG: Course: '\(course.name)' with \(meetings.count) meetings")
         print("🔍 DEBUG: Authentication status: \(SupabaseService.shared.isAuthenticated)")
+        print("🔍 DEBUG: User authenticated: \(SupabaseService.shared.currentUser != nil)")
         
-        // If not authenticated or offline, save locally for immediate UI
+        // Check authentication first
         guard SupabaseService.shared.isAuthenticated else {
-            var localCourse = course
-            localCourse.meetings = meetings
-            self.courses.append(localCourse)
-            self.saveCoursesLocally()
-            print("🔍 DEBUG: Saved course locally (offline) with \(meetings.count) meetings")
-            print("🔍 DEBUG: Course now has \(localCourse.meetings.count) meetings in memory")
-            return
+            print("❌ DEBUG: User not authenticated")
+            throw NSError(domain: "CourseManager", code: 401, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
         }
+        
+        guard let userId = SupabaseService.shared.currentUser?.id.uuidString else {
+            print("❌ DEBUG: No user ID available")
+            throw NSError(domain: "CourseManager", code: 402, userInfo: [NSLocalizedDescriptionKey: "No user ID available"])
+        }
+        
+        // Validate course data
+        guard !course.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            print("❌ DEBUG: Course name is empty")
+            throw NSError(domain: "CourseManager", code: 400, userInfo: [NSLocalizedDescriptionKey: "Course name cannot be empty"])
+        }
+        
+        print("🔍 DEBUG: User ID: \(userId)")
+        print("🔍 DEBUG: Schedule ID: \(course.scheduleId)")
 
         do {
-            let userId = SupabaseService.shared.currentUser?.id.uuidString ?? ""
             let courseRepo = CourseRepository()
             let meetingRepo = CourseMeetingRepository()
 
             print("🔍 DEBUG: Creating course '\(course.name)' in database...")
-            print("🔍 DEBUG: User ID: \(userId)")
-            print("🔍 DEBUG: Schedule ID: \(course.scheduleId)")
 
-            // 1) Create the course in DB first so FK constraints pass
+            // 1) Create the course in DB first
             let createdCourse = try await courseRepo.create(course, userId: userId)
             print("🔍 DEBUG: ✅ Course created in database with ID: \(createdCourse.id)")
 
-            // 2) Create meetings referencing the created course
+            // 2) Create ALL meetings in database
             var savedMeetings: [CourseMeeting] = []
-            print("🔍 DEBUG: Creating \(meetings.count) meetings...")
+            print("🔍 DEBUG: Creating \(meetings.count) meetings in database...")
             
-            for (idx, var m) in meetings.enumerated() {
-                print("🔍 DEBUG: Creating meeting \(idx + 1)/\(meetings.count):")
-                print("🔍 DEBUG: - Label: '\(m.rotationLabel ?? "nil")'")
-                print("🔍 DEBUG: - Rotation index: \(m.rotationIndex ?? -1)")
-                print("🔍 DEBUG: - Time: \(m.startTime.formatted(date: .omitted, time: .shortened)) - \(m.endTime.formatted(date: .omitted, time: .shortened))")
+            for (idx, var meeting) in meetings.enumerated() {
+                print("🔍 DEBUG: Creating meeting \(idx + 1)/\(meetings.count): \(meeting.meetingType.displayName)")
                 
-                m.userId = UUID(uuidString: userId)
-                m.courseId = createdCourse.id
-                m.scheduleId = m.scheduleId ?? createdCourse.scheduleId
+                // Ensure proper IDs are set - FIXED: userId is already a string, don't convert to UUID
+                meeting.userId = UUID(uuidString: userId) // This should work if userId is valid UUID string
+                meeting.courseId = createdCourse.id
+                meeting.scheduleId = meeting.scheduleId ?? createdCourse.scheduleId
                 
-                let saved = try await meetingRepo.create(m, userId: userId)
-                savedMeetings.append(saved)
-                await CacheSystem.shared.courseMeetingCache.store(saved)
+                // Validate that all required fields are set
+                guard let meetingUserId = meeting.userId else {
+                    print("❌ DEBUG: Failed to set userId for meeting")
+                    throw NSError(domain: "CourseManager", code: 403, userInfo: [NSLocalizedDescriptionKey: "Invalid user ID"])
+                }
                 
-                print("🔍 DEBUG: ✅ Meeting created with ID: \(saved.id)")
-                print("🔍 DEBUG: - DB rotation index: \(saved.rotationIndex ?? -1)")
+                print("🔍 DEBUG: Meeting details before save:")
+                print("  - ID: \(meeting.id)")
+                print("  - CourseId: \(meeting.courseId)")
+                print("  - ScheduleId: \(String(describing: meeting.scheduleId))")
+                print("  - UserId: \(String(describing: meeting.userId))")
+                print("  - Days: \(meeting.daysOfWeek)")
+                print("  - Start: \(meeting.startTime)")
+                print("  - End: \(meeting.endTime)")
+                
+                // Actually save to database
+                let savedMeeting = try await meetingRepo.create(meeting, userId: userId)
+                savedMeetings.append(savedMeeting)
+                
+                print("🔍 DEBUG: ✅ Meeting '\(savedMeeting.displayName)' saved to database with ID: \(savedMeeting.id)")
             }
 
-            // 3) Update local store and caches
-            createdCourse.meetings = savedMeetings
-            self.courses.append(createdCourse)
+            // 3) Update local store with database-saved data
+            var courseWithMeetings = createdCourse
+            courseWithMeetings.meetings = savedMeetings
+            
+            // Add to local courses array
+            self.courses.append(courseWithMeetings)
+            
+            // Force UI update
+            await MainActor.run {
+                self.courses = self.courses
+            }
+            
+            // Save to local storage
             self.saveCoursesLocally()
-            await CacheSystem.shared.courseCache.store(createdCourse)
+            
+            // IMPORTANT: Store meetings in cache for realtime sync
+            for meeting in savedMeetings {
+                await CacheSystem.shared.courseMeetingCache.store(meeting)
+            }
             
             print("🔍 DEBUG: ✅ Successfully created course with \(savedMeetings.count) meetings")
-            print("🔍 DEBUG: Course in memory now has \(createdCourse.meetings.count) meetings")
-            print("🔍 DEBUG: Total courses in manager: \(self.courses.count)")
-        } catch {
-            print("🛑 createCourseWithMeetings failed: \(error)")
-            print("🛑 Error details: \(String(describing: error))")
+            print("🔍 DEBUG: Local courses count: \(self.courses.count)")
+            print("🔍 DEBUG: Course '\(courseWithMeetings.name)' has \(courseWithMeetings.meetings.count) meetings")
             
-            // Fallback: store locally so UI still shows data
-            var fallbackCourse = course
-            fallbackCourse.meetings = meetings
-            self.courses.append(fallbackCourse)
-            self.saveCoursesLocally()
-            print("🔍 DEBUG: Stored course locally as fallback with \(meetings.count) meetings")
+            // Debug: Print each meeting
+            for meeting in courseWithMeetings.meetings {
+                print("🔍 DEBUG: Meeting '\(meeting.displayName)' on days \(meeting.daysOfWeek) at \(meeting.timeRange)")
+            }
+        } catch {
+            print("🛑 createCourseWithMeetings FAILED: \(error)")
+            print("🛑 Error type: \(type(of: error))")
+            print("🛑 Error details: \(error.localizedDescription)")
+            
+            // Check specific error types
+            if let urlError = error as? URLError {
+                print("🛑 URLError: \(urlError)")
+                print("🛑 URLError code: \(urlError.code)")
+            }
+            
+            // Check if it's a Supabase-related error
+            if error.localizedDescription.contains("PGRST") {
+                print("🛑 Database error detected: \(error.localizedDescription)")
+            }
+            
+            // Re-throw the error so caller knows it failed
+            throw error
         }
     }
 }

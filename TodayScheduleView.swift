@@ -31,11 +31,6 @@ struct TodayScheduleView: View {
                             Image(systemName: "arrow.right.circle.fill")
                                 .foregroundColor(.white)
                                 .font(.forma(.title3))
-                                .frame(width: 32, height: 32)
-                                .background(
-                                    Circle()
-                                        .fill(.white.opacity(0.2))
-                                )
                         }
                         .buttonStyle(.plain)
                     } else {
@@ -43,11 +38,6 @@ struct TodayScheduleView: View {
                             Image(systemName: "arrow.right.circle.fill")
                                 .foregroundColor(.white)
                                 .font(.forma(.title3))
-                                .frame(width: 32, height: 32)
-                                .background(
-                                    Circle()
-                                        .fill(.white.opacity(0.2))
-                                )
                         }
                     }
                 }
@@ -103,13 +93,17 @@ struct TodayScheduleView: View {
         guard let activeSchedule = scheduleManager.activeSchedule else {
             return []
         }
+        
         let today = Date()
         let cal = Calendar.current
         let weekday = cal.component(.weekday, from: today)
+        
+        // Skip weekends
         if weekday == 1 || weekday == 7 {
             return []
         }
         
+        // Check semester bounds
         if let start = activeSchedule.semesterStartDate,
            let end = activeSchedule.semesterEndDate {
             let d = cal.startOfDay(for: today)
@@ -122,26 +116,49 @@ struct TodayScheduleView: View {
         
         let academicCalendar = scheduleManager.getAcademicCalendar(for: activeSchedule, from: academicCalendarManager)
         
+        // Check if today is a break day
         if let calendar = academicCalendar, calendar.isBreakDay(today) {
             return []
         }
         
-        var uniqueById: [UUID: ScheduleItem] = [:]
-        
-        let scheduleItems = activeSchedule.getScheduleItems(for: today, usingCalendar: academicCalendar)
-        for item in scheduleItems where item.endTime > item.startTime {
-            uniqueById[item.id] = item
-        }
-        
+        // Get schedule items ONLY from course meetings - NO MORE LEGACY SCHEDULE ITEMS
+        var allItems: [ScheduleItem] = []
         let coursesInSchedule = courseManager.courses.filter { $0.scheduleId == activeSchedule.id }
-        let courseItems = coursesInSchedule.compactMap { $0.toScheduleItem(for: today, in: activeSchedule, calendar: academicCalendar) }
-        for item in courseItems where item.endTime > item.startTime {
-            if uniqueById[item.id] == nil {
-                uniqueById[item.id] = item
+        
+        print("🔍 TodaySchedule DEBUG: Found \(coursesInSchedule.count) courses for schedule \(activeSchedule.id)")
+        
+        for course in coursesInSchedule {
+            print("🔍 TodaySchedule DEBUG: Course '\(course.name)' has \(course.meetings.count) meetings")
+            
+            for meeting in course.meetings {
+                if meeting.shouldAppear(on: today, in: activeSchedule, calendar: academicCalendar) {
+                    let item = ScheduleItem(
+                        id: meeting.id,
+                        title: "\(course.name) - \(meeting.displayName)",
+                        startTime: meeting.startTime,
+                        endTime: meeting.endTime,
+                        daysOfWeek: meeting.daysOfWeek.compactMap { DayOfWeek(rawValue: $0) },
+                        location: meeting.location.isEmpty ? course.location : meeting.location,
+                        instructor: meeting.instructor.isEmpty ? course.instructor : meeting.instructor,
+                        color: course.color,
+                        skippedInstanceIdentifiers: meeting.skippedInstanceIdentifiers,
+                        isLiveActivityEnabled: meeting.isLiveActivityEnabled,
+                        reminderTime: meeting.reminderTime
+                    )
+                    allItems.append(item)
+                    print("🔍 TodaySchedule DEBUG: Added meeting '\(meeting.displayName)' for today")
+                } else {
+                    print("🔍 TodaySchedule DEBUG: Meeting '\(meeting.displayName)' should NOT appear today")
+                }
             }
         }
         
-        return uniqueById.values.sorted { $0.startTime < $1.startTime }
+        print("🔍 TodaySchedule DEBUG: Total items for today: \(allItems.count)")
+        
+        // Filter out invalid items and sort by start time
+        return allItems
+            .filter { $0.endTime > $0.startTime }
+            .sorted { $0.startTime < $1.startTime }
     }
     
     private func activeScheduleID() -> UUID? {

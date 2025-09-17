@@ -387,12 +387,32 @@ class RelationshipManager: ObservableObject {
             // Update existing course with schedule item data
             var updatedCourse = existingCourse
             updatedCourse.name = scheduleItem.title
-            updatedCourse.startTime = scheduleItem.startTime
-            updatedCourse.endTime = scheduleItem.endTime
-            updatedCourse.daysOfWeek = scheduleItem.daysOfWeek
             updatedCourse.location = scheduleItem.location
             updatedCourse.instructor = scheduleItem.instructor
             updatedCourse.colorHex = scheduleItem.color.toHex() ?? updatedCourse.colorHex
+            
+            // Convert schedule item to meeting and update course meetings
+            let meeting = CourseMeeting(
+                courseId: scheduleItem.id,
+                scheduleId: scheduleId,
+                meetingType: .lecture, // Default type
+                startTime: scheduleItem.startTime,
+                endTime: scheduleItem.endTime,
+                daysOfWeek: scheduleItem.daysOfWeek.map { $0.rawValue },
+                location: scheduleItem.location,
+                instructor: scheduleItem.instructor,
+                reminderTime: scheduleItem.reminderTime,
+                isLiveActivityEnabled: scheduleItem.isLiveActivityEnabled,
+                skippedInstanceIdentifiers: scheduleItem.skippedInstanceIdentifiers
+            )
+            
+            // Replace or add the meeting
+            if let existingMeetingIndex = updatedCourse.meetings.firstIndex(where: { $0.id == meeting.id }) {
+                updatedCourse.meetings[existingMeetingIndex] = meeting
+            } else {
+                updatedCourse.meetings.append(meeting)
+            }
+            
             courseManager.updateCourse(updatedCourse)
         } else {
             // Create new course from schedule item

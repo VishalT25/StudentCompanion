@@ -16,6 +16,9 @@ struct SpectacularCourseCard: View {
     @State private var showingEditCourseSheet = false
     @Environment(\.colorScheme) var colorScheme
     
+    // Access ScheduleManager through environment
+    @EnvironmentObject private var scheduleManager: ScheduleManager
+
     private var isSelected: Bool {
         bulkSelectionManager.isSelected(course.id)
     }
@@ -52,11 +55,10 @@ struct SpectacularCourseCard: View {
                     contextMenuContent
                 }
                 .sheet(isPresented: $showingEditCourseSheet) {
-                    EnhancedAddCourseView(
-                        courseManager: courseManager,
-                        existingCourse: course
-                    )
-                    .environmentObject(themeManager)
+                    EnhancedAddCourseWithMeetingsView(existingCourse: course)
+                        .environmentObject(themeManager)
+                        .environmentObject(scheduleManager)
+                        .environmentObject(courseManager)
                 }
                 .onAppear {
                     startAnimations()
@@ -73,11 +75,10 @@ struct SpectacularCourseCard: View {
                     contextMenuContent
                 }
                 .sheet(isPresented: $showingEditCourseSheet) {
-                    EnhancedAddCourseView(
-                        courseManager: courseManager,
-                        existingCourse: course
-                    )
-                    .environmentObject(themeManager)
+                    EnhancedAddCourseWithMeetingsView(existingCourse: course)
+                        .environmentObject(themeManager)
+                        .environmentObject(scheduleManager)
+                        .environmentObject(courseManager)
                 }
                 .onAppear {
                     startAnimations()

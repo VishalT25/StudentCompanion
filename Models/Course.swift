@@ -42,29 +42,28 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         }
     }
 
-    // SIMPLIFIED: Traditional Schedule Properties Only
-    @Published var startTime: Date?
-    @Published var endTime: Date?
-    @Published var daysOfWeek: [DayOfWeek] = [] // Monday through Friday
-    @Published var location: String = ""
-    @Published var instructor: String = ""
-    @Published var reminderTime: ReminderTime = .none
-    @Published var isLiveActivityEnabled: Bool = true
-    @Published var skippedInstanceIdentifiers: Set<String> = []
-    
-    @Published var isRotating: Bool = false
-    @Published var day1StartTime: Date?
-    @Published var day1EndTime: Date?
-    @Published var day2StartTime: Date?
-    @Published var day2EndTime: Date?
-    
-    // Academic Analytics
+    // Course Information (Academic metadata only)
     @Published var creditHours: Double = 3.0
     @Published var courseCode: String = "" // e.g., "CS 101"
     @Published var section: String = ""    // e.g., "Section A"
+    @Published var instructor: String = "" // Default instructor
+    @Published var location: String = ""   // Default location
     
-    // DEPRECATED: Keep for backward compatibility but don't use
+    // Course Meetings - NEW: This is where scheduling happens
     @Published var meetings: [CourseMeeting] = []
+    
+    // DEPRECATED: Legacy fields kept for backward compatibility during migration
+    @Published private var _legacyStartTime: Date?
+    @Published private var _legacyEndTime: Date?
+    @Published private var _legacyDaysOfWeek: [DayOfWeek] = []
+    @Published private var _legacyReminderTime: ReminderTime = .none
+    @Published private var _legacyIsLiveActivityEnabled: Bool = true
+    @Published private var _legacySkippedInstanceIdentifiers: Set<String> = []
+    @Published private var _legacyIsRotating: Bool = false
+    @Published private var _legacyDay1StartTime: Date?
+    @Published private var _legacyDay1EndTime: Date?
+    @Published private var _legacyDay2StartTime: Date?
+    @Published private var _legacyDay2EndTime: Date?
     
     private var cancellables = Set<AnyCancellable>()
 
@@ -77,20 +76,12 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         assignments: [Assignment] = [], 
         finalGradeGoal: String = "", 
         weightOfRemainingTasks: String = "",
-        // Schedule parameters
-        startTime: Date? = nil,
-        endTime: Date? = nil,
-        daysOfWeek: [DayOfWeek] = [],
-        location: String = "",
-        instructor: String = "",
         creditHours: Double = 3.0,
         courseCode: String = "",
         section: String = "",
-        isRotating: Bool = false,
-        day1StartTime: Date? = nil,
-        day1EndTime: Date? = nil,
-        day2StartTime: Date? = nil,
-        day2EndTime: Date? = nil
+        instructor: String = "",
+        location: String = "",
+        meetings: [CourseMeeting] = []
     ) {
         self.id = id
         self.scheduleId = scheduleId
@@ -107,26 +98,111 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         
         self.finalGradeGoal = finalGradeGoal
         self.weightOfRemainingTasks = weightOfRemainingTasks
-        
-        // Schedule properties
-        self.startTime = startTime
-        self.endTime = endTime
-        self.daysOfWeek = daysOfWeek
-        self.location = location
-        self.instructor = instructor
         self.creditHours = creditHours
         self.courseCode = courseCode
         self.section = section
-        
-        self.isRotating = isRotating
-        self.day1StartTime = day1StartTime
-        self.day1EndTime = day1EndTime
-        self.day2StartTime = day2StartTime
-        self.day2EndTime = day2EndTime
+        self.instructor = instructor
+        self.location = location
+        self.meetings = meetings
         
         DispatchQueue.main.async { [weak self] in
             self?.setupAssignmentsObservation()
         }
+    }
+
+    // MARK: - Legacy Compatibility Initializer
+    convenience init(
+        id: UUID = UUID(), 
+        scheduleId: UUID, 
+        name: String = "New Course", 
+        iconName: String = "book.closed.fill", 
+        colorHex: String = Color.blue.toHex() ?? "007AFF", 
+        assignments: [Assignment] = [], 
+        finalGradeGoal: String = "", 
+        weightOfRemainingTasks: String = "",
+        // Legacy schedule parameters - will be converted to meetings
+        startTime: Date? = nil,
+        endTime: Date? = nil,
+        daysOfWeek: [DayOfWeek] = [],
+        location: String = "",
+        instructor: String = "",
+        creditHours: Double = 3.0,
+        courseCode: String = "",
+        section: String = "",
+        isRotating: Bool = false,
+        day1StartTime: Date? = nil,
+        day1EndTime: Date? = nil,
+        day2StartTime: Date? = nil,
+        day2EndTime: Date? = nil
+    ) {
+        self.init(
+            id: id,
+            scheduleId: scheduleId,
+            name: name,
+            iconName: iconName,
+            colorHex: colorHex,
+            assignments: assignments,
+            finalGradeGoal: finalGradeGoal,
+            weightOfRemainingTasks: weightOfRemainingTasks,
+            creditHours: creditHours,
+            courseCode: courseCode,
+            section: section,
+            instructor: instructor,
+            location: location,
+            meetings: []
+        )
+        
+        // Convert legacy schedule data to meetings
+        if isRotating {
+            if let start1 = day1StartTime, let end1 = day1EndTime {
+                let meeting1 = CourseMeeting(
+                    courseId: id,
+                    scheduleId: scheduleId,
+                    rotationLabel: "Day 1",
+                    rotationIndex: 1,
+                    startTime: start1,
+                    endTime: end1,
+                    location: location,
+                    instructor: instructor
+                )
+                self.meetings.append(meeting1)
+            }
+            
+            if let start2 = day2StartTime, let end2 = day2EndTime {
+                let meeting2 = CourseMeeting(
+                    courseId: id,
+                    scheduleId: scheduleId,
+                    rotationLabel: "Day 2",
+                    rotationIndex: 2,
+                    startTime: start2,
+                    endTime: end2,
+                    location: location,
+                    instructor: instructor
+                )
+                self.meetings.append(meeting2)
+            }
+        } else if let start = startTime, let end = endTime, !daysOfWeek.isEmpty {
+            // Create a single meeting for traditional schedule
+            let meeting = CourseMeeting(
+                courseId: id,
+                scheduleId: scheduleId,
+                startTime: start,
+                endTime: end,
+                location: location,
+                instructor: instructor
+            )
+            self.meetings.append(meeting)
+        }
+        
+        // Store legacy data for compatibility
+        self._legacyStartTime = startTime
+        self._legacyEndTime = endTime
+        self._legacyDaysOfWeek = daysOfWeek
+        self._legacyIsRotating = isRotating
+        self._legacyDay1StartTime = day1StartTime
+        self._legacyDay1EndTime = day1EndTime
+        self._legacyDay2StartTime = day2StartTime
+        self._legacyDay2EndTime = day2EndTime
     }
 
     private func setupAssignmentsObservation() {
@@ -183,12 +259,30 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         #endif
     }
 
+    // MARK: - Meeting Management
+    
+    func addMeeting(_ meeting: CourseMeeting) {
+        var newMeeting = meeting
+        newMeeting.courseId = self.id
+        meetings.append(newMeeting)
+    }
+    
+    func removeMeeting(withId id: UUID) {
+        meetings.removeAll { $0.id == id }
+    }
+    
+    func updateMeeting(_ meeting: CourseMeeting) {
+        if let index = meetings.firstIndex(where: { $0.id == meeting.id }) {
+            meetings[index] = meeting
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, scheduleId, name, iconName, colorHex, assignments, finalGradeGoal, weightOfRemainingTasks
-        case startTime, endTime, daysOfWeek, location, instructor, reminderTime, isLiveActivityEnabled
-        case skippedInstanceIdentifiers, creditHours, courseCode, section
-        case meetings // Keep for backward compatibility
-        case isRotating, day1StartTime, day1EndTime, day2StartTime, day2EndTime
+        case creditHours, courseCode, section, instructor, location, meetings
+        // Legacy keys for backward compatibility
+        case startTime, endTime, daysOfWeek, reminderTime, isLiveActivityEnabled
+        case skippedInstanceIdentifiers, isRotating, day1StartTime, day1EndTime, day2StartTime, day2EndTime
     }
 
     required init(from decoder: Decoder) throws {
@@ -203,27 +297,25 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         finalGradeGoal = try container.decode(String.self, forKey: .finalGradeGoal)
         weightOfRemainingTasks = try container.decode(String.self, forKey: .weightOfRemainingTasks)
         
-        // Schedule properties with backward compatibility
-        startTime = try container.decodeIfPresent(Date.self, forKey: .startTime)
-        endTime = try container.decodeIfPresent(Date.self, forKey: .endTime)
-        daysOfWeek = try container.decodeIfPresent([DayOfWeek].self, forKey: .daysOfWeek) ?? []
-        location = try container.decodeIfPresent(String.self, forKey: .location) ?? ""
-        instructor = try container.decodeIfPresent(String.self, forKey: .instructor) ?? ""
-        reminderTime = try container.decodeIfPresent(ReminderTime.self, forKey: .reminderTime) ?? .none
-        isLiveActivityEnabled = try container.decodeIfPresent(Bool.self, forKey: .isLiveActivityEnabled) ?? true
-        skippedInstanceIdentifiers = Set(try container.decodeIfPresent([String].self, forKey: .skippedInstanceIdentifiers) ?? [])
         creditHours = try container.decodeIfPresent(Double.self, forKey: .creditHours) ?? 3.0
         courseCode = try container.decodeIfPresent(String.self, forKey: .courseCode) ?? ""
         section = try container.decodeIfPresent(String.self, forKey: .section) ?? ""
-        
-        isRotating = try container.decodeIfPresent(Bool.self, forKey: .isRotating) ?? false
-        day1StartTime = try container.decodeIfPresent(Date.self, forKey: .day1StartTime)
-        day1EndTime = try container.decodeIfPresent(Date.self, forKey: .day1EndTime)
-        day2StartTime = try container.decodeIfPresent(Date.self, forKey: .day2StartTime)
-        day2EndTime = try container.decodeIfPresent(Date.self, forKey: .day2EndTime)
-        
-        // Backward compatibility - try to load meetings but don't require them
+        instructor = try container.decodeIfPresent(String.self, forKey: .instructor) ?? ""
+        location = try container.decodeIfPresent(String.self, forKey: .location) ?? ""
         meetings = try container.decodeIfPresent([CourseMeeting].self, forKey: .meetings) ?? []
+        
+        // Legacy compatibility - load old schedule data and convert to meetings if needed
+        _legacyStartTime = try container.decodeIfPresent(Date.self, forKey: .startTime)
+        _legacyEndTime = try container.decodeIfPresent(Date.self, forKey: .endTime)
+        _legacyDaysOfWeek = try container.decodeIfPresent([DayOfWeek].self, forKey: .daysOfWeek) ?? []
+        _legacyReminderTime = try container.decodeIfPresent(ReminderTime.self, forKey: .reminderTime) ?? .none
+        _legacyIsLiveActivityEnabled = try container.decodeIfPresent(Bool.self, forKey: .isLiveActivityEnabled) ?? true
+        _legacySkippedInstanceIdentifiers = Set(try container.decodeIfPresent([String].self, forKey: .skippedInstanceIdentifiers) ?? [])
+        _legacyIsRotating = try container.decodeIfPresent(Bool.self, forKey: .isRotating) ?? false
+        _legacyDay1StartTime = try container.decodeIfPresent(Date.self, forKey: .day1StartTime)
+        _legacyDay1EndTime = try container.decodeIfPresent(Date.self, forKey: .day1EndTime)
+        _legacyDay2StartTime = try container.decodeIfPresent(Date.self, forKey: .day2StartTime)
+        _legacyDay2EndTime = try container.decodeIfPresent(Date.self, forKey: .day2EndTime)
         
         assignments = decodedAssignments
         
@@ -231,8 +323,64 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
             assignments[i].courseId = id
         }
         
+        // Auto-migrate legacy schedule data to meetings if meetings are empty
+        if meetings.isEmpty {
+            migrateLegacyScheduleToMeetings()
+        }
+        
         DispatchQueue.main.async { [weak self] in
             self?.setupAssignmentsObservation()
+        }
+    }
+    
+    private func migrateLegacyScheduleToMeetings() {
+        if _legacyIsRotating {
+            if let start1 = _legacyDay1StartTime, let end1 = _legacyDay1EndTime {
+                let meeting1 = CourseMeeting(
+                    courseId: id,
+                    scheduleId: scheduleId,
+                    rotationLabel: "Day 1",
+                    rotationIndex: 1,
+                    startTime: start1,
+                    endTime: end1,
+                    location: location,
+                    instructor: instructor,
+                    reminderTime: _legacyReminderTime,
+                    isLiveActivityEnabled: _legacyIsLiveActivityEnabled,
+                    skippedInstanceIdentifiers: _legacySkippedInstanceIdentifiers
+                )
+                meetings.append(meeting1)
+            }
+            
+            if let start2 = _legacyDay2StartTime, let end2 = _legacyDay2EndTime {
+                let meeting2 = CourseMeeting(
+                    courseId: id,
+                    scheduleId: scheduleId,
+                    rotationLabel: "Day 2",
+                    rotationIndex: 2,
+                    startTime: start2,
+                    endTime: end2,
+                    location: location,
+                    instructor: instructor,
+                    reminderTime: _legacyReminderTime,
+                    isLiveActivityEnabled: _legacyIsLiveActivityEnabled,
+                    skippedInstanceIdentifiers: _legacySkippedInstanceIdentifiers
+                )
+                meetings.append(meeting2)
+            }
+        } else if let start = _legacyStartTime, let end = _legacyEndTime, !_legacyDaysOfWeek.isEmpty {
+            let meeting = CourseMeeting(
+                courseId: id,
+                scheduleId: scheduleId,
+                startTime: start,
+                endTime: end,
+                location: location,
+                instructor: instructor,
+                reminderTime: _legacyReminderTime,
+                isLiveActivityEnabled: _legacyIsLiveActivityEnabled,
+                skippedInstanceIdentifiers: _legacySkippedInstanceIdentifiers
+            )
+            meetings.append(meeting)
         }
     }
 
@@ -246,28 +394,25 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         try container.encode(assignments, forKey: .assignments)
         try container.encode(finalGradeGoal, forKey: .finalGradeGoal)
         try container.encode(weightOfRemainingTasks, forKey: .weightOfRemainingTasks)
-        
-        // Schedule properties
-        try container.encodeIfPresent(startTime, forKey: .startTime)
-        try container.encodeIfPresent(endTime, forKey: .endTime)
-        try container.encode(daysOfWeek, forKey: .daysOfWeek)
-        try container.encode(location, forKey: .location)
-        try container.encode(instructor, forKey: .instructor)
-        try container.encode(reminderTime, forKey: .reminderTime)
-        try container.encode(isLiveActivityEnabled, forKey: .isLiveActivityEnabled)
-        try container.encode(Array(skippedInstanceIdentifiers), forKey: .skippedInstanceIdentifiers)
         try container.encode(creditHours, forKey: .creditHours)
         try container.encode(courseCode, forKey: .courseCode)
         try container.encode(section, forKey: .section)
-        
-        try container.encode(isRotating, forKey: .isRotating)
-        try container.encodeIfPresent(day1StartTime, forKey: .day1StartTime)
-        try container.encodeIfPresent(day1EndTime, forKey: .day1EndTime)
-        try container.encodeIfPresent(day2StartTime, forKey: .day2StartTime)
-        try container.encodeIfPresent(day2EndTime, forKey: .day2EndTime)
-        
-        // Backward compatibility
+        try container.encode(instructor, forKey: .instructor)
+        try container.encode(location, forKey: .location)
         try container.encode(meetings, forKey: .meetings)
+        
+        // Encode legacy fields for backward compatibility
+        try container.encodeIfPresent(_legacyStartTime, forKey: .startTime)
+        try container.encodeIfPresent(_legacyEndTime, forKey: .endTime)
+        try container.encode(_legacyDaysOfWeek, forKey: .daysOfWeek)
+        try container.encode(_legacyReminderTime, forKey: .reminderTime)
+        try container.encode(_legacyIsLiveActivityEnabled, forKey: .isLiveActivityEnabled)
+        try container.encode(Array(_legacySkippedInstanceIdentifiers), forKey: .skippedInstanceIdentifiers)
+        try container.encode(_legacyIsRotating, forKey: .isRotating)
+        try container.encodeIfPresent(_legacyDay1StartTime, forKey: .day1StartTime)
+        try container.encodeIfPresent(_legacyDay1EndTime, forKey: .day1EndTime)
+        try container.encodeIfPresent(_legacyDay2StartTime, forKey: .day2StartTime)
+        try container.encodeIfPresent(_legacyDay2EndTime, forKey: .day2EndTime)
     }
 
     static func == (lhs: Course, rhs: Course) -> Bool {
@@ -279,30 +424,31 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
         lhs.assignments == rhs.assignments &&
         lhs.finalGradeGoal == rhs.finalGradeGoal &&
         lhs.weightOfRemainingTasks == rhs.weightOfRemainingTasks &&
-        lhs.startTime == rhs.startTime &&
-        lhs.endTime == rhs.endTime &&
-        lhs.daysOfWeek == rhs.daysOfWeek &&
-        lhs.location == rhs.location &&
-        lhs.instructor == rhs.instructor
+        lhs.meetings == rhs.meetings
     }
     
     var color: Color {
         Color(hex: colorHex) ?? .blue
     }
     
-    // MARK: - Simplified Schedule Logic (Traditional Only)
+    // MARK: - Schedule Logic - Now based on meetings
     
     var hasScheduleInfo: Bool {
-        if isRotating {
-            let participatesDay1 = (day1StartTime != nil && day1EndTime != nil)
-            let participatesDay2 = (day2StartTime != nil && day2EndTime != nil)
-            return participatesDay1 || participatesDay2
-        }
-        return startTime != nil && endTime != nil && !daysOfWeek.isEmpty
+        return !meetings.isEmpty
     }
     
     func shouldAppear(on date: Date, in schedule: ScheduleCollection, calendar: AcademicCalendar?) -> Bool {
-        if isSkipped(onDate: date) {
+        // Check if any meeting should appear on this date
+        for meeting in meetings {
+            if meetingShouldAppear(meeting, on: date, in: schedule, calendar: calendar) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    private func meetingShouldAppear(_ meeting: CourseMeeting, on date: Date, in schedule: ScheduleCollection, calendar: AcademicCalendar?) -> Bool {
+        if meeting.isSkipped(onDate: date) {
             return false
         }
         
@@ -326,60 +472,96 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
             if calendar.isBreakDay(date) { return false }
         }
         
-        if isRotating {
+        // For rotating schedules, check rotation pattern
+        if schedule.scheduleType == .rotating, let rotationIndex = meeting.rotationIndex {
             let day = cal.component(.day, from: date)
-            let isDay1 = day % 2 == 1
-            if isDay1 {
-                return day1StartTime != nil && day1EndTime != nil
-            } else {
-                return day2StartTime != nil && day2EndTime != nil
-            }
+            let isMatchingRotationDay = (day % 2 == 1 && rotationIndex == 1) || (day % 2 == 0 && rotationIndex == 2)
+            return isMatchingRotationDay
         } else {
+            // For traditional schedules, check if meeting occurs on weekdays
+            // (Individual meetings don't store days of week - they occur based on course schedule)
             let dayOfWeek = DayOfWeek.from(weekday: weekday)
-            return daysOfWeek.contains(dayOfWeek)
+            return _legacyDaysOfWeek.contains(dayOfWeek) || _legacyDaysOfWeek.isEmpty
         }
     }
     
-    func toScheduleItem(for date: Date, in schedule: ScheduleCollection, calendar: AcademicCalendar?) -> ScheduleItem? {
-        guard shouldAppear(on: date, in: schedule, calendar: calendar) else { return nil }
+    func toScheduleItems(for date: Date, in schedule: ScheduleCollection, calendar: AcademicCalendar?) -> [ScheduleItem] {
+        var items: [ScheduleItem] = []
         
-        if isRotating {
-            let cal = Calendar.current
-            let day = cal.component(.day, from: date)
-            let isDay1 = day % 2 == 1
-            let s = isDay1 ? day1StartTime : day2StartTime
-            let e = isDay1 ? day1EndTime : day2EndTime
-            guard let start = s, let end = e else { return nil }
-            
-            return ScheduleItem(
-                id: self.id,
-                title: name,
-                startTime: start,
-                endTime: end,
-                daysOfWeek: [],
-                location: location,
-                instructor: instructor,
-                color: color,
-                skippedInstanceIdentifiers: skippedInstanceIdentifiers,
-                isLiveActivityEnabled: isLiveActivityEnabled,
-                reminderTime: reminderTime
-            )
-        } else {
-            guard let start = startTime, let end = endTime else { return nil }
-            return ScheduleItem(
-                id: self.id,
-                title: name,
-                startTime: start,
-                endTime: end,
-                daysOfWeek: daysOfWeek,
-                location: location,
-                instructor: instructor,
-                color: color,
-                skippedInstanceIdentifiers: skippedInstanceIdentifiers,
-                isLiveActivityEnabled: isLiveActivityEnabled,
-                reminderTime: reminderTime
-            )
+        for meeting in meetings {
+            if meetingShouldAppear(meeting, on: date, in: schedule, calendar: calendar) {
+                let item = ScheduleItem(
+                    id: meeting.id,
+                    title: name,
+                    startTime: meeting.startTime,
+                    endTime: meeting.endTime,
+                    daysOfWeek: [],
+                    location: meeting.location.isEmpty ? location : meeting.location,
+                    instructor: meeting.instructor.isEmpty ? instructor : meeting.instructor,
+                    color: color,
+                    skippedInstanceIdentifiers: meeting.skippedInstanceIdentifiers,
+                    isLiveActivityEnabled: meeting.isLiveActivityEnabled,
+                    reminderTime: meeting.reminderTime
+                )
+                items.append(item)
+            }
         }
+        
+        return items
+    }
+    
+    // MARK: - Legacy Compatibility Methods
+    
+    var startTime: Date? {
+        return meetings.first?.startTime ?? _legacyStartTime
+    }
+    
+    var endTime: Date? {
+        return meetings.first?.endTime ?? _legacyEndTime
+    }
+    
+    var daysOfWeek: [DayOfWeek] {
+        return _legacyDaysOfWeek
+    }
+    
+    var reminderTime: ReminderTime {
+        return meetings.first?.reminderTime ?? _legacyReminderTime
+    }
+    
+    var isLiveActivityEnabled: Bool {
+        return meetings.first?.isLiveActivityEnabled ?? _legacyIsLiveActivityEnabled
+    }
+    
+    var skippedInstanceIdentifiers: Set<String> {
+        var allSkipped: Set<String> = []
+        for meeting in meetings {
+            allSkipped.formUnion(meeting.skippedInstanceIdentifiers)
+        }
+        return allSkipped.union(_legacySkippedInstanceIdentifiers)
+    }
+    
+    var isRotating: Bool {
+        return _legacyIsRotating || meetings.contains { $0.rotationIndex != nil }
+    }
+    
+    var day1StartTime: Date? {
+        return meetings.first { $0.rotationIndex == 1 }?.startTime ?? _legacyDay1StartTime
+    }
+    
+    var day1EndTime: Date? {
+        return meetings.first { $0.rotationIndex == 1 }?.endTime ?? _legacyDay1EndTime
+    }
+    
+    var day2StartTime: Date? {
+        return meetings.first { $0.rotationIndex == 2 }?.startTime ?? _legacyDay2StartTime
+    }
+    
+    var day2EndTime: Date? {
+        return meetings.first { $0.rotationIndex == 2 }?.endTime ?? _legacyDay2EndTime
+    }
+    
+    func toScheduleItem(for date: Date, in schedule: ScheduleCollection, calendar: AcademicCalendar?) -> ScheduleItem? {
+        return toScheduleItems(for: date, in: schedule, calendar: calendar).first
     }
     
     // MARK: - Legacy Methods (for backward compatibility)
@@ -411,14 +593,32 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
     }
     
     var timeRange: String {
-        guard let start = startTime, let end = endTime else { return "Time TBD" }
+        if let firstMeeting = meetings.first {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "h:mm a"
+            return "\(formatter.string(from: firstMeeting.startTime)) - \(formatter.string(from: firstMeeting.endTime))"
+        }
+        
+        guard let start = _legacyStartTime, let end = _legacyEndTime else { return "Time TBD" }
         let formatter = DateFormatter()
         formatter.dateFormat = "h:mm a"
         return "\(formatter.string(from: start)) - \(formatter.string(from: end))"
     }
     
     var duration: String {
-        guard let start = startTime, let end = endTime else { return "" }
+        if let firstMeeting = meetings.first {
+            let components = Calendar.current.dateComponents([.hour, .minute], from: firstMeeting.startTime, to: firstMeeting.endTime)
+            let hours = components.hour ?? 0
+            let minutes = components.minute ?? 0
+            
+            if hours > 0 {
+                return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h"
+            } else {
+                return "\(minutes)m"
+            }
+        }
+        
+        guard let start = _legacyStartTime, let end = _legacyEndTime else { return "" }
         let components = Calendar.current.dateComponents([.hour, .minute], from: start, to: end)
         let hours = components.hour ?? 0
         let minutes = components.minute ?? 0
@@ -431,13 +631,25 @@ class Course: Identifiable, ObservableObject, Codable, Equatable {
     }
     
     var weeklyHours: Double {
-        guard let start = startTime, let end = endTime else { return 0.0 }
+        var totalHours: Double = 0
+        
+        for meeting in meetings {
+            let duration = meeting.endTime.timeIntervalSince(meeting.startTime) / 3600.0
+            totalHours += duration
+        }
+        
+        if totalHours > 0 {
+            return totalHours
+        }
+        
+        // Fallback to legacy calculation
+        guard let start = _legacyStartTime, let end = _legacyEndTime else { return 0.0 }
         let duration = end.timeIntervalSince(start) / 3600.0
         return duration * Double(daysOfWeek.count)
     }
     
     var daysString: String {
-        if daysOfWeek.isEmpty { return "No days scheduled" }
+        if daysOfWeek.isEmpty { return "Meeting times vary" }
         return daysOfWeek.sorted { $0.rawValue < $1.rawValue }
                           .map { $0.short }
                           .joined(separator: ", ")
@@ -594,6 +806,20 @@ struct Schedule: Identifiable, Codable {
 extension Course {
     static func from(scheduleItem: ScheduleItem, scheduleId: UUID) -> Course {
         let colorHex = scheduleItem.color.toHex() ?? "007AFF"
+        
+        // Create a meeting from the schedule item
+        let meeting = CourseMeeting(
+            courseId: scheduleItem.id,
+            scheduleId: scheduleId,
+            startTime: scheduleItem.startTime,
+            endTime: scheduleItem.endTime,
+            location: scheduleItem.location,
+            instructor: scheduleItem.instructor,
+            reminderTime: scheduleItem.reminderTime,
+            isLiveActivityEnabled: scheduleItem.isLiveActivityEnabled,
+            skippedInstanceIdentifiers: scheduleItem.skippedInstanceIdentifiers
+        )
+        
         let course = Course(
             id: scheduleItem.id,
             scheduleId: scheduleId,
@@ -603,22 +829,35 @@ extension Course {
             assignments: [],
             finalGradeGoal: "",
             weightOfRemainingTasks: "",
-            startTime: scheduleItem.startTime,
-            endTime: scheduleItem.endTime,
-            daysOfWeek: scheduleItem.daysOfWeek,
-            location: scheduleItem.location,
-            instructor: scheduleItem.instructor,
             creditHours: 3.0,
             courseCode: "",
-            section: ""
+            section: "",
+            instructor: scheduleItem.instructor,
+            location: scheduleItem.location,
+            meetings: [meeting]
         )
-        course.skippedInstanceIdentifiers = scheduleItem.skippedInstanceIdentifiers
-        course.reminderTime = scheduleItem.reminderTime
-        course.isLiveActivityEnabled = scheduleItem.isLiveActivityEnabled
+        
         return course
     }
     
     func toScheduleItem() -> ScheduleItem {
+        if let firstMeeting = meetings.first {
+            return ScheduleItem(
+                id: firstMeeting.id,
+                title: self.name,
+                startTime: firstMeeting.startTime,
+                endTime: firstMeeting.endTime,
+                daysOfWeek: self.daysOfWeek,
+                location: firstMeeting.location.isEmpty ? self.location : firstMeeting.location,
+                instructor: firstMeeting.instructor.isEmpty ? self.instructor : firstMeeting.instructor,
+                color: self.color,
+                skippedInstanceIdentifiers: firstMeeting.skippedInstanceIdentifiers,
+                isLiveActivityEnabled: firstMeeting.isLiveActivityEnabled,
+                reminderTime: firstMeeting.reminderTime
+            )
+        }
+        
+        // Legacy fallback
         let calendar = Calendar.current
         func defaultTimes() -> (Date, Date) {
             var components = calendar.dateComponents([.year, .month, .day], from: Date())
@@ -629,8 +868,8 @@ extension Course {
             return (start, end)
         }
         
-        let s = startTime ?? defaultTimes().0
-        let e = endTime ?? calendar.date(byAdding: .minute, value: 60, to: s) ?? s.addingTimeInterval(3600)
+        let s = _legacyStartTime ?? defaultTimes().0
+        let e = _legacyEndTime ?? calendar.date(byAdding: .minute, value: 60, to: s) ?? s.addingTimeInterval(3600)
         
         return ScheduleItem(
             id: self.id,

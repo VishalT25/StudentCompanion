@@ -754,12 +754,37 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
             var course = courseManager.courses[courseIndex]
             // Update course with schedule item data
             course.name = item.title
-            course.startTime = item.startTime
-            course.endTime = item.endTime
-            course.daysOfWeek = item.daysOfWeek
             course.location = item.location
             course.instructor = item.instructor
             course.colorHex = item.color.toHex() ?? course.colorHex
+            
+            // Update or create meeting with schedule item data
+            if let firstMeeting = course.meetings.first {
+                var updatedMeeting = firstMeeting
+                updatedMeeting.startTime = item.startTime
+                updatedMeeting.endTime = item.endTime
+                updatedMeeting.location = item.location
+                updatedMeeting.instructor = item.instructor
+                updatedMeeting.reminderTime = item.reminderTime
+                updatedMeeting.isLiveActivityEnabled = item.isLiveActivityEnabled
+                updatedMeeting.skippedInstanceIdentifiers = item.skippedInstanceIdentifiers
+                course.updateMeeting(updatedMeeting)
+            } else {
+                // Create new meeting from schedule item
+                let newMeeting = CourseMeeting(
+                    courseId: course.id,
+                    scheduleId: course.scheduleId,
+                    startTime: item.startTime,
+                    endTime: item.endTime,
+                    daysOfWeek: item.daysOfWeek.map { $0.rawValue },
+                    location: item.location,
+                    instructor: item.instructor,
+                    reminderTime: item.reminderTime,
+                    isLiveActivityEnabled: item.isLiveActivityEnabled,
+                    skippedInstanceIdentifiers: item.skippedInstanceIdentifiers
+                )
+                course.addMeeting(newMeeting)
+            }
             
             // Temporarily set syncing flag to prevent recursive updates
             let wasSyncing = isSyncing
@@ -783,11 +808,8 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
         if let courseManager = courseManager,
            let courseIndex = courseManager.courses.firstIndex(where: { $0.id == item.id }) {
             var course = courseManager.courses[courseIndex]
-            // Remove schedule information but keep the course
-            course.startTime = nil
-            course.endTime = nil
-            course.daysOfWeek = []
-            course.location = ""
+            // Remove schedule information by clearing meetings
+            course.meetings.removeAll()
             courseManager.updateCourse(course)
             print("🔄 ScheduleManager: Removed schedule info from course: \(course.name)")
         }
@@ -1081,83 +1103,20 @@ class ScheduleManager: ObservableObject, RealtimeSyncDelegate {
     func setCourseManager(_ courseManager: UnifiedCourseManager) {
         self.courseManager = courseManager
         
-        // Sync existing data
-        syncCoursesWithScheduleItems()
+        // The course manager should be the primary source of truth for course data
+        // Schedule items will be generated on-demand from course meetings
         
-        // Observe course changes with weak self to prevent retain cycles
-        courseManager.$courses
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] courses in
-                guard let self = self else { return }
-                self.syncScheduleItemsWithCourses(courses)
-            }
-            .store(in: &cancellables)
+        print("🔄 ScheduleManager: Course manager reference set (sync disabled to prevent conflicts)")
     }
     
     private func syncCoursesWithScheduleItems() {
-        guard let courseManager = courseManager,
-              let activeSchedule = activeSchedule else { return }
-        
-        // Create schedule items from courses that have schedule info
-        let coursesWithSchedule = courseManager.courses.filter { course in
-            course.scheduleId == activeSchedule.id && course.hasScheduleInfo
-        }
-        
-        for course in coursesWithSchedule {
-            // Check if schedule item already exists
-            let existingItem = activeSchedule.scheduleItems.first { $0.id == course.id }
-            
-            if existingItem == nil {
-                // Create schedule item from course
-                let scheduleItem = course.toScheduleItem()
-                addScheduleItem(scheduleItem, to: activeSchedule.id)
-                print("🔄 ScheduleManager: Created schedule item from course: \(course.name)")
-            }
-        }
+        // DISABLED: This was causing duplication and conflicts
+        print("🔄 ScheduleManager: Course sync disabled to prevent conflicts")
     }
     
     private func syncScheduleItemsWithCourses(_ courses: [Course]) {
-        guard let activeSchedule = activeSchedule else { return }
-        
-        // Prevent recursive updates by checking if we're already syncing
-        guard !isSyncing else { return }
-        
-        isSyncing = true
-        defer { isSyncing = false }
-        
-        // Remove schedule items for courses that no longer exist or don't have schedule info
-        let activeScheduleCourses = courses.filter { $0.scheduleId == activeSchedule.id }
-        let coursesWithSchedule = activeScheduleCourses.filter { $0.hasScheduleInfo }
-        let courseIds = Set(coursesWithSchedule.map { $0.id })
-        
-        // Remove schedule items that don't have corresponding courses
-        if let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == activeSchedule.id }) {
-            let itemsToRemove = scheduleCollections[scheduleIndex].scheduleItems.filter { item in
-                !courseIds.contains(item.id)
-            }
-            
-            for item in itemsToRemove {
-                scheduleCollections[scheduleIndex].scheduleItems.removeAll { $0.id == item.id }
-                print("🔄 ScheduleManager: Removed schedule item without corresponding course: \(item.title)")
-            }
-        }
-        
-        // Update existing schedule items and create new ones
-        for course in coursesWithSchedule {
-            if let scheduleIndex = scheduleCollections.firstIndex(where: { $0.id == activeSchedule.id }) {
-                if let itemIndex = scheduleCollections[scheduleIndex].scheduleItems.firstIndex(where: { $0.id == course.id }) {
-                    // Update existing schedule item
-                    scheduleCollections[scheduleIndex].scheduleItems[itemIndex] = course.toScheduleItem()
-                } else {
-                    // Create new schedule item
-                    let scheduleItem = course.toScheduleItem()
-                    scheduleCollections[scheduleIndex].scheduleItems.append(scheduleItem)
-                    print("🔄 ScheduleManager: Created schedule item from course: \(course.name)")
-                }
-            }
-        }
-        
-        saveSchedulesLocally()
+        // DISABLED: This was causing circular updates
+        print("🔄 ScheduleManager: Schedule item sync disabled to prevent conflicts")
     }
     
     // MARK: - Cache Reload

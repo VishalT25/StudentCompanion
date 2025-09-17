@@ -74,103 +74,86 @@ struct GPAView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                // Stunning header section with analytics
-                spectacularHeaderSection
-                    .padding(.top, 24)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 32)
-                
-                ScrollView {
-                    LazyVStack(spacing: 20) {
-                        // Beautiful courses grid
-                        coursesGridSection
-                        
-                        Spacer(minLength: 120)
+        mainContent
+            .applyBaseModifiers(
+                showingAddCourseSheet: $showingAddCourseSheet,
+                showConflictResolution: $showConflictResolution,
+                showingSemesterDetail: $showingSemesterDetail,
+                showingYearDetail: $showingYearDetail,
+                courseManager: courseManager,
+                themeManager: themeManager,
+                scheduleManager: scheduleManager,
+                orphanedData: orphanedData,
+                semesterAverage: semesterAverage,
+                semesterGPA: semesterGPA,
+                activeScheduleCourses: activeScheduleCourses,
+                usePercentageGrades: usePercentageGrades,
+                selectedYearScheduleIDs: $selectedYearScheduleIDs,
+                onResolution: handleConflictResolution
+            )
+            .applyLifecycleModifiers(
+                courseManager: courseManager,
+                scheduleManager: scheduleManager,
+                selectedYearScheduleIDs: selectedYearScheduleIDs,
+                onAppear: {
+                    // Only load courses if we don't have any data yet
+                    // This prevents wiping data when switching tabs
+                    if courseManager.courses.isEmpty {
+                        courseManager.loadCourses()
                     }
-                    .padding(.horizontal, 20)
-                }
+                    startAnimations()
+                    loadYearSelectionFromStorage()
+                    
+                    // Only set manager references once
+                    courseManager.setScheduleManager(scheduleManager)
+                    scheduleManager.setCourseManager(courseManager)
+                },
+                onRefresh: refreshData,
+                onYearSelectionChange: saveYearSelectionToStorage,
+                onScheduleCollectionsChange: syncSelectionWithAvailableSchedules
+            )
+            .applyAlertModifiers(
+                showDeleteCourseAlert: $showDeleteCourseAlert,
+                showBulkDeleteAlert: $showBulkDeleteAlert,
+                bulkSelectionManager: bulkSelectionManager,
+                deleteAlert: deleteAlert,
+                bulkDeleteAlert: bulkDeleteAlert
+            )
+            .toolbar {
+                toolbarContent
             }
+    }
+    
+    // MARK: - Main Content
+    private var mainContent: some View {
+        ZStack(alignment: .bottomTrailing) {
+            contentView
             
             // Magical floating add button
             if !bulkSelectionManager.isSelecting {
                 magicalFloatingAddButton
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $showingAddCourseSheet) {
-            EnhancedAddCourseView(courseManager: courseManager)
-                .environmentObject(themeManager)
-                .environmentObject(scheduleManager)
-        }
-        .sheet(isPresented: $showConflictResolution) {
-            DataConflictResolutionView(
-                orphanedData: OrphanedDataResult(
-                    orphanedCourses: orphanedData.courses,
-                    orphanedScheduleItems: orphanedData.scheduleItems.map { scheduleItem in
-                        ScheduleItemWithScheduleID(
-                            scheduleItem: scheduleItem,
-                            scheduleId: UUID(),
-                            scheduleName: "Unknown Schedule"
-                        )
-                    }
-                ),
-                onResolution: handleConflictResolution
-            )
-            .environmentObject(themeManager)
-            .environmentObject(courseManager)
-            .environmentObject(scheduleManager)
-        }
-        .sheet(isPresented: $showingSemesterDetail) {
-            SemesterDetailView(
-                semesterAverage: semesterAverage,
-                semesterGPA: semesterGPA,
-                courses: activeScheduleCourses,
-                usePercentageGrades: usePercentageGrades,
-                themeManager: themeManager,
-                activeSchedule: scheduleManager.activeSchedule
-            )
-        }
-        .sheet(isPresented: $showingYearDetail) {
-            YearDetailView(
-                allSchedules: Array(scheduleManager.scheduleCollections),
-                allCourses: courseManager.courses,
-                selectedScheduleIDs: $selectedYearScheduleIDs,
-                usePercentageGrades: usePercentageGrades,
-                themeManager: themeManager
-            )
-        }
-        .onAppear {
-            courseManager.loadCourses()
-            startAnimations()
-            loadYearSelectionFromStorage()
+    }
+    
+    // MARK: - Content View
+    private var contentView: some View {
+        VStack(spacing: 0) {
+            // Stunning header section with analytics
+            spectacularHeaderSection
+                .padding(.top, 24)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 32)
             
-            // NEW: Set up cross-references between managers
-            courseManager.setScheduleManager(scheduleManager)
-            scheduleManager.setCourseManager(courseManager)
-        }
-        .refreshable {
-            await refreshData()
-        }
-        .onChange(of: selectedYearScheduleIDs) { oldValue, newValue in
-            saveYearSelectionToStorage()
-        }
-        .onChange(of: scheduleManager.scheduleCollections.map { $0.id }) {
-            syncSelectionWithAvailableSchedules()
-        }
-        .toolbar {
-            toolbarContent
-        }
-        .alert("Delete Course?", isPresented: $showDeleteCourseAlert) {
-            deleteAlert
-        } message: {
-            Text("This will remove the course and its assignments.")
-        }
-        .alert("Delete Selected Courses?", isPresented: $showBulkDeleteAlert) {
-            bulkDeleteAlert
-        } message: {
-            Text("This will permanently delete \(bulkSelectionManager.selectedCount()) course(s) and all their assignments.")
+            ScrollView {
+                LazyVStack(spacing: 20) {
+                    // Beautiful courses grid
+                    coursesGridSection
+                    
+                    Spacer(minLength: 120)
+                }
+                .padding(.horizontal, 20)
+            }
         }
     }
     
@@ -675,6 +658,119 @@ struct GPAView: View {
         saveYearSelectionToStorage()
     }
 
+}
+
+// MARK: - View Modifier Extensions
+extension View {
+    @ViewBuilder
+    func applyBaseModifiers(
+        showingAddCourseSheet: Binding<Bool>,
+        showConflictResolution: Binding<Bool>,
+        showingSemesterDetail: Binding<Bool>,
+        showingYearDetail: Binding<Bool>,
+        courseManager: UnifiedCourseManager,
+        themeManager: ThemeManager,
+        scheduleManager: ScheduleManager,
+        orphanedData: (courses: [Course], scheduleItems: [ScheduleItem]),
+        semesterAverage: Double?,
+        semesterGPA: Double?,
+        activeScheduleCourses: [Course],
+        usePercentageGrades: Bool,
+        selectedYearScheduleIDs: Binding<Set<UUID>>,
+        onResolution: @escaping (OrphanResolutionAction) -> Void
+    ) -> some View {
+        self
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .sheet(isPresented: showingAddCourseSheet) {
+                EnhancedAddCourseWithMeetingsView()
+                    .environmentObject(themeManager)
+                    .environmentObject(scheduleManager)
+                    .environmentObject(courseManager)
+            }
+            .sheet(isPresented: showConflictResolution) {
+                DataConflictResolutionView(
+                    orphanedData: OrphanedDataResult(
+                        orphanedCourses: orphanedData.courses,
+                        orphanedScheduleItems: orphanedData.scheduleItems.map { scheduleItem in
+                            ScheduleItemWithScheduleID(
+                                scheduleItem: scheduleItem,
+                                scheduleId: UUID(),
+                                scheduleName: "Unknown Schedule"
+                            )
+                        }
+                    ),
+                    onResolution: onResolution
+                )
+                .environmentObject(themeManager)
+                .environmentObject(courseManager)
+                .environmentObject(scheduleManager)
+            }
+            .sheet(isPresented: showingSemesterDetail) {
+                SemesterDetailView(
+                    semesterAverage: semesterAverage,
+                    semesterGPA: semesterGPA,
+                    courses: activeScheduleCourses,
+                    usePercentageGrades: usePercentageGrades,
+                    themeManager: themeManager,
+                    activeSchedule: scheduleManager.activeSchedule
+                )
+            }
+            .sheet(isPresented: showingYearDetail) {
+                YearDetailView(
+                    allSchedules: Array(scheduleManager.scheduleCollections),
+                    allCourses: courseManager.courses,
+                    selectedScheduleIDs: selectedYearScheduleIDs,
+                    usePercentageGrades: usePercentageGrades,
+                    themeManager: themeManager
+                )
+            }
+    }
+    
+    @ViewBuilder
+    func applyLifecycleModifiers(
+        courseManager: UnifiedCourseManager,
+        scheduleManager: ScheduleManager,
+        selectedYearScheduleIDs: Set<UUID>,
+        onAppear: @escaping () -> Void,
+        onRefresh: @escaping () async -> Void,
+        onYearSelectionChange: @escaping () -> Void,
+        onScheduleCollectionsChange: @escaping () -> Void
+    ) -> some View {
+        self
+            .onAppear {
+                onAppear()
+            }
+            .refreshable {
+                await onRefresh()
+            }
+            .onChange(of: selectedYearScheduleIDs) { oldValue, newValue in
+                onYearSelectionChange()
+            }
+            .onChange(of: scheduleManager.scheduleCollections.map { $0.id }) {
+                onScheduleCollectionsChange()
+            }
+    }
+    
+    @ViewBuilder
+    func applyAlertModifiers(
+        showDeleteCourseAlert: Binding<Bool>,
+        showBulkDeleteAlert: Binding<Bool>,
+        bulkSelectionManager: BulkCourseSelectionManager,
+        deleteAlert: some View,
+        bulkDeleteAlert: some View
+    ) -> some View {
+        self
+            .alert("Delete Course?", isPresented: showDeleteCourseAlert) {
+                deleteAlert
+            } message: {
+                Text("This will remove the course and its assignments.")
+            }
+            .alert("Delete Selected Courses?", isPresented: showBulkDeleteAlert) {
+                bulkDeleteAlert
+            } message: {
+                Text("This will permanently delete \(bulkSelectionManager.selectedCount()) course(s) and all their assignments.")
+            }
+    }
 }
 
 // MARK: - Mini Average Pill Component

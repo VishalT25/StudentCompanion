@@ -562,34 +562,56 @@ struct UnifiedAddCourseView: View {
     
     private func createCourse() {
         guard let activeScheduleId = scheduleManager.activeScheduleID else {
-             ("No active schedule found")
+            print("No active schedule found")
             return
         }
         
-        // Create traditional course only
+        // Create course with metadata only (no time data)
         let newCourse = Course(
             scheduleId: activeScheduleId,
             name: courseName.trimmingCharacters(in: .whitespacesAndNewlines),
             iconName: selectedIconName,
             colorHex: selectedColor.toHex() ?? Color.blue.toHex()!,
-            startTime: startTime,
-            endTime: endTime,
-            daysOfWeek: Array(selectedDays),
-            location: location.trimmingCharacters(in: .whitespacesAndNewlines),
-            instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines)
+            creditHours: 3.0,
+            courseCode: "",
+            section: "",
+            instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+            location: location.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         
-        newCourse.reminderTime = reminderTime
-        newCourse.isLiveActivityEnabled = isLiveActivityEnabled
+        // Create a meeting with the schedule information
+        if !selectedDays.isEmpty && startTime < endTime {
+            let meeting = CourseMeeting(
+                courseId: newCourse.id,
+                scheduleId: activeScheduleId,
+                meetingType: .lecture, // Default to lecture
+                startTime: startTime,
+                endTime: endTime,
+                daysOfWeek: selectedDays.map { $0.rawValue },
+                location: location.trimmingCharacters(in: .whitespacesAndNewlines),
+                instructor: instructor.trimmingCharacters(in: .whitespacesAndNewlines),
+                reminderTime: reminderTime,
+                isLiveActivityEnabled: isLiveActivityEnabled
+            )
+            
+            // Add the meeting to the course
+            newCourse.addMeeting(meeting)
+        }
         
         courseManager.addCourse(newCourse)
         
         if newCourse.hasScheduleInfo {
-            let scheduleItem = newCourse.toScheduleItem()
-            scheduleManager.addScheduleItem(scheduleItem, to: activeScheduleId)
+            // Generate schedule items from the meetings for backward compatibility
+            let scheduleItems = newCourse.meetings.map { meeting in
+                meeting.toScheduleItem(using: newCourse)
+            }
+            
+            for scheduleItem in scheduleItems {
+                scheduleManager.addScheduleItem(scheduleItem, to: activeScheduleId)
+            }
         }
         
-         ("Created traditional course")
+        print("Created course with \(newCourse.meetings.count) meeting(s)")
         dismiss()
     }
 }

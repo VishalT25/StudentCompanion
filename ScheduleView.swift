@@ -14,7 +14,6 @@ struct ScheduleView: View {
     @State private var currentWeekOffset = 0
     @State private var showingCalendarView = false
     @State private var showingAddCourse = false
-    @State private var pulseAnimation: Double = 1.0
     @Environment(\.colorScheme) var colorScheme
     
     @State private var weekItemsCache: [Date: [ScheduleItem]] = [:]
@@ -35,10 +34,6 @@ struct ScheduleView: View {
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
-    }
-
-    private var shouldPulse: Bool {
-        colorScheme == .dark && !isInteracting
     }
 
     private var currentWeekDates: [Date] {
@@ -83,14 +78,10 @@ struct ScheduleView: View {
                 .environmentObject(themeManager)
         }
         .sheet(isPresented: $showingAddCourse) {
-            EnhancedAddCourseView(courseManager: courseManager)
+            EnhancedAddCourseWithMeetingsView()
                 .environmentObject(themeManager)
                 .environmentObject(scheduleManager)
-        }
-        .onChange(of: showingAddCourse) { _, isPresented in
-            if !isPresented {
-                courseManager.loadCourses()
-            }
+                .environmentObject(courseManager)
         }
         .sheet(isPresented: $showingAcademicCalendarManager) {
             AcademicCalendarManagementView()
@@ -113,12 +104,15 @@ struct ScheduleView: View {
             )
             .environmentObject(scheduleManager)
             .environmentObject(themeManager)
+            .environmentObject(courseManager)
             .interactiveDismissDisabled(false)
             .presentationDetents([.large])
             .presentationDragIndicator(.hidden)
         }
         .onAppear {
             setupInitialDate()
+            
+            // Only set manager references once to prevent conflicts
             scheduleManager.setCourseManager(courseManager)
             courseManager.setScheduleManager(scheduleManager)
 
@@ -127,9 +121,11 @@ struct ScheduleView: View {
                 rebuildWeekCache(for: active)
             }
 
-            updatePulseAnimation()
-
-            Task { await courseManager.refreshCourseData() }
+            // Only refresh if we don't have course data loaded
+            // This prevents wiping data when switching tabs
+            if courseManager.courses.isEmpty {
+                Task { await courseManager.refreshCourseData() }
+            }
         }
         .onChange(of: scheduleManager.activeScheduleID) { _, _ in
             Task { await courseManager.refreshCourseData() }
@@ -151,24 +147,6 @@ struct ScheduleView: View {
         .onReceive(scheduleManager.objectWillChange) { _ in
             if let active = scheduleManager.activeSchedule {
                 requestCoalescedRebuild(for: active)
-            }
-        }
-        .onChange(of: colorScheme) { _, _ in
-            updatePulseAnimation()
-        }
-        .onChange(of: isInteracting) { _, _ in
-            updatePulseAnimation()
-        }
-    }
-
-    private func updatePulseAnimation() {
-        if shouldPulse {
-            withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
-                pulseAnimation = 1.15
-            }
-        } else {
-            withAnimation(.easeOut(duration: 0.2)) {
-                pulseAnimation = 1.0
             }
         }
     }
@@ -304,7 +282,7 @@ struct ScheduleView: View {
             weekNavigationView
         }
         .padding(.horizontal, 20)
-        .padding(.top, 16)
+        .padding(.top, 25)
         .padding(.bottom, 16)
         .background(Color.clear)
     }
@@ -324,13 +302,35 @@ struct ScheduleView: View {
                         Circle()
                             .fill(.ultraThinMaterial)
                             .overlay(
+                                // Subtle tint to feel like refracted color
+                                Circle()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                themeManager.currentTheme.secondaryColor.opacity(0.12),
+                                                Color.white.opacity(0.08)
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .blendMode(.plusLighter)
+                            )
+                            .overlay(
+                                // Inner rim for glass edge
+                                Circle()
+                                    .strokeBorder(Color.white.opacity(0.35), lineWidth: 0.6)
+                                    .blur(radius: 0.5)
+                                    .opacity(0.7)
+                            )
+                            .overlay(
+                                // Outer colored rim
                                 Circle()
                                     .stroke(themeManager.currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
                             )
-                    )
-                    .shadow(
-                        color: themeManager.currentTheme.primaryColor.opacity(0.1),
-                        radius: 6, x: 0, y: 3
+                            .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.1), radius: 6, x: 0, y: 3)
+                            .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.18), radius: 10, x: 0, y: 6)
+
                     )
             }
             
@@ -374,13 +374,35 @@ struct ScheduleView: View {
                         Circle()
                             .fill(.ultraThinMaterial)
                             .overlay(
+                                // Subtle tint to feel like refracted color
+                                Circle()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                themeManager.currentTheme.secondaryColor.opacity(0.12),
+                                                Color.white.opacity(0.08)
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .blendMode(.plusLighter)
+                            )
+                            .overlay(
+                                // Inner rim for glass edge
+                                Circle()
+                                    .strokeBorder(Color.white.opacity(0.35), lineWidth: 0.6)
+                                    .blur(radius: 0.5)
+                                    .opacity(0.7)
+                            )
+                            .overlay(
+                                // Outer colored rim
                                 Circle()
                                     .stroke(themeManager.currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
                             )
-                    )
-                    .shadow(
-                        color: themeManager.currentTheme.primaryColor.opacity(0.1),
-                        radius: 6, x: 0, y: 3
+                            .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.1), radius: 6, x: 0, y: 3)
+                            .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.18), radius: 10, x: 0, y: 6)
+
                     )
             }
         }
@@ -398,43 +420,18 @@ struct ScheduleView: View {
                     .foregroundColor(.white)
                     .frame(width: 52, height: 52)
                     .background(
-                        ZStack {
-                            Circle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            themeManager.currentTheme.secondaryColor,
-                                            themeManager.currentTheme.secondaryColor.opacity(0.8)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        themeManager.currentTheme.secondaryColor,
+                                        themeManager.currentTheme.secondaryColor.opacity(0.8)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
                                 )
-                            Circle()
-                                .fill(
-                                    RadialGradient(
-                                        colors: [
-                                            themeManager.currentTheme.darkModeAccentHue.opacity(0.4),
-                                            Color.clear
-                                        ],
-                                        center: .center,
-                                        startRadius: 0,
-                                        endRadius: 30
-                                    )
-                                )
-                                .scaleEffect(shouldPulse ? (pulseAnimation * 0.3 + 0.7) : 1.0)
-                                .opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity : 0.2)
-                        }
-                        .compositingGroup()
-                        .drawingGroup()
-                        .shadow(
-                            color: themeManager.currentTheme.secondaryColor.opacity(0.4),
-                            radius: 12, x: 0, y: 6
-                        )
-                        .shadow(
-                            color: themeManager.currentTheme.darkModeAccentHue.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.6 : 0.1),
-                            radius: 8, x: 0, y: 4
-                        )
+                            )
+                            .shadow(color: themeManager.currentTheme.secondaryColor.opacity(0.4), radius: 12, x: 0, y: 6)
                     )
             }
             .buttonStyle(MagicalButtonStyle())
@@ -445,56 +442,18 @@ struct ScheduleView: View {
                     .foregroundColor(.white)
                     .frame(width: 64, height: 64)
                     .background(
-                        ZStack {
-                            Circle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            themeManager.currentTheme.primaryColor,
-                                            themeManager.currentTheme.primaryColor.opacity(0.8)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        themeManager.currentTheme.primaryColor,
+                                        themeManager.currentTheme.primaryColor.opacity(0.8)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
                                 )
-                            Circle()
-                                .fill(
-                                    RadialGradient(
-                                        colors: [
-                                            themeManager.currentTheme.darkModeAccentHue.opacity(0.6),
-                                            Color.clear
-                                        ],
-                                        center: .center,
-                                        startRadius: 0,
-                                        endRadius: 40
-                                    )
-                                )
-                                .scaleEffect(shouldPulse ? (pulseAnimation * 0.3 + 0.7) : 1.0)
-                                .opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity : 0.3)
-                            Circle()
-                                .fill(
-                                    AngularGradient(
-                                        colors: [
-                                            Color.clear,
-                                            Color.white.opacity(0.4),
-                                            Color.clear,
-                                            Color.clear
-                                        ],
-                                        center: .center,
-                                        angle: .degrees(0)
-                                    )
-                                )
-                        }
-                        .compositingGroup()
-                        .drawingGroup()
-                        .shadow(
-                            color: themeManager.currentTheme.primaryColor.opacity(0.4),
-                            radius: 20, x: 0, y: 10
-                        )
-                        .shadow(
-                            color: themeManager.currentTheme.darkModeAccentHue.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.6 : 0.2),
-                            radius: 12, x: 0, y: 6
-                        )
+                            )
+                            .shadow(color: themeManager.currentTheme.primaryColor.opacity(0.4), radius: 16, x: 0, y: 8)
                     )
             }
             .buttonStyle(MagicalButtonStyle())
@@ -513,20 +472,9 @@ struct ScheduleView: View {
                     Spacer(minLength: 160)
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 20)
+                .padding(.top, 24)
             }
             .transaction { $0.disablesAnimations = true }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { _ in
-                        if !isInteracting { isInteracting = true }
-                    }
-                    .onEnded { _ in
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                            isInteracting = false
-                        }
-                    }
-            )
         } else {
             spectacularEmptyState
         }
@@ -616,6 +564,7 @@ struct ScheduleView: View {
                     Text(formatSelectedDate())
                         .font(.forma(.headline, weight: .bold))
                         .foregroundColor(.primary)
+                
                 }
                 
                 Spacer()
@@ -742,7 +691,7 @@ struct ScheduleView: View {
                                     themeManager.currentTheme.secondaryColor.opacity(0.2)
                                 ],
                                 startPoint: .topLeading,
-                                endPoint: .bottomTrailing
+                                endPoint: .trailing
                             ),
                             lineWidth: 2
                         )
@@ -771,12 +720,6 @@ struct ScheduleView: View {
                         )
                     )
                     .frame(width: 120 + CGFloat(index * 40), height: 120 + CGFloat(index * 40))
-                    .scaleEffect(pulseAnimation + Double(index) * 0.1)
-                    .animation(
-                        .easeInOut(duration: 3.0 + Double(index) * 0.5)
-                            .repeatForever(autoreverses: true),
-                        value: pulseAnimation
-                    )
             }
             Image(systemName: "calendar.badge.plus")
                 .font(.system(size: 48, weight: .light))
@@ -790,7 +733,6 @@ struct ScheduleView: View {
                         endPoint: .bottomTrailing
                     )
                 )
-                .scaleEffect(pulseAnimation * 0.95 + 0.05)
         }
     }
 
@@ -866,10 +808,13 @@ struct ScheduleView: View {
     private func scheduleItemsForDate(schedule: ScheduleCollection, date: Date, academicCalendar: AcademicCalendar?) -> [ScheduleItem] {
         let cal = Calendar.current
         let weekday = cal.component(.weekday, from: date)
+        
+        // Skip weekends entirely
         if weekday == 1 || weekday == 7 {
             return []
         }
         
+        // Check semester bounds
         if let start = schedule.semesterStartDate,
            let end = schedule.semesterEndDate {
             let day = cal.startOfDay(for: date)
@@ -878,6 +823,7 @@ struct ScheduleView: View {
             if day < s || day > e { return [] }
         }
         
+        // Check academic calendar
         if let calendar = academicCalendar {
             if !calendar.isDateWithinSemester(date) { return [] }
             if calendar.isBreakDay(date) { return [] }
@@ -886,27 +832,39 @@ struct ScheduleView: View {
         var items: [ScheduleItem] = []
         
         let coursesInSchedule = courseManager.courses.filter { $0.scheduleId == schedule.id }
-        var seenCourseIDs = Set<Course.ID>()
+        
+        print(" DEBUG: Found \(coursesInSchedule.count) courses for schedule \(schedule.id)")
+        
         for course in coursesInSchedule {
-            guard seenCourseIDs.insert(course.id).inserted else { continue }
-            if let item = course.toScheduleItem(for: date, in: schedule, calendar: academicCalendar) {
-                items.append(item)
+            print(" DEBUG: Course '\(course.name)' has \(course.meetings.count) meetings")
+            
+            for meeting in course.meetings {
+                print(" DEBUG: Checking meeting '\(meeting.displayName)' for date \(date.formatted(date: .abbreviated, time: .omitted))")
+                print(" DEBUG: - Meeting days: \(meeting.daysOfWeek)")
+                print(" DEBUG: - Target weekday: \(weekday)")
+                print(" DEBUG: - Should appear: \(meeting.shouldAppear(on: date, in: schedule, calendar: academicCalendar))")
+                
+                if meeting.shouldAppear(on: date, in: schedule, calendar: academicCalendar) {
+                    let item = ScheduleItem(
+                        id: meeting.id, 
+                        title: "\(course.name) - \(meeting.displayName)",
+                        startTime: meeting.startTime,
+                        endTime: meeting.endTime,
+                        daysOfWeek: meeting.daysOfWeek.compactMap { DayOfWeek(rawValue: $0) },
+                        location: meeting.location.isEmpty ? course.location : meeting.location,
+                        instructor: meeting.instructor.isEmpty ? course.instructor : meeting.instructor,
+                        color: course.color,
+                        skippedInstanceIdentifiers: meeting.skippedInstanceIdentifiers,
+                        isLiveActivityEnabled: meeting.isLiveActivityEnabled,
+                        reminderTime: meeting.reminderTime
+                    )
+                    items.append(item)
+                    print(" DEBUG: Added schedule item for meeting '\(meeting.displayName)'")
+                }
             }
         }
         
-        let dayOfWeek = DayOfWeek.from(weekday: weekday)
-        let legacy = schedule.scheduleItems.filter { item in
-            let notSkipped = !item.isSkipped(onDate: date)
-            if item.daysOfWeek.isEmpty {
-                return notSkipped
-            }
-            return item.daysOfWeek.contains(dayOfWeek) && notSkipped
-        }
-        items.append(contentsOf: legacy)
-        
-        var seenItemIDs = Set<ScheduleItem.ID>()
-        items = items.filter { seenItemIDs.insert($0.id).inserted }
-        
+        print(" DEBUG: Generated \(items.count) schedule items for date")
         return items
     }
 

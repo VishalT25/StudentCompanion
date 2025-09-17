@@ -273,7 +273,7 @@ struct DatabaseCategory: DatabaseModel {
     }
 }
 
-// MARK: - Courses Table (Simplified for Traditional Schedules Only)
+// MARK: - Courses Table (Simplified - NO MORE TIME DATA)
 struct DatabaseCourse: DatabaseModel {
     static let tableName = "courses"
     
@@ -285,23 +285,12 @@ struct DatabaseCourse: DatabaseModel {
     let color_hex: String
     let final_grade_goal: String?
     let weight_of_remaining_tasks: String?
-    let start_time: String?
-    let end_time: String?
-    let days_of_week: [Int]?
-    let location: String?
-    let instructor: String?
-    let skipped_instances: [String]?
-    let reminder_time: Int?
-    let is_live_activity_enabled: Bool?
-    let is_rotating: Bool?
-    let day1_start_time: String?
-    let day1_end_time: String?
-    let day2_start_time: String?
-    let day2_end_time: String?
-    // KEEP: rotating_day for legacy compatibility
-    let rotating_day: Int?
+    let course_code: String?
+    let section: String?
+    let credit_hours: Double?
     let created_at: String?
     let updated_at: String?
+    
     
     func toLocal() -> Course {
         let scheduleId = schedule_id.flatMap { UUID(uuidString: $0) } ?? UUID()
@@ -312,27 +301,16 @@ struct DatabaseCourse: DatabaseModel {
             name: name,
             iconName: icon_name,
             colorHex: color_hex,
-            assignments: [],
+            assignments: [], // Will be loaded separately
             finalGradeGoal: final_grade_goal ?? "",
             weightOfRemainingTasks: weight_of_remaining_tasks ?? "",
-            startTime: start_time.flatMap { Date.fromTimeString($0) },
-            endTime: end_time.flatMap { Date.fromTimeString($0) },
-            daysOfWeek: (days_of_week ?? []).compactMap { DayOfWeek(rawValue: $0) },
-            location: location ?? "",
-            instructor: instructor ?? "",
-            creditHours: 3.0,
-            courseCode: "",
-            section: "",
-            isRotating: is_rotating ?? false,
-            day1StartTime: day1_start_time.flatMap { Date.fromTimeString($0) },
-            day1EndTime: day1_end_time.flatMap { Date.fromTimeString($0) },
-            day2StartTime: day2_start_time.flatMap { Date.fromTimeString($0) },
-            day2EndTime: day2_end_time.flatMap { Date.fromTimeString($0) }
+            creditHours: credit_hours ?? 3.0,
+            courseCode: course_code ?? "",
+            section: section ?? "",
+            instructor: "", // Default empty - will be populated from meetings
+            location: "",   // Default empty - will be populated from meetings
+            meetings: [] // Will be loaded separately
         )
-        
-        course.skippedInstanceIdentifiers = Set(skipped_instances ?? [])
-        course.reminderTime = reminder_time.flatMap { ReminderTime(rawValue: $0) } ?? .none
-        course.isLiveActivityEnabled = is_live_activity_enabled ?? true
         
         return course
     }
@@ -346,20 +324,9 @@ struct DatabaseCourse: DatabaseModel {
         self.color_hex = local.colorHex
         self.final_grade_goal = local.finalGradeGoal
         self.weight_of_remaining_tasks = local.weightOfRemainingTasks
-        self.start_time = local.isRotating ? nil : local.startTime?.toTimeString()
-        self.end_time = local.isRotating ? nil : local.endTime?.toTimeString()
-        self.days_of_week = local.isRotating ? [] : local.daysOfWeek.map { $0.rawValue }
-        self.location = local.location
-        self.instructor = local.instructor
-        self.skipped_instances = Array(local.skippedInstanceIdentifiers)
-        self.reminder_time = local.reminderTime.rawValue
-        self.is_live_activity_enabled = local.isLiveActivityEnabled
-        self.is_rotating = local.isRotating
-        self.day1_start_time = local.day1StartTime?.toTimeString()
-        self.day1_end_time = local.day1EndTime?.toTimeString()
-        self.day2_start_time = local.day2StartTime?.toTimeString()
-        self.day2_end_time = local.day2EndTime?.toTimeString()
-        self.rotating_day = nil
+        self.course_code = local.courseCode
+        self.section = local.section
+        self.credit_hours = local.creditHours
         self.created_at = nil
         self.updated_at = nil
     }
@@ -777,6 +744,7 @@ enum UserRole: String, CaseIterable, Codable {
     }
 }
 
+// MARK: - Course Meetings Table (Enhanced)
 struct DatabaseCourseMeeting: DatabaseModel {
     static let tableName = "course_meetings"
     
@@ -784,28 +752,141 @@ struct DatabaseCourseMeeting: DatabaseModel {
     let user_id: String?
     let course_id: String
     let schedule_id: String?
-    let rotation_label: String?
-    let rotation_index: Int?
+    let meeting_type: String
+    let meeting_label: String?
     let start_time: String
     let end_time: String
     let location: String?
     let instructor: String?
+    let days_of_week: [Int]?
+    let is_rotating: Bool?
+    let rotation_label: String?
+    let rotation_pattern: String? // String representation of JSON
     let reminder_time: Int?
     let is_live_activity_enabled: Bool?
     let skipped_instances: [String]?
     let created_at: String?
     let updated_at: String?
     
+    // Custom coding keys to handle the rotation_pattern properly
+    enum CodingKeys: String, CodingKey {
+        case id, user_id, course_id, schedule_id, meeting_type, meeting_label
+        case start_time, end_time, location, instructor, days_of_week
+        case is_rotating, rotation_label, rotation_pattern
+        case reminder_time, is_live_activity_enabled, skipped_instances
+        case created_at, updated_at
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        id = try container.decode(String.self, forKey: .id)
+        user_id = try container.decodeIfPresent(String.self, forKey: .user_id)
+        course_id = try container.decode(String.self, forKey: .course_id)
+        schedule_id = try container.decodeIfPresent(String.self, forKey: .schedule_id)
+        meeting_type = try container.decode(String.self, forKey: .meeting_type)
+        meeting_label = try container.decodeIfPresent(String.self, forKey: .meeting_label)
+        start_time = try container.decode(String.self, forKey: .start_time)
+        end_time = try container.decode(String.self, forKey: .end_time)
+        location = try container.decodeIfPresent(String.self, forKey: .location)
+        instructor = try container.decodeIfPresent(String.self, forKey: .instructor)
+        days_of_week = try container.decodeIfPresent([Int].self, forKey: .days_of_week)
+        is_rotating = try container.decodeIfPresent(Bool.self, forKey: .is_rotating)
+        rotation_label = try container.decodeIfPresent(String.self, forKey: .rotation_label)
+        
+        // Handle rotation_pattern which can be either a string, dictionary, or null
+        if container.contains(.rotation_pattern) {
+            do {
+                let isNull = try container.decodeNil(forKey: .rotation_pattern)
+                if !isNull {
+                    // Try string first
+                    if let stringValue = try? container.decode(String.self, forKey: .rotation_pattern) {
+                        rotation_pattern = stringValue
+                    } else {
+                        // If it's not a string, it's probably an object - just store empty JSON
+                        rotation_pattern = "{}"
+                        print("🔄 DatabaseCourseMeeting: Converting non-string rotation_pattern to empty JSON")
+                    }
+                } else {
+                    rotation_pattern = nil
+                }
+            } catch {
+                // If we can't determine if it's null, try to decode as string
+                if let stringValue = try? container.decode(String.self, forKey: .rotation_pattern) {
+                    rotation_pattern = stringValue
+                } else {
+                    rotation_pattern = "{}"
+                }
+            }
+        } else {
+            rotation_pattern = nil
+        }
+        
+        reminder_time = try container.decodeIfPresent(Int.self, forKey: .reminder_time)
+        is_live_activity_enabled = try container.decodeIfPresent(Bool.self, forKey: .is_live_activity_enabled)
+        skipped_instances = try container.decodeIfPresent([String].self, forKey: .skipped_instances)
+        created_at = try container.decodeIfPresent(String.self, forKey: .created_at)
+        updated_at = try container.decodeIfPresent(String.self, forKey: .updated_at)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(user_id, forKey: .user_id)
+        try container.encode(course_id, forKey: .course_id)
+        try container.encodeIfPresent(schedule_id, forKey: .schedule_id)
+        try container.encode(meeting_type, forKey: .meeting_type)
+        try container.encodeIfPresent(meeting_label, forKey: .meeting_label)
+        try container.encode(start_time, forKey: .start_time)
+        try container.encode(end_time, forKey: .end_time)
+        try container.encodeIfPresent(location, forKey: .location)
+        try container.encodeIfPresent(instructor, forKey: .instructor)
+        try container.encodeIfPresent(days_of_week, forKey: .days_of_week)
+        try container.encodeIfPresent(is_rotating, forKey: .is_rotating)
+        try container.encodeIfPresent(rotation_label, forKey: .rotation_label)
+        try container.encodeIfPresent(rotation_pattern, forKey: .rotation_pattern)
+        try container.encodeIfPresent(reminder_time, forKey: .reminder_time)
+        try container.encodeIfPresent(is_live_activity_enabled, forKey: .is_live_activity_enabled)
+        try container.encodeIfPresent(skipped_instances, forKey: .skipped_instances)
+        try container.encodeIfPresent(created_at, forKey: .created_at)
+        try container.encodeIfPresent(updated_at, forKey: .updated_at)
+    }
+    
     func toLocal() -> CourseMeeting {
-        CourseMeeting(
+        // Parse rotation pattern from JSON string
+        var rotationPatternDict: [String: Any]? = nil
+        if let patternString = rotation_pattern,
+           !patternString.isEmpty,
+           patternString != "{}",
+           let data = patternString.data(using: .utf8) {
+            rotationPatternDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        }
+        
+        // Extract rotation index from rotation_label if it's numeric
+        var rotationIndex: Int? = nil
+        if let label = rotation_label {
+            if label.lowercased().contains("day") {
+                // Extract number from "Day 1", "Day 2", etc.
+                let numbers = label.components(separatedBy: CharacterSet.decimalDigits.inverted).compactMap { Int($0) }
+                rotationIndex = numbers.first
+            }
+        }
+        
+        return CourseMeeting(
             id: UUID(uuidString: id) ?? UUID(),
             userId: user_id.flatMap { UUID(uuidString: $0) },
             courseId: UUID(uuidString: course_id) ?? UUID(),
             scheduleId: schedule_id.flatMap { UUID(uuidString: $0) },
+            meetingType: MeetingType(rawValue: meeting_type) ?? .lecture,
+            meetingLabel: meeting_label,
+            isRotating: is_rotating ?? false,
             rotationLabel: rotation_label,
-            rotationIndex: rotation_index,
+            rotationPattern: rotationPatternDict,
+            rotationIndex: rotationIndex,
             startTime: Date.fromTimeString(start_time),
             endTime: Date.fromTimeString(end_time),
+            daysOfWeek: days_of_week ?? [],
             location: location ?? "",
             instructor: instructor ?? "",
             reminderTime: reminder_time.flatMap { ReminderTime(rawValue: $0) } ?? .none,
@@ -819,15 +900,28 @@ struct DatabaseCourseMeeting: DatabaseModel {
         self.user_id = userId
         self.course_id = local.courseId.uuidString
         self.schedule_id = local.scheduleId?.uuidString
-        self.rotation_label = local.rotationLabel
-        self.rotation_index = local.rotationIndex
+        self.meeting_type = local.meetingType.rawValue
+        self.meeting_label = local.meetingLabel
         self.start_time = local.startTime.toTimeString()
         self.end_time = local.endTime.toTimeString()
-        self.location = local.location
-        self.instructor = local.instructor
+        self.location = local.location.isEmpty ? nil : local.location
+        self.instructor = local.instructor.isEmpty ? nil : local.instructor
+        self.days_of_week = local.daysOfWeek.isEmpty ? nil : local.daysOfWeek
+        self.is_rotating = local.isRotating
+        self.rotation_label = local.rotationLabel
+        
+        // Encode rotation pattern as JSON string
+        if let pattern = local.rotationPattern,
+           let data = try? JSONSerialization.data(withJSONObject: pattern),
+           let jsonString = String(data: data, encoding: .utf8) {
+            self.rotation_pattern = jsonString
+        } else {
+            self.rotation_pattern = nil
+        }
+        
         self.reminder_time = local.reminderTime.rawValue
         self.is_live_activity_enabled = local.isLiveActivityEnabled
-        self.skipped_instances = Array(local.skippedInstanceIdentifiers)
+        self.skipped_instances = local.skippedInstanceIdentifiers.isEmpty ? nil : Array(local.skippedInstanceIdentifiers)
         self.created_at = nil
         self.updated_at = nil
     }

@@ -20,6 +20,10 @@ struct SettingsView: View {
     @State private var syncStats: SyncStats?
     @Environment(\.dismiss) private var dismiss
     
+    // Add the AppStorage properties for GPA settings
+    @AppStorage("showCurrentGPA") private var showCurrentGPA: Bool = true
+    @AppStorage("usePercentageGrades") private var usePercentageGrades: Bool = false
+    
     private let showSyncSections = false
     
     var body: some View {
@@ -259,6 +263,65 @@ struct SettingsView: View {
                                 title: "Theme & Appearance",
                                 subtitle: "\(themeManager.currentTheme.rawValue) • \(themeManager.appearanceMode.displayName)"
                             )
+                        }
+                    }
+                    
+                    // Academic Settings
+                    Section(header: Text("Academic Settings").font(.forma(.footnote, weight: .medium))) {
+                        // Show GPA on Home Screen Toggle
+                        HStack(spacing: 12) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.blue.opacity(0.15))
+                                    .frame(width: 32, height: 32)
+                                Image(systemName: "graduationcap.fill")
+                                    .foregroundColor(.blue)
+                                    .font(.system(size: 16, weight: .semibold))
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Show GPA on Home Screen")
+                                    .foregroundColor(.primary)
+                                    .font(.forma(.body, weight: .semibold))
+                                Text("Display current average on quick actions")
+                                    .foregroundColor(.secondary)
+                                    .font(.forma(.subheadline))
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $showCurrentGPA)
+                                .labelsHidden()
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            showCurrentGPA.toggle()
+                        }
+                        
+                        // Grade Display Format Toggle
+                        HStack(spacing: 12) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.purple.opacity(0.15))
+                                    .frame(width: 32, height: 32)
+                                Image(systemName: "percent")
+                                    .foregroundColor(.purple)
+                                    .font(.system(size: 16, weight: .semibold))
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Grade Display Format")
+                                    .foregroundColor(.primary)
+                                    .font(.forma(.body, weight: .semibold))
+                                Text(usePercentageGrades ? "Show as percentage (85.5%)" : "Show as GPA scale (3.42)")
+                                    .foregroundColor(.secondary)
+                                    .font(.forma(.subheadline))
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $usePercentageGrades)
+                                .labelsHidden()
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            usePercentageGrades.toggle()
                         }
                     }
                     

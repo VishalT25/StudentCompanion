@@ -12,29 +12,40 @@ struct AppleCalendarSettingsView: View {
     @State private var pulse = false
     
     var body: some View {
-        NavigationView {
+        ZStack {
+            SpectacularBackground(themeManager: themeManager)
+            
+            ScrollView {
+                VStack(spacing: 24) {
+                    header
+                    statusCard
+                    toggleCard
+                    actionButtons
+                    footerNote
+                }
+                .padding(20)
+            }
+        }
+        .safeAreaInset(edge: .top) {
             ZStack {
-                SpectacularBackground(themeManager: themeManager)
+                Text("Apple Reminders")
+                    .font(.forma(.headline, weight: .bold))
+                    .foregroundColor(.primary)
                 
-                ScrollView {
-                    VStack(spacing: 24) {
-                        header
-                        statusCard
-                        toggleCard
-                        actionButtons
-                        footerNote
+                HStack {
+                    Button("Done") {
+                        dismiss()
                     }
-                    .padding(20)
+                    .font(.forma(.body, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.primaryColor)
+                    .buttonStyle(.plain)
+                    
+                    Spacer()
                 }
             }
-            .navigationTitle("Apple Reminders")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                        .font(.forma(.body))
-                }
-            }
+            .padding(.horizontal, 16)
+            .frame(height: 52)
+            .background(Color.clear)
         }
         .onAppear {
             refreshAuthorizationStatus()
