@@ -106,9 +106,9 @@ struct EnhancedCourseDetailView: View {
                 }
                 .background(GeometryReader { geometry in
                     Color.clear
-                        .preference(key: ScrollOffsetPreferenceKey.self, value: geometry.frame(in: .named("scroll")).minY)
+                        .preference(key: EnhancedCourseDetailScrollPreferenceKey.self, value: geometry.frame(in: .named("scroll")).minY)
                 })
-                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
+                .onPreferenceChange(EnhancedCourseDetailScrollPreferenceKey.self) { value in
                     if isViewReady && abs(scrollOffset - value) > 5 {
                         scrollOffset = value
                     }
@@ -699,7 +699,7 @@ struct ActionButton: View {
 
 // MARK: - Scroll Offset Preference Key
 
-struct ScrollOffsetPreferenceKey: PreferenceKey {
+struct EnhancedCourseDetailScrollPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {

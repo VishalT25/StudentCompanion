@@ -12,8 +12,14 @@ struct AddEditAcademicCalendarView: View {
     @State private var academicYear: String = ""
     @State private var startDate = Date()
     @State private var endDate = Date()
+    @State private var isCreating = false
+    @State private var errorMessage: String?
+    
+    // Animation states
     @State private var animationOffset: CGFloat = 0
     @State private var pulseAnimation: Double = 1.0
+    @State private var bounceAnimation: Double = 0
+    @State private var showContent = false
     
     private var isEditing: Bool {
         calendar != nil
@@ -25,154 +31,135 @@ struct AddEditAcademicCalendarView: View {
         endDate > startDate
     }
     
+    private var currentTheme: AppTheme {
+        themeManager.currentTheme
+    }
+    
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Compact Header Section
-                headerSection
+            ZStack {
+                // Spectacular animated background
+                spectacularBackground
                 
-                // Scrollable Content
-                ScrollView {
-                    VStack(spacing: 24) {
-                        // Hero icon section
-                        heroIconSection
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 20) {
+                        // Hero header section
+                        heroSection
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : -30)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.075), value: showContent)
                         
+                        // Form content
                         formContent
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : 50)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.15), value: showContent)
                         
+                        // Breaks management section (only when editing)
                         if isEditing, let cal = calendar {
                             breaksManagementSection(cal)
+                                .opacity(showContent ? 1 : 0)
+                                .offset(y: showContent ? 0 : 50)
+                                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.225), value: showContent)
                         }
                         
-                        actionButtonsSection
+                        Spacer(minLength: 20)
                     }
                     .padding(.horizontal, 24)
-                    .padding(.top, 16)
-                    .padding(.bottom, 32)
+                    .padding(.top, 20)
+                    .padding(.bottom, 30)
                 }
+                .refreshable { }
+                .disabled(true)
+                
+                // Floating action button
+                floatingActionButton
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationBarHidden(true)
-            .onAppear {
-                setup()
-                startAnimations()
-            }
         }
-    }
-    
-    private func startAnimations() {
-        withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
-            pulseAnimation = 1.15
-        }
-        
-        withAnimation(.linear(duration: 25).repeatForever(autoreverses: false)) {
-            animationOffset = 360
-        }
-    }
-    
-    private var headerSection: some View {
-        VStack(spacing: 0) {
-            // Compact Navigation Bar
-            HStack {
+        .navigationBarHidden(true)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(false)
+        .preferredColorScheme(.dark)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
                 Button("Cancel") {
                     dismiss()
                 }
-                .font(.forma(.callout, weight: .semibold))
-                .foregroundColor(themeManager.currentTheme.primaryColor)
-                
-                Spacer()
-                
-                Text(isEditing ? "Edit Calendar" : "New Calendar")
-                    .font(.forma(.headline, weight: .bold))
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                Button(isEditing ? "Save" : "Create") {
-                    saveCalendar()
-                }
-                .font(.forma(.callout, weight: .bold))
-                .foregroundColor(isValid ? themeManager.currentTheme.primaryColor : .secondary)
-                .disabled(!isValid)
+                .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 16)
         }
-        .background(
-            .regularMaterial,
-            in: Rectangle()
-        )
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.primary.opacity(0.1))
-                .frame(height: 0.5)
+        .alert("Error", isPresented: .constant(errorMessage != nil)) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+                .font(.forma(.body))
+        }
+        .onAppear {
+            setup()
+            startAnimations()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.225) {
+                showContent = true
+            }
         }
     }
     
-    private var heroIconSection: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                ForEach(0..<2, id: \.self) { index in
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    themeManager.currentTheme.primaryColor.opacity(0.12 - Double(index) * 0.04),
-                                    Color.clear
-                                ],
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: 50 + CGFloat(index * 20)
-                            )
-                        )
-                        .frame(width: 100 + CGFloat(index * 40), height: 100 + CGFloat(index * 40))
-                        .scaleEffect(pulseAnimation + Double(index) * 0.05)
-                }
-                
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    themeManager.currentTheme.primaryColor,
-                                    themeManager.currentTheme.secondaryColor
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 64, height: 64)
-                        .overlay(
-                            Circle()
-                                .fill(
-                                    AngularGradient(
-                                        colors: [
-                                            Color.clear,
-                                            Color.white.opacity(0.4),
-                                            Color.clear,
-                                            Color.clear
-                                        ],
-                                        center: .center,
-                                        angle: .degrees(animationOffset * 0.8)
-                                    )
-                                )
-                        )
-                        .shadow(
-                            color: themeManager.currentTheme.primaryColor.opacity(0.4),
-                            radius: 12, x: 0, y: 6
-                        )
-                    
-                    Image(systemName: isEditing ? "calendar.badge.checkmark" : "calendar.badge.plus")
-                        .font(.forma(.title2, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-            }
+    // MARK: - Spectacular Background
+    private var spectacularBackground: some View {
+        ZStack {
+            // Base gradient background
+            LinearGradient(
+                colors: [
+                    currentTheme.primaryColor.opacity(colorScheme == .dark ? 0.15 : 0.05),
+                    currentTheme.primaryColor.opacity(colorScheme == .dark ? 0.08 : 0.02),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
             
-            VStack(spacing: 8) {
-                Text(isEditing ? "Update Academic Calendar" : "Create Academic Calendar")
-                    .font(.forma(.title3, weight: .bold))
-                    .foregroundColor(.primary)
-                    .multilineTextAlignment(.center)
+            // Animated floating shapes
+            ForEach(0..<6, id: \.self) { index in
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                currentTheme.primaryColor.opacity(0.1 - Double(index) * 0.015),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 40 + CGFloat(index * 10)
+                        )
+                    )
+                    .frame(width: 80 + CGFloat(index * 20), height: 80 + CGFloat(index * 20))
+                    .offset(
+                        x: sin(animationOffset * 0.01 + Double(index)) * 50,
+                        y: cos(animationOffset * 0.008 + Double(index)) * 30
+                    )
+                    .opacity(0.3)
+                    .blur(radius: CGFloat(index * 2))
+            }
+        }
+    }
+    
+    // MARK: - Hero Section
+    private var heroSection: some View {
+        VStack(spacing: 16) {
+            VStack(spacing: 9) {
+                Text(isEditing ? "Edit Academic Calendar" : "Create Academic Calendar")
+                    .font(.forma(.largeTitle, weight: .bold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                currentTheme.primaryColor,
+                                currentTheme.secondaryColor
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
                 
                 Text("Manage semester dates, breaks, and holidays to keep all your schedules perfectly organized.")
                     .font(.forma(.subheadline))
@@ -181,281 +168,325 @@ struct AddEditAcademicCalendarView: View {
                     .lineLimit(3)
             }
         }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    currentTheme.primaryColor.opacity(0.3),
+                                    currentTheme.primaryColor.opacity(0.1)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                )
+                .shadow(
+                    color: currentTheme.primaryColor.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.3 : 0.15),
+                    radius: 20,
+                    x: 0,
+                    y: 10
+                )
+        )
     }
     
+    // MARK: - Form Content
     private var formContent: some View {
         VStack(spacing: 24) {
-            basicDetailsSection
-            dateRangeSection
-        }
-    }
-    
-    private var basicDetailsSection: some View {
-        VStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "text.alignleft")
-                        .font(.forma(.subheadline, weight: .semibold))
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .frame(width: 20)
-                    
-                    Text("Calendar Name")
-                        .font(.forma(.subheadline, weight: .semibold))
-                        .foregroundColor(.primary)
-                    
-                    Spacer()
-                }
+            // Basic Details Section
+            VStack(spacing: 20) {
+                Text("Calendar Details")
+                    .font(.forma(.title2, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 
-                TextField("e.g., Fall 2024 Semester", text: $name)
-                    .font(.forma(.body))
-                    .textFieldStyle(EnhancedTextFieldStyle(themeManager: themeManager))
-            }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "calendar")
-                        .font(.forma(.subheadline, weight: .semibold))
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .frame(width: 20)
+                VStack(spacing: 16) {
+                    StunningFormField(
+                        title: "Calendar Name",
+                        icon: "text.alignleft",
+                        placeholder: "Fall 2024 Semester",
+                        text: $name,
+                        courseColor: currentTheme.primaryColor,
+                        themeManager: themeManager,
+                        isValid: !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        errorMessage: "Please enter a calendar name",
+                        isFocused: false
+                    )
                     
-                    Text("Academic Year")
-                        .font(.forma(.subheadline, weight: .semibold))
-                        .foregroundColor(.primary)
-                    
-                    Spacer()
-                }
-                
-                TextField("e.g., 2024-2025", text: $academicYear)
-                    .font(.forma(.body))
-                    .textFieldStyle(EnhancedTextFieldStyle(themeManager: themeManager))
-            }
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.regularMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    themeManager.currentTheme.primaryColor.opacity(0.2),
-                                    themeManager.currentTheme.secondaryColor.opacity(0.15)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                )
-                .shadow(
-                    color: themeManager.currentTheme.primaryColor.opacity(0.08),
-                    radius: 12, x: 0, y: 6
-                )
-        )
-        .adaptiveCardDarkModeHue(
-            using: themeManager.currentTheme,
-            intensity: colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.4 : 0,
-            cornerRadius: 16
-        )
-    }
-    
-    private var dateRangeSection: some View {
-        VStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "calendar.badge.plus")
-                        .font(.forma(.subheadline, weight: .semibold))
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .frame(width: 20)
-                    
-                    Text("Start Date")
-                        .font(.forma(.subheadline, weight: .semibold))
-                        .foregroundColor(.primary)
-                    
-                    Spacer()
-                }
-                
-                DatePicker("", selection: $startDate, displayedComponents: .date)
-                    .datePickerStyle(.compact)
-                    .font(.forma(.body))
-                    .labelsHidden()
-            }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "calendar.badge.minus")
-                        .font(.forma(.subheadline, weight: .semibold))
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                        .frame(width: 20)
-                    
-                    Text("End Date")
-                        .font(.forma(.subheadline, weight: .semibold))
-                        .foregroundColor(.primary)
-                    
-                    Spacer()
-                }
-                
-                DatePicker("", selection: $endDate, displayedComponents: .date)
-                    .datePickerStyle(.compact)
-                    .font(.forma(.body))
-                    .labelsHidden()
-            }
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.regularMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    themeManager.currentTheme.primaryColor.opacity(0.2),
-                                    themeManager.currentTheme.secondaryColor.opacity(0.15)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                )
-                .shadow(
-                    color: themeManager.currentTheme.primaryColor.opacity(0.08),
-                    radius: 12, x: 0, y: 6
-                )
-        )
-        .adaptiveCardDarkModeHue(
-            using: themeManager.currentTheme,
-            intensity: colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.4 : 0,
-            cornerRadius: 16
-        )
-    }
-    
-    private func breaksManagementSection(_ cal: AcademicCalendar) -> some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Breaks & Holidays")
-                        .font(.forma(.title3, weight: .bold))
-                        .foregroundColor(.primary)
-                    
-                    Text("\(cal.breaks.count) break\(cal.breaks.count == 1 ? "" : "s") configured")
-                        .font(.forma(.subheadline))
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                NavigationLink {
-                    AcademicCalendarEditorView(academicCalendar: $calendar)
-                        .environmentObject(academicCalendarManager)
-                        .environmentObject(themeManager)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Manage")
-                            .font(.forma(.subheadline, weight: .semibold))
-                        Image(systemName: "chevron.right")
-                            .font(.forma(.caption, weight: .bold))
-                    }
-                    .foregroundColor(themeManager.currentTheme.primaryColor)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(
-                        Capsule()
-                            .fill(themeManager.currentTheme.primaryColor.opacity(0.12))
-                            .overlay(
-                                Capsule()
-                                    .stroke(themeManager.currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
-                            )
+                    StunningFormField(
+                        title: "Academic Year",
+                        icon: "calendar",
+                        placeholder: "2024-2025",
+                        text: $academicYear,
+                        courseColor: currentTheme.primaryColor,
+                        themeManager: themeManager,
+                        isValid: !academicYear.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        errorMessage: "Please enter an academic year",
+                        isFocused: false
                     )
                 }
-                .buttonStyle(.plain)
             }
-            .padding(20)
+            .padding(.vertical, 24)
+            .padding(.horizontal, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                    )
+            )
+            
+            // Date Range Section
+            VStack(spacing: 20) {
+                Text("Academic Period")
+                    .font(.forma(.title2, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                
+                VStack(spacing: 16) {
+                    datePickerField(
+                        title: "Start Date",
+                        icon: "calendar.badge.plus",
+                        selection: $startDate
+                    )
+                    
+                    datePickerField(
+                        title: "End Date",
+                        icon: "calendar.badge.minus",
+                        selection: $endDate,
+                        range: startDate...
+                    )
+                }
+            }
+            .padding(.vertical, 24)
+            .padding(.horizontal, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                    )
+            )
         }
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.regularMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    themeManager.currentTheme.primaryColor.opacity(0.2),
-                                    themeManager.currentTheme.secondaryColor.opacity(0.15)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                )
-                .shadow(
-                    color: themeManager.currentTheme.primaryColor.opacity(0.08),
-                    radius: 12, x: 0, y: 6
-                )
-        )
-        .adaptiveCardDarkModeHue(
-            using: themeManager.currentTheme,
-            intensity: colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.4 : 0,
-            cornerRadius: 16
-        )
     }
     
-    private var actionButtonsSection: some View {
-        VStack(spacing: 16) {
-            Button(action: saveCalendar) {
-                HStack(spacing: 12) {
-                    Image(systemName: isEditing ? "checkmark.circle.fill" : "plus.circle.fill")
-                        .font(.forma(.title3, weight: .bold))
-                    
-                    Text(isEditing ? "Save Changes" : "Create Calendar")
-                        .font(.forma(.headline, weight: .bold))
-                }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(
+    private func datePickerField(
+        title: String,
+        icon: String,
+        selection: Binding<Date>,
+        range: PartialRangeFrom<Date>? = nil
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.forma(.subheadline))
+                    .foregroundColor(currentTheme.primaryColor)
+                
+                Text(title)
+                    .font(.forma(.subheadline, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+            if let range = range {
+                DatePicker("", selection: selection, in: range, displayedComponents: .date)
+                    .datePickerStyle(.compact)
+                    .labelsHidden()
+                    .colorScheme(.dark)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+            } else {
+                DatePicker("", selection: selection, displayedComponents: .date)
+                    .datePickerStyle(.compact)
+                    .labelsHidden()
+                    .colorScheme(.dark)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+            }
+        }
+    }
+    
+    // MARK: - Breaks Management Section
+    private func breaksManagementSection(_ cal: AcademicCalendar) -> some View {
+        VStack(spacing: 20) {
+            Text("Breaks & Holidays")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            VStack(spacing: 16) {
+                HStack(spacing: 16) {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        isValid ? themeManager.currentTheme.primaryColor : .gray,
-                                        isValid ? themeManager.currentTheme.secondaryColor.opacity(0.8) : .gray
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
+                        Circle()
+                            .fill(currentTheme.primaryColor.opacity(0.2))
+                            .frame(width: 50, height: 50)
+                            .overlay(
+                                Circle()
+                                    .stroke(currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
                             )
                         
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.3),
-                                        Color.clear
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
+                        Image(systemName: "calendar.badge.checkmark")
+                            .font(.forma(.title3, weight: .bold))
+                            .foregroundColor(currentTheme.primaryColor)
                     }
-                    .shadow(
-                        color: isValid ? themeManager.currentTheme.primaryColor.opacity(0.4) : .gray.opacity(0.2),
-                        radius: 12, x: 0, y: 6
-                    )
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Manage Breaks")
+                            .font(.forma(.headline, weight: .semibold))
+                            .foregroundColor(.primary)
+                        
+                        Text("\(cal.breaks.count) break\(cal.breaks.count == 1 ? "" : "s") configured")
+                            .font(.forma(.subheadline))
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    NavigationLink {
+                        AcademicCalendarEditorView(academicCalendar: $calendar)
+                            .environmentObject(academicCalendarManager)
+                            .environmentObject(themeManager)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("Configure")
+                                .font(.forma(.subheadline, weight: .semibold))
+                            Image(systemName: "chevron.right")
+                                .font(.forma(.caption, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule()
+                                .fill(currentTheme.primaryColor)
+                                .shadow(
+                                    color: currentTheme.primaryColor.opacity(0.3),
+                                    radius: 8,
+                                    x: 0,
+                                    y: 4
+                                )
+                        )
+                    }
+                    .buttonStyle(SpringButtonStyle())
+                }
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
                 )
-            }
-            .disabled(!isValid)
-            .buttonStyle(EventsBounceButtonStyle())
+        )
+    }
+    
+    // MARK: - Floating Action Button
+    private var floatingActionButton: some View {
+        VStack {
+            Spacer()
             
-            Button("Cancel") {
-                dismiss()
+            HStack {
+                Spacer()
+                
+                Button(action: {
+                    Task { await saveCalendar() }
+                }) {
+                    HStack(spacing: 12) {
+                        if isCreating {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: isEditing ? "checkmark.circle.fill" : "plus.circle.fill")
+                                .font(.title2.bold())
+                                .foregroundColor(.white)
+                        }
+                        
+                        if !isCreating {
+                            Text(isEditing ? "Save Changes" : "Create Calendar")
+                                .font(.forma(.headline, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 16)
+                    .background(
+                        ZStack {
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: !isValid ? [.secondary.opacity(0.6), .secondary.opacity(0.4)] :
+                                               [currentTheme.primaryColor, currentTheme.primaryColor.opacity(0.8)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            
+                            if !isCreating && isValid {
+                                Capsule()
+                                    .fill(
+                                        AngularGradient(
+                                            colors: [
+                                                Color.clear,
+                                                Color.white.opacity(0.3),
+                                                Color.clear,
+                                                Color.clear
+                                            ],
+                                            center: .center,
+                                            angle: .degrees(animationOffset * 0.5)
+                                        )
+                                    )
+                            }
+                        }
+                        .shadow(
+                            color: !isValid ? .clear : currentTheme.primaryColor.opacity(0.4),
+                            radius: 16,
+                            x: 0,
+                            y: 8
+                        )
+                        .scaleEffect(bounceAnimation * 0.1 + 0.9)
+                    )
+                }
+                .disabled(!isValid)
+                .buttonStyle(BounceButtonStyle())
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isValid)
             }
-            .font(.forma(.callout, weight: .semibold))
-            .foregroundColor(.secondary)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 32)
+        }
+    }
+    
+    // MARK: - Helper Methods
+    private func startAnimations() {
+        withAnimation(.linear(duration: 22.5).repeatForever(autoreverses: false)) {
+            animationOffset = 360
+        }
+        
+        withAnimation(.easeInOut(duration: 2.25).repeatForever(autoreverses: true)) {
+            pulseAnimation = 1.1
         }
     }
     
@@ -466,62 +497,68 @@ struct AddEditAcademicCalendarView: View {
             startDate = cal.startDate
             endDate = cal.endDate
         } else {
-            // Set up defaults for new calendar without year in name
+            // Set up defaults for new calendar
             let currentYear = Calendar.current.component(.year, from: Date())
-            academicYear = "\(currentYear)-\(currentYear + 1)"
-            name = ""  // Empty name so user can enter their own
-            startDate = Calendar.current.date(from: DateComponents(year: currentYear, month: 8, day: 15)) ?? Date()
-            endDate = Calendar.current.date(from: DateComponents(year: currentYear + 1, month: 6, day: 15)) ?? Date()
+            let currentMonth = Calendar.current.component(.month, from: Date())
+            
+            let academicStartYear = currentMonth >= 8 ? currentYear : currentYear - 1
+            academicYear = "\(academicStartYear)-\(academicStartYear + 1)"
+            name = ""
+            startDate = Calendar.current.date(from: DateComponents(year: academicStartYear, month: 8, day: 15)) ?? Date()
+            endDate = Calendar.current.date(from: DateComponents(year: academicStartYear + 1, month: 6, day: 15)) ?? Date()
         }
     }
     
-    private func saveCalendar() {
+    private func saveCalendar() async {
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            isCreating = true
+        }
+        
+        errorMessage = nil
+        
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedYear = academicYear.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        if let existingCalendar = calendar {
-            // Update existing calendar
-            var updatedCalendar = existingCalendar
-            updatedCalendar.name = trimmedName
-            updatedCalendar.academicYear = trimmedYear
-            updatedCalendar.startDate = startDate
-            updatedCalendar.endDate = endDate
+        do {
+            if let existingCalendar = calendar {
+                // Update existing calendar
+                var updatedCalendar = existingCalendar
+                updatedCalendar.name = trimmedName
+                updatedCalendar.academicYear = trimmedYear
+                updatedCalendar.startDate = startDate
+                updatedCalendar.endDate = endDate
+                
+                academicCalendarManager.updateCalendar(updatedCalendar)
+                calendar = updatedCalendar
+            } else {
+                // Create new calendar
+                let newCalendar = AcademicCalendar(
+                    name: trimmedName,
+                    academicYear: trimmedYear,
+                    termType: .semester,
+                    startDate: startDate,
+                    endDate: endDate
+                )
+                
+                academicCalendarManager.addCalendar(newCalendar)
+            }
             
-            academicCalendarManager.updateCalendar(updatedCalendar)
-            calendar = updatedCalendar
-        } else {
-            // Create new calendar - use semester as default since we removed term type picker
-            let newCalendar = AcademicCalendar(
-                name: trimmedName,
-                academicYear: trimmedYear,
-                termType: .semester,  // Default to semester
-                startDate: startDate,
-                endDate: endDate
-            )
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                isCreating = false
+            }
             
-            academicCalendarManager.addCalendar(newCalendar)
+            dismiss()
+        } catch {
+            errorMessage = "Failed to save calendar: \(error.localizedDescription)"
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                isCreating = false
+            }
         }
-        
-        dismiss()
     }
 }
 
-// Enhanced Text Field Style for the form
-struct EnhancedTextFieldStyle: TextFieldStyle {
-    let themeManager: ThemeManager
-    @Environment(\.colorScheme) var colorScheme
-    
-    func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemGray6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(themeManager.currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
-                    )
-            )
-    }
+#Preview {
+    AddEditAcademicCalendarView(calendar: .constant(nil))
+        .environmentObject(ThemeManager())
+        .environmentObject(AcademicCalendarManager())
 }

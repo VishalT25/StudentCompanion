@@ -2,7 +2,7 @@ import SwiftUI
 import WidgetKit
 
 @main
-struct StudentCompanionApp: App {
+struct StudentCompanionApp: SwiftUI.App {
     @StateObject private var themeManager = ThemeManager()
     @StateObject private var supabaseService = SupabaseService.shared
     @StateObject private var realtimeSyncManager = RealtimeSyncManager.shared

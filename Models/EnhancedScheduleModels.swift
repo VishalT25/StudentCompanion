@@ -143,6 +143,25 @@ enum BreakType: String, CaseIterable, Codable {
             return "calendar.badge.minus"
         }
     }
+    
+    var color: Color {
+        switch self {
+        case .winterBreak:
+            return .cyan
+        case .springBreak:
+            return .green
+        case .readingWeek:
+            return .orange
+        case .examPeriod:
+            return .red
+        case .holiday:
+            return .purple
+        case .professionalDevelopment:
+            return .blue
+        case .custom:
+            return .gray
+        }
+    }
 }
 
 struct AcademicBreak: Codable, Identifiable {
@@ -203,6 +222,24 @@ struct AcademicCalendar: Codable, Identifiable {
 
     func breakForDate(_ date: Date) -> AcademicBreak? {
         return breaks.first { $0.contains(date: date) }
+    }
+    
+    // Preview helper
+    static var sampleCalendar: AcademicCalendar {
+        let calendar = Calendar.current
+        let now = Date()
+        let currentYear = calendar.component(.year, from: now)
+        
+        let startDate = calendar.date(from: DateComponents(year: currentYear, month: 8, day: 15)) ?? now
+        let endDate = calendar.date(from: DateComponents(year: currentYear + 1, month: 6, day: 15)) ?? now
+        
+        return AcademicCalendar(
+            name: "Fall 2024 Semester",
+            academicYear: "2024-2025",
+            termType: .semester,
+            startDate: startDate,
+            endDate: endDate
+        )
     }
 }
 

@@ -4,9 +4,10 @@ struct EnhancedAddCourseWithMeetingsView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var scheduleManager: ScheduleManager
-    @EnvironmentObject private var courseManager: UnifiedCourseManager // Use shared manager instead of separate one
+    @EnvironmentObject private var courseManager: UnifiedCourseManager
+    @Environment(\.colorScheme) private var colorScheme
     
-    let existingCourse: Course? // Add support for editing existing courses
+    let existingCourse: Course?
     
     // Course details
     @State private var courseName: String = ""
@@ -25,15 +26,23 @@ struct EnhancedAddCourseWithMeetingsView: View {
     @State private var currentStep = 0
     @State private var isCreating = false
     @State private var errorMessage: String?
+    @State private var progressOffset: CGFloat = 0
+    @State private var stepAnimationOffset: CGFloat = 0
+    @State private var showContent = false
     
-    private let steps = ["Course Details", "Meetings", "Review"]
+    // Animation states
+    @State private var animationOffset: CGFloat = 0
+    @State private var pulseAnimation: Double = 1.0
+    @State private var bounceAnimation: Double = 0
+    
+    private let steps = ["Details", "Meetings", "Review"]
     private let maxStep = 2
     
     private let sfSymbolNames: [String] = [
         "book.closed.fill", "studentdesk", "laptopcomputer", "function",
         "atom", "testtube.2", "flame.fill", "brain.head.profile",
         "paintbrush.fill", "music.mic", "sportscourt.fill", "globe.americas.fill",
-        "hammer.fill", "briefcase.fill", "microscope.fill", "leaf.fill"
+        "hammer.fill", "briefcase.fill", "camera.fill", "leaf.fill"
     ]
     
     private let predefinedColors: [Color] = [
@@ -41,12 +50,11 @@ struct EnhancedAddCourseWithMeetingsView: View {
         .indigo, .purple, .pink, .brown
     ]
     
-    // MARK: - Initializers
+    private let days = Array(1...7)
     
     init(existingCourse: Course? = nil) {
         self.existingCourse = existingCourse
         
-        // Pre-populate fields if editing
         if let course = existingCourse {
             _courseName = State(initialValue: course.name)
             _courseCode = State(initialValue: course.courseCode)
@@ -67,143 +75,293 @@ struct EnhancedAddCourseWithMeetingsView: View {
         }
     }
     
+    private var currentTheme: AppTheme {
+        themeManager.currentTheme
+    }
+    
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                progressHeader
+            ZStack {
+                // Spectacular animated background matching assignment view
+                spectacularBackground
                 
-                ScrollView {
-                    VStack(spacing: 32) {
-                        currentStepView
-                        Spacer(minLength: 100)
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 20) {
+                        // Hero header section
+                        heroSection
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : -30)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.075), value: showContent)
+                        
+                        // Progress section with elegant design
+                        progressSection
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : 30)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.15), value: showContent)
+                        
+                        // Content with smooth transitions
+                        contentArea
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : 50)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.225), value: showContent)
+                        
+                        Spacer(minLength: 20)
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 20)
+                    .padding(.bottom, 30)
                 }
-            }
-            .background(Color(.systemGroupedBackground))
-            .navigationBarHidden(true)
-            .sheet(isPresented: $showingAddMeeting) {
-                AddMeetingSheetView(
-                    courseName: courseName,
-                    courseColor: selectedColor,
-                    scheduleType: scheduleManager.activeSchedule?.scheduleType ?? .traditional,
-                    onSave: { meeting in
-                        meetings.append(meeting)
-                    }
-                )
-            }
-            .sheet(item: $editingMeeting) { meeting in
-                EditMeetingSheetView(
-                    meeting: meeting,
-                    courseName: courseName,
-                    courseColor: selectedColor,
-                    onSave: { updatedMeeting in
-                        if let index = meetings.firstIndex(where: { $0.id == updatedMeeting.id }) {
-                            meetings[index] = updatedMeeting
-                        }
-                    }
-                )
-            }
-            .alert("Error", isPresented: .constant(errorMessage != nil)) {
-                Button("OK") { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "")
+                .refreshable { }
+                .disabled(true)
+                
+                // Floating action button
+                floatingActionButton
             }
         }
-    }
-    
-    // MARK: - Progress Header
-    
-    private var progressHeader: some View {
-        VStack(spacing: 20) {
-            // Top controls
-            HStack {
+        .navigationBarHidden(true)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(false)
+        .preferredColorScheme(.dark)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
                 Button("Cancel") {
                     dismiss()
                 }
-                .font(.body.weight(.medium))
                 .foregroundColor(.secondary)
-                .disabled(isCreating)
-                
-                Spacer()
-                
-                Text(existingCourse != nil ? "Edit Course" : "Add Course")
-                    .font(.title3.bold())
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                if currentStep == maxStep {
-                    Button(existingCourse != nil ? "Save" : "Create") {
-                        Task { await createCourse() }
-                    }
-                    .font(.body.weight(.semibold))
-                    .foregroundColor(canProceed && !isCreating ? themeManager.currentTheme.primaryColor : .secondary)
-                    .disabled(!canProceed || isCreating)
-                } else {
-                    Button("Next") {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                            currentStep += 1
-                        }
-                    }
-                    .font(.body.weight(.semibold))
-                    .foregroundColor(canProceed ? themeManager.currentTheme.primaryColor : .secondary)
-                    .disabled(!canProceed)
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 8)
-            
-            // Progress indicator
-            HStack(spacing: 8) {
-                ForEach(0...maxStep, id: \.self) { step in
-                    VStack(spacing: 8) {
-                        Circle()
-                            .fill(step <= currentStep ? themeManager.currentTheme.primaryColor : Color(.systemGray4))
-                            .frame(width: 8, height: 8)
-                        
-                        Text(steps[step])
-                            .font(.caption.weight(.medium))
-                            .foregroundColor(step <= currentStep ? themeManager.currentTheme.primaryColor : .secondary)
-                    }
-                    
-                    if step < maxStep {
-                        Rectangle()
-                            .fill(step < currentStep ? themeManager.currentTheme.primaryColor : Color(.systemGray4))
-                            .frame(height: 2)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            
-            if currentStep > 0 {
-                HStack {
-                    Button(action: {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                            currentStep -= 1
-                        }
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left")
-                                .font(.caption.bold())
-                            Text("Back")
-                                .font(.subheadline.weight(.medium))
-                        }
-                        .foregroundColor(themeManager.currentTheme.primaryColor)
-                    }
-                    
-                    Spacer()
-                }
-                .padding(.horizontal, 24)
             }
         }
-        .padding(.bottom, 16)
-        .background(Color(.systemBackground))
+        .sheet(isPresented: $showingAddMeeting) {
+            ModernAddMeetingSheet(
+                courseName: courseName,
+                courseColor: selectedColor,
+                scheduleType: scheduleManager.activeSchedule?.scheduleType ?? .traditional,
+                onSave: { meeting in
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                        meetings.append(meeting)
+                    }
+                }
+            )
+        }
+        .sheet(item: $editingMeeting) { meeting in
+            ModernEditMeetingSheet(
+                meeting: meeting,
+                courseName: courseName,
+                courseColor: selectedColor,
+                onSave: { updatedMeeting in
+                    if let index = meetings.firstIndex(where: { $0.id == updatedMeeting.id }) {
+                        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                            meetings[index] = updatedMeeting
+                        }
+                    }
+                }
+            )
+        }
+        .alert("Error", isPresented: .constant(errorMessage != nil)) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+                .font(.forma(.body))
+        }
+        .onAppear {
+            startAnimations()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.225) {
+                showContent = true
+            }
+        }
     }
     
-    // MARK: - Step Views
+    // MARK: - Spectacular Background
+    private var spectacularBackground: some View {
+        ZStack {
+            // Base gradient background
+            LinearGradient(
+                colors: [
+                    selectedColor.opacity(colorScheme == .dark ? 0.15 : 0.05),
+                    selectedColor.opacity(colorScheme == .dark ? 0.08 : 0.02),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            // Animated floating shapes
+            ForEach(0..<6, id: \.self) { index in
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                selectedColor.opacity(0.1 - Double(index) * 0.015),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 40 + CGFloat(index * 10)
+                        )
+                    )
+                    .frame(width: 80 + CGFloat(index * 20), height: 80 + CGFloat(index * 20))
+                    .offset(
+                        x: sin(animationOffset * 0.01 + Double(index)) * 50,
+                        y: cos(animationOffset * 0.008 + Double(index)) * 30
+                    )
+                    .opacity(0.3)
+                    .blur(radius: CGFloat(index * 2))
+            }
+        }
+    }
+    
+    // MARK: - Hero Section
+    private var heroSection: some View {
+        VStack(spacing: 16) {
+            VStack(spacing: 9) {
+                Text(existingCourse != nil ? "Edit Course" : "Create Course")
+                    .font(.forma(.largeTitle, weight: .bold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                selectedColor,
+                                currentTheme.secondaryColor
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                
+                Text("Build your perfect academic schedule with detailed course information and meeting times.")
+                    .font(.forma(.subheadline))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    selectedColor.opacity(0.3),
+                                    selectedColor.opacity(0.1)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                )
+                .shadow(
+                    color: selectedColor.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.3 : 0.15),
+                    radius: 20,
+                    x: 0,
+                    y: 10
+                )
+        )
+    }
+    
+    // MARK: - Progress Section
+    private var progressSection: some View {
+        HStack {
+            // Progress circle on far left
+            ZStack {
+                Circle()
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                Color.secondary.opacity(0.2),
+                                Color.secondary.opacity(0.1)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 3
+                    )
+                    .frame(width: 50, height: 50)
+                
+                Circle()
+                    .trim(from: 0, to: CGFloat(currentStep + 1) / CGFloat(maxStep + 1))
+                    .stroke(
+                        LinearGradient(
+                            colors: [selectedColor, selectedColor.opacity(0.7)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                    )
+                    .frame(width: 50, height: 50)
+                    .rotationEffect(.degrees(-90))
+                    .animation(.spring(response: 0.8, dampingFraction: 0.7), value: currentStep)
+                
+                Text("\(currentStep + 1)")
+                    .font(.forma(.title3, weight: .bold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [selectedColor, selectedColor.opacity(0.8)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
+            
+            Spacer()
+            
+            // Step indicators centered in middle with slightly closer spacing
+            HStack(spacing: 32) {
+                ForEach(0...maxStep, id: \.self) { step in
+                    VStack(spacing: 6) {
+                        Text(steps[step])
+                            .font(.forma(.subheadline, weight: step <= currentStep ? .semibold : .medium))
+                            .foregroundColor(step <= currentStep ? selectedColor : .secondary)
+                            .scaleEffect(step == currentStep ? 1.05 : 1.0)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .lineLimit(1)
+                        
+                        Circle()
+                            .fill(step <= currentStep ? selectedColor : Color.secondary.opacity(0.3))
+                            .frame(width: 6, height: 6)
+                            .scaleEffect(step == currentStep ? 1.3 : 1.0)
+                            .overlay(
+                                Circle()
+                                    .stroke(
+                                        step <= currentStep ? selectedColor.opacity(0.3) : Color.clear,
+                                        lineWidth: step == currentStep ? 2 : 0
+                                    )
+                                    .scaleEffect(step == currentStep ? 2.0 : 1.0)
+                                    .opacity(step == currentStep ? 0.6 : 0)
+                            )
+                    }
+                    .animation(.spring(response: 0.6, dampingFraction: 0.8), value: currentStep)
+                }
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 16)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(selectedColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    // MARK: - Content Area
+    private var contentArea: some View {
+        VStack(spacing: 0) {
+            currentStepView
+                .opacity(1.0 - stepAnimationOffset)
+                .scaleEffect(1.0 - (stepAnimationOffset * 0.05))
+                .animation(.easeInOut(duration: 0.3), value: stepAnimationOffset)
+        }
+        .clipped()
+    }
     
     @ViewBuilder
     private var currentStepView: some View {
@@ -215,222 +373,345 @@ struct EnhancedAddCourseWithMeetingsView: View {
         }
     }
     
+    // MARK: - Course Details Step
     private var courseDetailsStep: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Course Details")
-                    .font(.title2.bold())
-                    .foregroundColor(.primary)
+        VStack(spacing: 24) {
+            Text("Course Details")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            VStack(spacing: 20) {
+                coursePreviewSection
                 
-                Text("Let's start with the basic information about your course.")
-                    .font(.subheadline)
+                courseNameSection
+                courseCodeSection
+                creditHoursSection
+                iconSelectionSection
+                colorSelectionSection
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(selectedColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var coursePreviewSection: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [selectedColor.opacity(0.8), selectedColor],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 60, height: 60)
+                    .overlay(
+                        Circle()
+                            .stroke(selectedColor.opacity(0.3), lineWidth: 2)
+                    )
+                    .shadow(
+                        color: selectedColor.opacity(0.3),
+                        radius: 8,
+                        x: 0,
+                        y: 4
+                    )
+                
+                Image(systemName: selectedIconName)
+                    .font(.forma(.title2, weight: .bold))
+                    .foregroundColor(.white)
+                    .scaleEffect(1.1)
+            }
+            .scaleEffect(courseName.isEmpty ? 0.8 : 1.0)
+            .animation(.spring(response: 0.5, dampingFraction: 0.7), value: courseName)
+            .animation(.spring(response: 0.5, dampingFraction: 0.7), value: selectedColor)
+            .animation(.spring(response: 0.5, dampingFraction: 0.7), value: selectedIconName)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(courseName.isEmpty ? "Course Name" : courseName)
+                    .font(.forma(.headline, weight: .bold))
+                    .foregroundColor(courseName.isEmpty ? .secondary : .primary)
+                
+                Text(courseCode.isEmpty ? "Course Code" : courseCode)
+                    .font(.forma(.subheadline, weight: .medium))
+                    .foregroundColor(.secondary)
+                
+                Text("\(String(format: creditHours.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", creditHours)) credits")
+                    .font(.forma(.caption))
                     .foregroundColor(.secondary)
             }
             
-            VStack(spacing: 20) {
-                // Course name
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Course Name *")
-                        .font(.headline.weight(.semibold))
-                        .foregroundColor(.primary)
-                    
-                    TextField("e.g., Introduction to Psychology", text: $courseName)
-                        .textFieldStyle(.roundedBorder)
-                        .textInputAutocapitalization(.words)
-                }
-                
-                // Course details
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Course Code")
-                            .font(.subheadline.weight(.semibold))
-                        
-                        TextField("e.g., CS 101", text: $courseCode)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Section")
-                            .font(.subheadline.weight(.semibold))
-                        
-                        TextField("e.g., A", text: $section)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                }
-                
-                // Credit Hours
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Credit Hours")
-                        .font(.subheadline.weight(.semibold))
-                    
-                    HStack {
-                        Stepper(
-                            value: $creditHours,
-                            in: 0.5...6.0,
-                            step: 0.5
-                        ) {
-                            Text("\(String(format: creditHours.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", creditHours)) credits")
-                                .font(.subheadline.weight(.medium))
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 12))
-                }
-                
-                // Icon Selection
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Course Icon")
-                        .font(.subheadline.weight(.semibold))
-                    
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), spacing: 12) {
-                        ForEach(sfSymbolNames, id: \.self) { symbolName in
-                            Button(action: { selectedIconName = symbolName }) {
-                                Image(systemName: symbolName)
-                                    .font(.title2)
-                                    .foregroundColor(selectedIconName == symbolName ? .white : selectedColor)
-                                    .frame(width: 44, height: 44)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .fill(selectedIconName == symbolName ? selectedColor : selectedColor.opacity(0.1))
-                                    )
-                            }
-                        }
-                    }
-                }
-                
-                // Color Selection
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Course Color")
-                        .font(.subheadline.weight(.semibold))
-                    
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), spacing: 12) {
-                        ForEach(predefinedColors, id: \.self) { color in
-                            Button(action: { selectedColor = color }) {
-                                Circle()
-                                    .fill(color)
-                                    .frame(width: 44, height: 44)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.white, lineWidth: selectedColor == color ? 3 : 0)
-                                    )
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color(.systemGray4), lineWidth: 1)
-                                    )
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(20)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+            Spacer()
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(selectedColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var courseNameSection: some View {
+        StunningFormField(
+            title: "Course Name",
+            icon: "textformat",
+            placeholder: "Introduction to Psychology",
+            text: $courseName,
+            courseColor: selectedColor,
+            themeManager: themeManager,
+            isValid: !courseName.isEmpty,
+            errorMessage: "Please enter a course name",
+            isFocused: false
+        )
+    }
+    
+    private var courseCodeSection: some View {
+        HStack(spacing: 16) {
+            StunningFormField(
+                title: "Course Code",
+                icon: "number",
+                placeholder: "CS 101",
+                text: $courseCode,
+                courseColor: selectedColor,
+                themeManager: themeManager,
+                isValid: true,
+                errorMessage: "",
+                isFocused: false
+            )
+            
+            StunningFormField(
+                title: "Section",
+                icon: "person.2",
+                placeholder: "A",
+                text: $section,
+                courseColor: selectedColor,
+                themeManager: themeManager,
+                isValid: true,
+                errorMessage: "",
+                isFocused: false
             )
         }
     }
     
-    private var meetingsStep: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Course Meetings")
-                    .font(.title2.bold())
-                    .foregroundColor(.primary)
+    private var creditHoursSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "graduationcap")
+                    .font(.forma(.subheadline))
+                    .foregroundColor(selectedColor)
                 
-                Text("Add when this course meets. You can have different types of meetings like lectures, labs, tutorials, etc.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                Text("Credit Hours")
+                    .font(.forma(.subheadline, weight: .medium))
+                    .foregroundColor(.primary)
             }
             
-            VStack(spacing: 16) {
-                // Add Meeting Button
+            ModernCreditStepper(
+                value: $creditHours,
+                range: 0.5...6.0,
+                step: 0.5,
+                courseColor: selectedColor
+            )
+        }
+    }
+    
+    private var iconSelectionSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.forma(.subheadline))
+                    .foregroundColor(selectedColor)
+                    .frame(width: 20)
+                
+                Text("Course Icon")
+                    .font(.forma(.subheadline, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 8), spacing: 16) {
+                ForEach(sfSymbolNames, id: \.self) { symbolName in
+                    ModernIconButton(
+                        symbolName: symbolName,
+                        isSelected: selectedIconName == symbolName,
+                        color: selectedColor
+                    ) {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                            selectedIconName = symbolName
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private var colorSelectionSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "paintpalette")
+                    .font(.forma(.subheadline))
+                    .foregroundColor(selectedColor)
+                
+                Text("Course Color")
+                    .font(.forma(.subheadline, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), spacing: 12) {
+                ForEach(predefinedColors, id: \.self) { color in
+                    ModernColorButton(
+                        color: color,
+                        isSelected: selectedColor == color
+                    ) {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                            selectedColor = color
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Meetings Step
+    private var meetingsStep: some View {
+        VStack(spacing: 24) {
+            Text("Course Meetings")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            VStack(spacing: 20) {
                 Button(action: { showingAddMeeting = true }) {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
+                    HStack(spacing: 16) {
+                        ZStack {
+                            Circle()
+                                .fill(selectedColor.opacity(0.2))
+                                .frame(width: 44, height: 44)
+                                .overlay(
+                                    Circle()
+                                        .stroke(selectedColor.opacity(0.3), lineWidth: 1)
+                                )
+                            
+                            Image(systemName: "plus")
+                                .font(.forma(.title3, weight: .bold))
+                                .foregroundColor(selectedColor)
+                        }
+
                         
-                        Text("Add Meeting")
-                            .font(.headline.weight(.semibold))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Add Meeting Time")
+                                .font(.forma(.headline, weight: .semibold))
+                            Text("Lecture, Lab, Tutorial, etc.")
+                                .font(.forma(.subheadline))
+                                .foregroundColor(.secondary)
+                        }
                         
                         Spacer()
                         
                         Image(systemName: "chevron.right")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.forma(.subheadline, weight: .semibold))
+                            .foregroundColor(.secondary)
                     }
-                    .foregroundColor(.white)
                     .padding(20)
                     .background(
                         RoundedRectangle(cornerRadius: 16)
-                            .fill(selectedColor)
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(selectedColor.opacity(0.3), lineWidth: 2)
+                            )
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(SpringButtonStyle())
                 
-                // Existing Meetings
                 if !meetings.isEmpty {
-                    LazyVStack(spacing: 12) {
+                    LazyVStack(spacing: 16) {
                         ForEach(meetings) { meeting in
-                            MeetingRowView(
+                            ModernMeetingRow(
                                 meeting: meeting,
                                 courseColor: selectedColor,
                                 onEdit: { editingMeeting = meeting },
                                 onDelete: { 
-                                    meetings.removeAll { $0.id == meeting.id }
+                                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                        meetings.removeAll { $0.id == meeting.id }
+                                    }
                                 }
                             )
                         }
                     }
-                }
-                
-                if meetings.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "calendar.badge.plus")
-                            .font(.system(size: 48))
-                            .foregroundColor(.secondary)
-                        
-                        Text("No meetings added yet")
-                            .font(.headline.weight(.medium))
-                            .foregroundColor(.secondary)
-                        
-                        Text("Add at least one meeting to continue")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(.vertical, 32)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color(.systemGray6))
-                    )
+                } else {
+                    emptyMeetingsState
                 }
             }
-            .padding(20)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
-            )
         }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(selectedColor.opacity(0.2), lineWidth: 1)
+                )
+        )
     }
     
-    private var reviewStep: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Review & Create")
-                    .font(.title2.bold())
-                    .foregroundColor(.primary)
+    private var emptyMeetingsState: some View {
+        VStack(spacing: 20) {
+            ZStack {
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .frame(width: 80, height: 80)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                    )
                 
-                Text("Review your course details before creating.")
-                    .font(.subheadline)
+                Image(systemName: "calendar.badge.plus")
+                    .font(.forma(.largeTitle))
                     .foregroundColor(.secondary)
             }
             
+            VStack(spacing: 8) {
+                Text("No meetings yet")
+                    .font(.forma(.title3, weight: .semibold))
+                    .foregroundColor(.primary)
+                
+                Text("Add at least one meeting time to continue.\nThis helps organize your schedule perfectly.")
+                    .font(.forma(.body))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    // MARK: - Review Step
+    private var reviewStep: some View {
+        VStack(spacing: 24) {
+            Text("Review & Create")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
             VStack(spacing: 20) {
-                // Course Preview
-                CoursePreviewCard(
+                ModernCoursePreviewCard(
                     courseName: courseName,
                     courseCode: courseCode,
                     section: section,
@@ -440,61 +721,240 @@ struct EnhancedAddCourseWithMeetingsView: View {
                     meetings: meetings
                 )
                 
-                // Creation Note
-                VStack(spacing: 8) {
-                    HStack(spacing: 8) {
+                VStack(spacing: 16) {
+                    HStack(spacing: 12) {
                         Image(systemName: "info.circle.fill")
-                            .font(.subheadline)
-                            .foregroundColor(themeManager.currentTheme.primaryColor)
+                            .font(.forma(.title3))
+                            .foregroundColor(selectedColor)
                         
-                        Text("This course will be added to your active schedule")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(.primary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Ready to add to your schedule")
+                                .font(.forma(.headline, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text("This course will be added to your active schedule and synced across all your devices.")
+                                .font(.forma(.body))
+                                .foregroundColor(.secondary)
+                        }
+
                         
                         Spacer()
                     }
                     
-                    Text("You can edit course details and meetings later from the course details page.")
-                        .font(.caption)
+                    Divider()
+                        .overlay(selectedColor.opacity(0.3))
+                    
+                    Text("You can edit course details, add more meetings, or adjust schedules anytime from the course details page.")
+                        .font(.forma(.caption))
                         .foregroundColor(.secondary)
                 }
-                .padding(16)
+                .padding(20)
                 .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(themeManager.currentTheme.primaryColor.opacity(0.1))
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(.ultraThinMaterial)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(themeManager.currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(selectedColor.opacity(0.2), lineWidth: 1)
                         )
                 )
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(selectedColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    // MARK: - Floating Action Button
+    private var floatingActionButton: some View {
+        VStack {
+            Spacer()
+            
+            HStack {
+                if currentStep > 0 {
+                    Button(action: previousStep) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.left")
+                                .font(.title3.bold())
+                                .foregroundColor(.secondary)
+                            Text("Back")
+                                .font(.forma(.subheadline, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
+                        .background(
+                            Capsule()
+                                .fill(.regularMaterial)
+                                .overlay(
+                                    Capsule()
+                                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                                )
+                                .shadow(
+                                    color: .black.opacity(0.1),
+                                    radius: 8,
+                                    x: 0,
+                                    y: 4
+                                )
+                        )
+                    }
+                    .buttonStyle(BounceButtonStyle())
+                }
+                
+                Spacer()
+                
+                Button(action: {
+                    if currentStep == maxStep {
+                        Task { await createCourse() }
+                    } else {
+                        if canProceed {
+                            nextStep()
+                        }
+                    }
+                }) {
+                    HStack(spacing: 12) {
+                        if isCreating {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .tint(.white)
+                        } else if currentStep == maxStep {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.title2.bold())
+                                .foregroundColor(.white)
+                        } else {
+                            Image(systemName: canProceed ? "arrow.right" : "exclamationmark.triangle.fill")
+                                .font(.title2.bold())
+                                .foregroundColor(.white)
+                        }
+                        
+                        if !isCreating {
+                            Text(currentStep == maxStep 
+                                 ? (existingCourse != nil ? "Save Course" : "Create Course")
+                                 : (canProceed ? "Next" : "Complete Required Fields"))
+                                .font(.forma(.headline, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 16)
+                    .background(
+                        ZStack {
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: (currentStep != maxStep && !canProceed) ? [.secondary.opacity(0.6), .secondary.opacity(0.4)] :
+                                               [selectedColor, selectedColor.opacity(0.8)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            
+                            if !isCreating && (currentStep == maxStep || canProceed) {
+                                Capsule()
+                                    .fill(
+                                        AngularGradient(
+                                            colors: [
+                                                Color.clear,
+                                                Color.white.opacity(0.3),
+                                                Color.clear,
+                                                Color.clear
+                                            ],
+                                            center: .center,
+                                            angle: .degrees(animationOffset * 0.5)
+                                        )
+                                    )
+                            }
+                        }
+                        .shadow(
+                            color: (currentStep != maxStep && !canProceed) ? .clear : selectedColor.opacity(0.4),
+                            radius: 16,
+                            x: 0,
+                            y: 8
+                        )
+                        .scaleEffect(bounceAnimation * 0.1 + 0.9)
+                    )
+                }
+                .buttonStyle(BounceButtonStyle())
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: canProceed)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentStep)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 32)
+        }
+    }
+    
+    // MARK: - Helper Methods
+    private func startAnimations() {
+        withAnimation(.linear(duration: 22.5).repeatForever(autoreverses: false)) {
+            animationOffset = 360
+        }
+        
+        withAnimation(.easeInOut(duration: 2.25).repeatForever(autoreverses: true)) {
+            pulseAnimation = 1.1
+        }
+    }
+    
+    // MARK: - Navigation Functions
+    private func nextStep() {
+        withAnimation(.easeOut(duration: 0.3)) {
+            stepAnimationOffset = 1
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            currentStep += 1
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            withAnimation(.easeIn(duration: 0.3)) {
+                stepAnimationOffset = 0
+            }
+        }
+    }
+    
+    private func previousStep() {
+        withAnimation(.easeOut(duration: 0.3)) {
+            stepAnimationOffset = 1
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            currentStep -= 1
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            withAnimation(.easeIn(duration: 0.3)) {
+                stepAnimationOffset = 0
             }
         }
     }
     
     // MARK: - Create Course Action
-    
     private func createCourse() async {
-        isCreating = true
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            isCreating = true
+        }
+        
         errorMessage = nil
         
         if let existingCourse = existingCourse {
-            // Update existing course
             await updateExistingCourse(existingCourse)
         } else {
-            // Create new course
             await createNewCourse()
         }
         
-        isCreating = false
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            isCreating = false
+        }
+        
         dismiss()
     }
     
     private func updateExistingCourse(_ course: Course) async {
-        print("🔍 COURSE UPDATE: Starting updateExistingCourse")
-        print("🔍 COURSE UPDATE: Course ID: \(course.id)")
-        print("🔍 COURSE UPDATE: Course name: '\(courseName.trimmingCharacters(in: .whitespacesAndNewlines))'")
-        
-        // Update course metadata
         course.name = courseName.trimmingCharacters(in: .whitespacesAndNewlines)
         course.courseCode = courseCode.trimmingCharacters(in: .whitespacesAndNewlines)
         course.section = section.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -502,7 +962,6 @@ struct EnhancedAddCourseWithMeetingsView: View {
         course.iconName = selectedIconName
         course.colorHex = selectedColor.toHex() ?? "007AFF"
         
-        // Update meetings
         course.meetings = meetings.map { meeting in
             var updatedMeeting = meeting
             updatedMeeting.courseId = course.id
@@ -511,26 +970,17 @@ struct EnhancedAddCourseWithMeetingsView: View {
         }
         
         do {
-            courseManager.updateCourse(course)
-            print("✅ COURSE UPDATE: Course updated: \(course.name)")
+            try await courseManager.updateCourse(course)
         } catch {
-            print("❌ COURSE UPDATE: Failed to update course: \(error)")
             errorMessage = "Failed to update course: \(error.localizedDescription)"
         }
     }
     
     private func createNewCourse() async {
-        print("🔍 COURSE CREATION: Starting createNewCourse()")
-        
         guard let activeScheduleId = scheduleManager.activeScheduleID else {
-            print("❌ COURSE CREATION: No active schedule found")
             errorMessage = "No active schedule found. Please create a schedule first."
             return
         }
-        
-        print("🔍 COURSE CREATION: Active schedule ID: \(activeScheduleId)")
-        print("🔍 COURSE CREATION: Course name: '\(courseName.trimmingCharacters(in: .whitespacesAndNewlines))'")
-        print("🔍 COURSE CREATION: Number of meetings: \(meetings.count)")
         
         let course = Course(
             scheduleId: activeScheduleId,
@@ -540,30 +990,20 @@ struct EnhancedAddCourseWithMeetingsView: View {
             creditHours: creditHours,
             courseCode: courseCode.trimmingCharacters(in: .whitespacesAndNewlines),
             section: section.trimmingCharacters(in: .whitespacesAndNewlines),
-            instructor: "", // No longer set at course level
-            location: ""   // No longer set at course level
+            instructor: "",
+            location: ""
         )
         
-        // Set course and schedule IDs for meetings
         let meetingsWithIds = meetings.map { meeting in
             var updatedMeeting = meeting
             updatedMeeting.courseId = course.id
             updatedMeeting.scheduleId = activeScheduleId
-            print("🔍 COURSE CREATION: Meeting '\(updatedMeeting.displayName)' with courseId: \(updatedMeeting.courseId)")
             return updatedMeeting
         }
         
         do {
-            print("🔍 COURSE CREATION: Calling courseManager.createCourseWithMeetings...")
             try await courseManager.createCourseWithMeetings(course, meetings: meetingsWithIds)
-            print("✅ COURSE CREATION: Successfully created course with meetings")
         } catch {
-            print("❌ COURSE CREATION: Failed with error: \(error)")
-            print("❌ COURSE CREATION: Error details: \(error.localizedDescription)")
-            if let urlError = error as? URLError {
-                print("❌ COURSE CREATION: URLError code: \(urlError.code)")
-                print("❌ COURSE CREATION: URLError description: \(urlError.localizedDescription)")
-            }
             errorMessage = "Failed to create course: \(error.localizedDescription)"
         }
     }
@@ -571,7 +1011,121 @@ struct EnhancedAddCourseWithMeetingsView: View {
 
 // MARK: - Supporting Views
 
-struct MeetingRowView: View {
+struct ModernCreditStepper: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let courseColor: Color
+    
+    var body: some View {
+        HStack {
+            Button(action: { 
+                if value > range.lowerBound {
+                    value -= step
+                }
+            }) {
+                Image(systemName: "minus.circle.fill")
+                    .font(.forma(.title2))
+                    .foregroundColor(value > range.lowerBound ? courseColor : .secondary)
+            }
+            .disabled(value <= range.lowerBound)
+            
+            Spacer()
+            
+            VStack(spacing: 4) {
+                Text(String(format: value.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", value))
+                    .font(.forma(.title2, weight: .bold))
+                    .foregroundColor(.primary)
+                
+                Text("credits")
+                    .font(.forma(.caption))
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            Button(action: {
+                if value < range.upperBound {
+                    value += step
+                }
+            }) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.forma(.title2))
+                    .foregroundColor(value < range.upperBound ? courseColor : .secondary)
+            }
+            .disabled(value >= range.upperBound)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+}
+
+struct ModernIconButton: View {
+    let symbolName: String
+    let isSelected: Bool
+    let color: Color
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbolName)
+                .font(.forma(.callout))
+                .foregroundColor(isSelected ? .white : color)
+                .frame(width: 36, height: 36)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(isSelected ? color : color.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(color.opacity(isSelected ? 0.3 : 0.3), lineWidth: isSelected ? 2 : 1)
+                        )
+                        .shadow(
+                            color: isSelected ? color.opacity(0.3) : .clear,
+                            radius: isSelected ? 6 : 0,
+                            x: 0,
+                            y: isSelected ? 3 : 0
+                        )
+                )
+                .scaleEffect(isSelected ? 1.1 : 1.0)
+        }
+        .buttonStyle(SpringButtonStyle())
+    }
+}
+
+struct ModernColorButton: View {
+    let color: Color
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Circle()
+                .fill(color)
+                .frame(width: 40, height: 40)
+                .overlay(
+                    Circle()
+                        .stroke(.white, lineWidth: isSelected ? 3 : 0)
+                )
+                .overlay(
+                    Circle()
+                        .stroke(color.opacity(0.3), lineWidth: 2)
+                )
+                .scaleEffect(isSelected ? 1.2 : 1.0)
+                .shadow(color: isSelected ? color.opacity(0.4) : color.opacity(0.2), radius: isSelected ? 8 : 4, x: 0, y: isSelected ? 4 : 2)
+        }
+        .buttonStyle(SpringButtonStyle())
+    }
+}
+
+struct ModernMeetingRow: View {
     let meeting: CourseMeeting
     let courseColor: Color
     let onEdit: () -> Void
@@ -579,54 +1133,89 @@ struct MeetingRowView: View {
     
     var body: some View {
         HStack(spacing: 16) {
-            // Meeting type icon
-            Image(systemName: meeting.meetingType.iconName)
-                .font(.title2)
-                .foregroundColor(.white)
-                .frame(width: 44, height: 44)
-                .background(Circle().fill(meeting.meetingType.color))
+            ZStack {
+                Circle()
+                    .fill(meeting.meetingType.color.opacity(0.2))
+                    .frame(width: 44, height: 44)
+                    .overlay(
+                        Circle()
+                            .stroke(meeting.meetingType.color.opacity(0.3), lineWidth: 1)
+                    )
+                
+                Image(systemName: meeting.meetingType.iconName)
+                    .font(.forma(.title3, weight: .semibold))
+                    .foregroundColor(meeting.meetingType.color)
+            }
+            .scaleEffect(1.1)
             
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(meeting.displayName)
-                    .font(.headline.weight(.semibold))
+                    .font(.forma(.headline, weight: .semibold))
                     .foregroundColor(.primary)
                 
-                Text(meeting.timeRange)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                if !meeting.daysString.isEmpty {
-                    Text(meeting.daysString)
-                        .font(.caption)
+                HStack(spacing: 12) {
+                    Label(meeting.timeRange, systemImage: "clock")
+                        .font(.forma(.subheadline))
                         .foregroundColor(.secondary)
+                    
+                    if !meeting.daysString.isEmpty {
+                        Label(meeting.daysString, systemImage: "calendar")
+                            .font(.forma(.subheadline))
+                            .foregroundColor(.secondary)
+                    }
                 }
+                .labelStyle(CompactLabelStyle())
             }
             
             Spacer()
             
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 Button(action: onEdit) {
                     Image(systemName: "pencil")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.forma(.subheadline, weight: .semibold))
                         .foregroundColor(courseColor)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle()
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    Circle()
+                                        .stroke(courseColor.opacity(0.3), lineWidth: 1)
+                                )
+                        )
                 }
+                .buttonStyle(SpringButtonStyle())
                 
                 Button(action: onDelete) {
                     Image(systemName: "trash")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.forma(.subheadline, weight: .semibold))
                         .foregroundColor(.red)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle()
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                                )
+                        )
                 }
+                .buttonStyle(SpringButtonStyle())
             }
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray6))
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                )
         )
     }
 }
 
-struct CoursePreviewCard: View {
+struct ModernCoursePreviewCard: View {
     let courseName: String
     let courseCode: String
     let section: String
@@ -637,92 +1226,114 @@ struct CoursePreviewCard: View {
     
     var body: some View {
         VStack(spacing: 20) {
-            // Header
-            HStack(spacing: 16) {
-                Image(systemName: iconName)
-                    .font(.system(size: 32))
-                    .foregroundColor(.white)
-                    .frame(width: 60, height: 60)
-                    .background(RoundedRectangle(cornerRadius: 16).fill(color))
+            HStack(spacing: 20) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [color.opacity(0.8), color],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 70, height: 70)
+                        .overlay(
+                            Circle()
+                                .stroke(color.opacity(0.3), lineWidth: 2)
+                        )
+                    
+                    Image(systemName: iconName)
+                        .font(.forma(.title, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                .shadow(color: color.opacity(0.3), radius: 12, x: 0, y: 6)
                 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(courseName)
-                        .font(.title3.bold())
+                        .font(.forma(.title2, weight: .bold))
                         .foregroundColor(.primary)
                     
                     if !courseCode.isEmpty {
-                        Text("\(courseCode)\(!section.isEmpty ? " - \(section)" : "")")
-                            .font(.subheadline.weight(.medium))
+                        Text("\(courseCode)\(!section.isEmpty ? " - Section \(section)" : "")")
+                            .font(.forma(.headline, weight: .medium))
                             .foregroundColor(.secondary)
                     }
                     
-                    Text("\(String(format: "%.1f", creditHours)) credits")
-                        .font(.caption)
+                    Text("\(String(format: creditHours.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", creditHours)) credit hours")
+                        .font(.forma(.subheadline))
                         .foregroundColor(.secondary)
                 }
                 
                 Spacer()
             }
             
-            Divider()
-            
-            // Details
-            VStack(spacing: 12) {
-                DetailRow(icon: "clock.fill", title: "Meetings", value: "\(meetings.count) meeting\(meetings.count == 1 ? "" : "s")")
-                
-                if !meetings.isEmpty {
-                    DetailRow(icon: "calendar.fill", title: "Weekly Hours", value: String(format: "%.1f hours", meetings.totalWeeklyHours))
-                }
-                
-                if meetings.count > 0 {
-                    let meetingTypes = Set(meetings.map { $0.meetingType.displayName })
-                    DetailRow(icon: "list.bullet", title: "Types", value: meetingTypes.joined(separator: ", "))
+            if !meetings.isEmpty {
+                VStack(spacing: 12) {
+                    Divider()
+                        .overlay(color.opacity(0.3))
+                    
+                    HStack {
+                        VStack(spacing: 4) {
+                            Text("\(meetings.count)")
+                                .font(.forma(.title2, weight: .bold))
+                                .foregroundColor(.primary)
+                            
+                            Text("Meetings")
+                                .font(.forma(.caption))
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(spacing: 4) {
+                            Text(String(format: "%.1f", meetings.totalWeeklyHours))
+                                .font(.forma(.title2, weight: .bold))
+                                .foregroundColor(.primary)
+                            
+                            Text("Hours/Week")
+                                .font(.forma(.caption))
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(spacing: 4) {
+                            Text("\(Set(meetings.flatMap { $0.daysOfWeek }).count)")
+                                .font(.forma(.title2, weight: .bold))
+                                .foregroundColor(.primary)
+                            
+                            Text("Days")
+                                .font(.forma(.caption))
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
             }
         }
-        .padding(20)
+        .padding(24)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(color.opacity(0.2), lineWidth: 2)
+                )
         )
+        .shadow(color: color.opacity(0.15), radius: 20, x: 0, y: 10)
     }
 }
 
-struct DetailRow: View {
-    let icon: String
-    let title: String
-    let value: String
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .frame(width: 20, alignment: .leading)
-            
-            Text(title)
-                .font(.subheadline.weight(.medium))
-                .foregroundColor(.secondary)
-            
-            Spacer()
-            
-            Text(value)
-                .font(.subheadline.weight(.medium))
-                .foregroundColor(.primary)
-        }
-    }
-}
+// MARK: - Modern Sheet Views
 
-// MARK: - Sheet Views (Placeholder implementations)
-
-struct AddMeetingSheetView: View {
+struct ModernAddMeetingSheet: View {
     let courseName: String
     let courseColor: Color
     let scheduleType: ScheduleType
     let onSave: (CourseMeeting) -> Void
     
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject private var themeManager: ThemeManager
+    @Environment(\.colorScheme) private var colorScheme
     
     @State private var meetingType: MeetingType = .lecture
     @State private var meetingLabel: String = ""
@@ -734,273 +1345,483 @@ struct AddMeetingSheetView: View {
     @State private var reminderTime: ReminderTime = .fifteenMinutes
     @State private var isLiveActivityEnabled = true
     
-    // Rotation properties for Day 1/Day 2 schedules
-    @State private var rotationLabel: String = ""
-    @State private var rotationIndex: Int = 1
+    @State private var animationOffset: CGFloat = 0
+    @State private var showContent = false
     
-    // Day 1/Day 2 times for rotating schedules
-    @State private var day1StartTime = Date()
-    @State private var day1EndTime = Calendar.current.date(byAdding: .hour, value: 1, to: Date()) ?? Date()
-    @State private var day2StartTime = Date()
-    @State private var day2EndTime = Calendar.current.date(byAdding: .hour, value: 1, to: Date()) ?? Date()
-    @State private var hasDay1 = true
-    @State private var hasDay2 = true
+    private let days = Array(1...7)
     
-    private var isRotatingSchedule: Bool {
-        scheduleType == .rotating
+    private var canSave: Bool {
+        return startTime < endTime && !selectedDays.isEmpty
     }
     
     var body: some View {
         NavigationView {
-            Form {
-                if isRotatingSchedule {
-                    // Simple Day 1/Day 2 interface for rotating schedules
-                    rotatingScheduleForm
-                } else {
-                    // Complex meeting details for traditional schedules
-                    traditionalScheduleForm
-                }
-            }
-            .navigationTitle(isRotatingSchedule ? "Add Class Times" : "Add Meeting")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss() }
+            ZStack {
+                spectacularBackground
+                
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 24) {
+                        heroSection
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : -30)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.075), value: showContent)
+                        
+                        VStack(spacing: 20) {
+                            meetingTypeSection
+                                .opacity(showContent ? 1 : 0)
+                                .offset(y: showContent ? 0 : 50)
+                                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.15), value: showContent)
+                            
+                            timeSection
+                                .opacity(showContent ? 1 : 0)
+                                .offset(y: showContent ? 0 : 50)
+                                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.225), value: showContent)
+                            
+                            daysSection
+                                .opacity(showContent ? 1 : 0)
+                                .offset(y: showContent ? 0 : 50)
+                                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.3), value: showContent)
+                            
+                            detailsSection
+                                .opacity(showContent ? 1 : 0)
+                                .offset(y: showContent ? 0 : 50)
+                                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.375), value: showContent)
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 100)
+                    }
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        if isRotatingSchedule {
-                            saveRotatingMeeting()
-                        } else {
-                            saveTraditionalMeeting()
-                        }
-                    }
-                    .disabled(!canSave)
+                floatingActionButton
+            }
+        }
+        .preferredColorScheme(.dark)
+        .navigationBarHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    dismiss()
                 }
+                .foregroundColor(.secondary)
+            }
+        }
+        .onAppear {
+            startAnimations()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.225) {
+                showContent = true
             }
         }
     }
     
-    private var canSave: Bool {
-        if isRotatingSchedule {
-            return (hasDay1 && day1StartTime < day1EndTime) || (hasDay2 && day2StartTime < day2EndTime)
-        } else {
-            return startTime < endTime && !selectedDays.isEmpty
+    private var spectacularBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    courseColor.opacity(colorScheme == .dark ? 0.15 : 0.05),
+                    courseColor.opacity(colorScheme == .dark ? 0.08 : 0.02),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            ForEach(0..<6, id: \.self) { index in
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                courseColor.opacity(0.1 - Double(index) * 0.015),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 40 + CGFloat(index * 10)
+                        )
+                    )
+                    .frame(width: 80 + CGFloat(index * 20), height: 80 + CGFloat(index * 20))
+                    .offset(
+                        x: sin(animationOffset * 0.01 + Double(index)) * 50,
+                        y: cos(animationOffset * 0.008 + Double(index)) * 30
+                    )
+                    .opacity(0.3)
+                    .blur(radius: CGFloat(index * 2))
+            }
         }
     }
     
-    @ViewBuilder
-    private var rotatingScheduleForm: some View {
-        Section("Course Information") {
-            TextField("Course Title", text: $meetingLabel, prompt: Text("e.g., 'Advanced Section', 'Honors'"))
-                .textInputAutocapitalization(.words)
-        }
-        
-        Section("Day 1 Schedule") {
-            Toggle("Has Day 1 Classes", isOn: $hasDay1)
-            
-            if hasDay1 {
-                DatePicker("Start Time", selection: $day1StartTime, displayedComponents: .hourAndMinute)
-                    .onChange(of: day1StartTime) { _, newValue in
-                        if day1EndTime <= newValue {
-                            day1EndTime = newValue.addingTimeInterval(3600)
-                        }
-                    }
+    private var heroSection: some View {
+        VStack(spacing: 16) {
+            VStack(spacing: 9) {
+                Text("Add Meeting")
+                    .font(.forma(.largeTitle, weight: .bold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                courseColor,
+                                themeManager.currentTheme.secondaryColor
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
                 
-                DatePicker("End Time", selection: $day1EndTime, displayedComponents: .hourAndMinute)
-                
-                if day1EndTime > day1StartTime {
-                    LabeledContent("Duration") {
-                        Text(formatDuration(day1EndTime.timeIntervalSince(day1StartTime)))
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-        }
-        
-        Section("Day 2 Schedule") {
-            Toggle("Has Day 2 Classes", isOn: $hasDay2)
-            
-            if hasDay2 {
-                DatePicker("Start Time", selection: $day2StartTime, displayedComponents: .hourAndMinute)
-                    .onChange(of: day2StartTime) { _, newValue in
-                        if day2EndTime <= newValue {
-                            day2EndTime = newValue.addingTimeInterval(3600)
-                        }
-                    }
-                
-                DatePicker("End Time", selection: $day2EndTime, displayedComponents: .hourAndMinute)
-                
-                if day2EndTime > day2StartTime {
-                    LabeledContent("Duration") {
-                        Text(formatDuration(day2EndTime.timeIntervalSince(day2StartTime)))
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-        }
-        
-        Section("Location & Instructor") {
-            TextField("Location", text: $location, prompt: Text("e.g., Room 101"))
-                .textInputAutocapitalization(.words)
-            
-            TextField("Instructor", text: $instructor, prompt: Text("e.g., Dr. Smith"))
-                .textInputAutocapitalization(.words)
-        }
-        
-        Section("Settings") {
-            Picker("Reminder", selection: $reminderTime) {
-                ForEach(ReminderTime.allCases, id: \.self) { time in
-                    Text(time.displayName).tag(time)
-                }
-            }
-            
-            Toggle("Live Activities", isOn: $isLiveActivityEnabled)
-        }
-    }
-    
-    @ViewBuilder
-    private var traditionalScheduleForm: some View {
-        Section("Meeting Details") {
-            Picker("Meeting Type", selection: $meetingType) {
-                ForEach(MeetingType.allCases, id: \.self) { type in
-                    Label {
-                        VStack(alignment: .leading) {
-                            Text(type.displayName)
-                                .font(.subheadline.weight(.medium))
-                            Text(getMeetingTypeDescription(type))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: type.iconName)
-                            .foregroundColor(type.color)
-                    }
-                    .tag(type)
-                }
-            }
-            
-            TextField("Custom Label (optional)", text: $meetingLabel, prompt: Text("e.g., 'Advanced Section', 'Lab A'"))
-                .textInputAutocapitalization(.words)
-        }
-        
-        Section("Time") {
-            DatePicker("Start Time", selection: $startTime, displayedComponents: .hourAndMinute)
-                .onChange(of: startTime) { _, newValue in
-                    if endTime <= newValue {
-                        endTime = newValue.addingTimeInterval(3600)
-                    }
-                }
-            
-            DatePicker("End Time", selection: $endTime, displayedComponents: .hourAndMinute)
-            
-            if endTime > startTime {
-                LabeledContent("Duration") {
-                    Text(formatDuration(endTime.timeIntervalSince(startTime)))
+                HStack(spacing: 8) {
+                    Text("for")
+                        .font(.forma(.subheadline))
                         .foregroundColor(.secondary)
+                    
+                    Text(courseName)
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(courseColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(courseColor.opacity(0.1))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(courseColor.opacity(0.3), lineWidth: 1)
+                                )
+                        )
                 }
-            }
-        }
-        
-        Section("Days of Week") {
-            ForEach(1...7, id: \.self) { day in
-                let dayName = Calendar.current.weekdaySymbols[day - 1]
-                HStack {
-                    Text(dayName)
-                    Spacer()
-                    if selectedDays.contains(day) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(courseColor)
-                    } else {
-                        Image(systemName: "circle")
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if selectedDays.contains(day) {
-                        selectedDays.remove(day)
-                    } else {
-                        selectedDays.insert(day)
-                    }
-                }
-            }
-        }
-        
-        if !selectedDays.isEmpty {
-            Section {
-                Text("Selected days: \(selectedDays.sorted().map { Calendar.current.weekdaySymbols[$0 - 1] }.joined(separator: ", "))")
-                    .font(.caption)
+                
+                Text("Schedule when this course meets with all the important details.")
+                    .font(.forma(.subheadline))
                     .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
             }
         }
-        
-        Section("Location & Instructor") {
-            TextField("Location", text: $location, prompt: Text("e.g., Room 101"))
-                .textInputAutocapitalization(.words)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    courseColor.opacity(0.3),
+                                    courseColor.opacity(0.1)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                )
+                .shadow(
+                    color: courseColor.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.3 : 0.15),
+                    radius: 20,
+                    x: 0,
+                    y: 10
+                )
+        )
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+    }
+    
+    private var meetingTypeSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Meeting Type")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
             
-            TextField("Instructor", text: $instructor, prompt: Text("e.g., Dr. Smith"))
-                .textInputAutocapitalization(.words)
+            meetingTypeGrid
+            
+            customLabelField
         }
-        
-        Section("Settings") {
-            Picker("Reminder", selection: $reminderTime) {
-                ForEach(ReminderTime.allCases, id: \.self) { time in
-                    Text(time.displayName).tag(time)
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var meetingTypeGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
+            ForEach(MeetingType.allCases, id: \.self) { type in
+                meetingTypeButton(for: type)
+            }
+        }
+    }
+    
+    private func meetingTypeButton(for type: MeetingType) -> some View {
+        Button(action: { meetingType = type }) {
+            HStack(spacing: 12) {
+                Image(systemName: type.iconName)
+                    .font(.forma(.title3))
+                    .foregroundColor(meetingType == type ? .white : type.color)
+                
+                Text(type.displayName)
+                    .font(.forma(.subheadline, weight: .semibold))
+                    .foregroundColor(meetingType == type ? .white : .primary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(meetingTypeButtonBackground(for: type))
+        }
+        .buttonStyle(SpringButtonStyle())
+    }
+    
+    private func meetingTypeButtonBackground(for type: MeetingType) -> some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(meetingType == type
+                  ? AnyShapeStyle(type.color)
+                  : AnyShapeStyle(.ultraThinMaterial))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        meetingType == type ? type.color.opacity(0.3) : Color.secondary.opacity(0.2),
+                        lineWidth: meetingType == type ? 2 : 1
+                    )
+            )
+            .shadow(
+                color: meetingType == type ? type.color.opacity(0.3) : .clear,
+                radius: meetingType == type ? 6 : 0,
+                x: 0,
+                y: meetingType == type ? 3 : 0
+            )
+    }
+    
+    private var customLabelField: some View {
+        StunningFormField(
+            title: "Custom Label",
+            icon: "tag",
+            placeholder: "Optional custom name",
+            text: $meetingLabel,
+            courseColor: courseColor,
+            themeManager: themeManager,
+            isValid: true,
+            errorMessage: "",
+            isFocused: false
+        )
+    }
+    
+    private var timeSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Time")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Start")
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(.secondary)
+                    
+                    DatePicker("", selection: $startTime, displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .colorScheme(.dark)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                                )
+                        )
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("End")
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(.secondary)
+                    
+                    DatePicker("", selection: $endTime, displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .colorScheme(.dark)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                                )
+                        )
                 }
             }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var daysSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Days of Week")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
             
-            Toggle("Live Activities", isOn: $isLiveActivityEnabled)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 7), spacing: 8) {
+                ForEach(days, id: \.self) { day in
+                    DayButton(day: day, courseColor: courseColor, selectedDays: $selectedDays)
+                }
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var detailsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Additional Details")
+                    .font(.forma(.title2, weight: .bold))
+                
+                Spacer()
+                
+                Text("Optional")
+                    .font(.forma(.caption))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+            }
+            
+            VStack(spacing: 12) {
+                StunningFormField(
+                    title: "Location",
+                    icon: "location",
+                    placeholder: "Room 101, Science Building",
+                    text: $location,
+                    courseColor: courseColor,
+                    themeManager: themeManager,
+                    isValid: true,
+                    errorMessage: "",
+                    isFocused: false
+                )
+                
+                StunningFormField(
+                    title: "Instructor",
+                    icon: "person",
+                    placeholder: "Dr. Smith",
+                    text: $instructor,
+                    courseColor: courseColor,
+                    themeManager: themeManager,
+                    isValid: true,
+                    errorMessage: "",
+                    isFocused: false
+                )
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var floatingActionButton: some View {
+        VStack {
+            Spacer()
+            
+            HStack {
+                Spacer()
+                
+                Button(action: saveMeeting) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2.bold())
+                            .foregroundColor(.white)
+                        
+                        Text("Save Meeting")
+                            .font(.forma(.headline, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 16)
+                    .background(
+                        ZStack {
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: canSave ? [courseColor, courseColor.opacity(0.8)] :
+                                               [.secondary.opacity(0.6), .secondary.opacity(0.4)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            
+                            if canSave {
+                                Capsule()
+                                    .fill(
+                                        AngularGradient(
+                                            colors: [
+                                                Color.clear,
+                                                Color.white.opacity(0.3),
+                                                Color.clear,
+                                                Color.clear
+                                            ],
+                                            center: .center,
+                                            angle: .degrees(animationOffset * 0.5)
+                                        )
+                                    )
+                            }
+                        }
+                        .shadow(
+                            color: canSave ? courseColor.opacity(0.4) : .clear,
+                            radius: 16,
+                            x: 0,
+                            y: 8
+                        )
+                    )
+                }
+                .disabled(!canSave)
+                .buttonStyle(BounceButtonStyle())
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: canSave)
+            }
+            .padding(.trailing, 24)
+            .padding(.bottom, 32)
         }
     }
     
-    private func saveRotatingMeeting() {
-        // For rotating schedules, we create separate meetings for Day 1 and Day 2
-        if hasDay1 && day1StartTime < day1EndTime {
-            let day1Meeting = CourseMeeting(
-                courseId: UUID(), // Temporary courseId - will be updated when course is created
-                meetingType: meetingType,
-                meetingLabel: meetingLabel.isEmpty ? nil : meetingLabel,
-                isRotating: true,
-                rotationLabel: "Day 1",
-                rotationIndex: 1,
-                startTime: day1StartTime,
-                endTime: day1EndTime,
-                daysOfWeek: [], // No specific days for rotation meetings
-                location: location,
-                instructor: instructor,
-                reminderTime: reminderTime,
-                isLiveActivityEnabled: isLiveActivityEnabled
-            )
-            onSave(day1Meeting)
+    private func startAnimations() {
+        withAnimation(.linear(duration: 22.5).repeatForever(autoreverses: false)) {
+            animationOffset = 360
         }
-        
-        if hasDay2 && day2StartTime < day2EndTime {
-            let day2Meeting = CourseMeeting(
-                courseId: UUID(), // Temporary courseId - will be updated when course is created
-                meetingType: meetingType,
-                meetingLabel: meetingLabel.isEmpty ? nil : meetingLabel,
-                isRotating: true,
-                rotationLabel: "Day 2",
-                rotationIndex: 2,
-                startTime: day2StartTime,
-                endTime: day2EndTime,
-                daysOfWeek: [], // No specific days for rotation meetings
-                location: location,
-                instructor: instructor,
-                reminderTime: reminderTime,
-                isLiveActivityEnabled: isLiveActivityEnabled
-            )
-            onSave(day2Meeting)
-        }
-        
-        dismiss()
     }
     
-    private func saveTraditionalMeeting() {
+    private func saveMeeting() {
         let meeting = CourseMeeting(
-            courseId: UUID(), // Temporary courseId - will be updated when course is created
+            courseId: UUID(),
             meetingType: meetingType,
             meetingLabel: meetingLabel.isEmpty ? nil : meetingLabel,
             isRotating: false,
@@ -1015,48 +1836,72 @@ struct AddMeetingSheetView: View {
             isLiveActivityEnabled: isLiveActivityEnabled
         )
         
-        print("🔍 DEBUG: Creating meeting with days: \(meeting.daysOfWeek)")
-        print("🔍 DEBUG: Selected days were: \(selectedDays)")
-        
         onSave(meeting)
         dismiss()
     }
     
-    private func getMeetingTypeDescription(_ type: MeetingType) -> String {
-        switch type {
-        case .lecture: return "Traditional classroom lecture"
-        case .lab: return "Hands-on laboratory session"
-        case .tutorial: return "Small group tutorial"
-        case .seminar: return "Discussion-based seminar"
-        case .workshop: return "Interactive workshop"
-        case .practicum: return "Practical application session"
-        case .recitation: return "Review and problem-solving"
-        case .studio: return "Creative studio work"
-        case .fieldwork: return "Field-based learning"
-        case .clinic: return "Clinical practice session"
-        case .other: return "Other meeting type"
-        }
-    }
-    
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let hours = Int(duration) / 3600
-        let minutes = (Int(duration) % 3600) / 60
+    struct DayButton: View {
+        let day: Int
+        let courseColor: Color
+        @Binding var selectedDays: Set<Int>
         
-        if hours > 0 {
-            return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h"
-        } else {
-            return "\(minutes)m"
+        private var dayName: String {
+            let symbols = Calendar.current.weekdaySymbols
+            let index = (day + Calendar.current.firstWeekday - 2) % 7
+            return String(symbols[index].prefix(3))
+        }
+        
+        private var isSelected: Bool {
+            selectedDays.contains(day)
+        }
+        
+        var body: some View {
+            Button(action: {
+                if isSelected {
+                    selectedDays.remove(day)
+                } else {
+                    selectedDays.insert(day)
+                }
+            }) {
+                Text(dayName)
+                    .font(.forma(.subheadline, weight: .semibold))
+                    .foregroundColor(isSelected ? .white : .secondary)
+                    .frame(height: 40)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(isSelected
+                                  ? AnyShapeStyle(courseColor)
+                                  : AnyShapeStyle(.ultraThinMaterial))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(
+                                        isSelected ? courseColor.opacity(0.3) : Color.secondary.opacity(0.2),
+                                        lineWidth: isSelected ? 2 : 1
+                                    )
+                            )
+                            .shadow(
+                                color: isSelected ? courseColor.opacity(0.3) : .clear,
+                                radius: isSelected ? 6 : 0,
+                                x: 0,
+                                y: isSelected ? 3 : 0
+                            )
+                    )
+            }
+            .buttonStyle(SpringButtonStyle())
         }
     }
 }
 
-struct EditMeetingSheetView: View {
+struct ModernEditMeetingSheet: View {
     let meeting: CourseMeeting
     let courseName: String
     let courseColor: Color
     let onSave: (CourseMeeting) -> Void
     
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject private var themeManager: ThemeManager
+    @Environment(\.colorScheme) private var colorScheme
     
     @State private var meetingType: MeetingType
     @State private var meetingLabel: String
@@ -1065,10 +1910,11 @@ struct EditMeetingSheetView: View {
     @State private var selectedDays: Set<Int>
     @State private var location: String
     @State private var instructor: String
-    @State private var reminderTime: ReminderTime
-    @State private var isLiveActivityEnabled: Bool
-    @State private var rotationLabel: String
-    @State private var rotationIndex: Int
+    
+    @State private var animationOffset: CGFloat = 0
+    @State private var showContent = false
+    
+    private let days = Array(1...7)
     
     init(meeting: CourseMeeting, courseName: String, courseColor: Color, onSave: @escaping (CourseMeeting) -> Void) {
         self.meeting = meeting
@@ -1083,114 +1929,566 @@ struct EditMeetingSheetView: View {
         _selectedDays = State(initialValue: Set(meeting.daysOfWeek))
         _location = State(initialValue: meeting.location)
         _instructor = State(initialValue: meeting.instructor)
-        _reminderTime = State(initialValue: meeting.reminderTime)
-        _isLiveActivityEnabled = State(initialValue: meeting.isLiveActivityEnabled)
-        _rotationLabel = State(initialValue: meeting.rotationLabel ?? "")
-        _rotationIndex = State(initialValue: meeting.rotationIndex ?? 1)
+    }
+    
+    private var canSave: Bool {
+        return startTime < endTime && !selectedDays.isEmpty
     }
     
     var body: some View {
         NavigationView {
-            Form {
-                Section("Meeting Details") {
-                    Picker("Meeting Type", selection: $meetingType) {
-                        ForEach(MeetingType.allCases, id: \.self) { type in
-                            Label(type.displayName, systemImage: type.iconName)
-                                .tag(type)
-                        }
-                    }
-                    
-                    TextField("Custom Label (optional)", text: $meetingLabel)
-                }
+            ZStack {
+                spectacularBackground
                 
-                Section("Time") {
-                    DatePicker("Start Time", selection: $startTime, displayedComponents: .hourAndMinute)
-                    DatePicker("End Time", selection: $endTime, displayedComponents: .hourAndMinute)
-                }
-                
-                if meeting.isRotating {
-                    Section("Rotation") {
-                        TextField("Rotation Label", text: $rotationLabel)
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 24) {
+                        heroSection
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : -30)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.075), value: showContent)
                         
-                        Picker("Rotation Index", selection: $rotationIndex) {
-                            ForEach(1...4, id: \.self) { index in
-                                Text("Day \(index)").tag(index)
-                            }
+                        VStack(spacing: 20) {
+                            meetingTypeSection
+                                .opacity(showContent ? 1 : 0)
+                                .offset(y: showContent ? 0 : 50)
+                                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.15), value: showContent)
+                            
+                            timeSection
+                                .opacity(showContent ? 1 : 0)
+                                .offset(y: showContent ? 0 : 50)
+                                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.225), value: showContent)
+                            
+                            daysSection
+                                .opacity(showContent ? 1 : 0)
+                                .offset(y: showContent ? 0 : 50)
+                                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.3), value: showContent)
+                            
+                            detailsSection
+                                .opacity(showContent ? 1 : 0)
+                                .offset(y: showContent ? 0 : 50)
+                                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.375), value: showContent)
                         }
-                    }
-                } else {
-                    Section("Days of Week") {
-                        ForEach(1...7, id: \.self) { day in
-                            let dayName = Calendar.current.weekdaySymbols[day - 1]
-                            HStack {
-                                Text(dayName)
-                                Spacer()
-                                if selectedDays.contains(day) {
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if selectedDays.contains(day) {
-                                    selectedDays.remove(day)
-                                } else {
-                                    selectedDays.insert(day)
-                                }
-                            }
-                        }
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 100)
                     }
                 }
                 
-                Section("Location & Instructor") {
-                    TextField("Location", text: $location)
-                    TextField("Instructor", text: $instructor)
-                }
-                
-                Section("Settings") {
-                    Picker("Reminder", selection: $reminderTime) {
-                        ForEach(ReminderTime.allCases, id: \.self) { time in
-                            Text(time.displayName).tag(time)
-                        }
-                    }
-                    
-                    Toggle("Live Activities", isOn: $isLiveActivityEnabled)
-                }
+                floatingActionButton
             }
-            .navigationTitle("Edit Meeting")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss() }
+        }
+        .preferredColorScheme(.dark)
+        .navigationBarHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    dismiss()
                 }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        var updatedMeeting = meeting
-                        updatedMeeting.meetingType = meetingType
-                        updatedMeeting.meetingLabel = meetingLabel.isEmpty ? nil : meetingLabel
-                        updatedMeeting.startTime = startTime
-                        updatedMeeting.endTime = endTime
-                        updatedMeeting.daysOfWeek = Array(selectedDays)
-                        updatedMeeting.location = location
-                        updatedMeeting.instructor = instructor
-                        updatedMeeting.reminderTime = reminderTime
-                        updatedMeeting.isLiveActivityEnabled = isLiveActivityEnabled
-                        updatedMeeting.rotationLabel = rotationLabel.isEmpty ? nil : rotationLabel
-                        updatedMeeting.rotationIndex = rotationIndex
-                        
-                        onSave(updatedMeeting)
-                        dismiss()
-                    }
-                    .disabled(startTime >= endTime || (!meeting.isRotating && selectedDays.isEmpty))
-                }
+                .foregroundColor(.secondary)
+            }
+        }
+        .onAppear {
+            startAnimations()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.225) {
+                showContent = true
             }
         }
     }
+    
+    private var spectacularBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    courseColor.opacity(colorScheme == .dark ? 0.15 : 0.05),
+                    courseColor.opacity(colorScheme == .dark ? 0.08 : 0.02),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            ForEach(0..<6, id: \.self) { index in
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                courseColor.opacity(0.1 - Double(index) * 0.015),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 40 + CGFloat(index * 10)
+                        )
+                    )
+                    .frame(width: 80 + CGFloat(index * 20), height: 80 + CGFloat(index * 20))
+                    .offset(
+                        x: sin(animationOffset * 0.01 + Double(index)) * 50,
+                        y: cos(animationOffset * 0.008 + Double(index)) * 30
+                    )
+                    .opacity(0.3)
+                    .blur(radius: CGFloat(index * 2))
+            }
+        }
+    }
+    
+    private var heroSection: some View {
+        VStack(spacing: 16) {
+            VStack(spacing: 9) {
+                Text("Edit Meeting")
+                    .font(.forma(.largeTitle, weight: .bold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                courseColor,
+                                themeManager.currentTheme.secondaryColor
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                
+                HStack(spacing: 8) {
+                    Text("for")
+                        .font(.forma(.subheadline))
+                        .foregroundColor(.secondary)
+                    
+                    Text(courseName)
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(courseColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(courseColor.opacity(0.1))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(courseColor.opacity(0.3), lineWidth: 1)
+                                )
+                        )
+                }
+                
+                Text("Update the meeting details and schedule.")
+                    .font(.forma(.subheadline))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    courseColor.opacity(0.3),
+                                    courseColor.opacity(0.1)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                )
+                .shadow(
+                    color: courseColor.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.3 : 0.15),
+                    radius: 20,
+                    x: 0,
+                    y: 10
+                )
+        )
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+    }
+    
+    private var meetingTypeSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Meeting Type")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            meetingTypeGrid
+            
+            customLabelField
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var meetingTypeGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
+            ForEach(MeetingType.allCases, id: \.self) { type in
+                meetingTypeButton(for: type)
+            }
+        }
+    }
+    
+    private func meetingTypeButton(for type: MeetingType) -> some View {
+        Button(action: { meetingType = type }) {
+            HStack(spacing: 12) {
+                Image(systemName: type.iconName)
+                    .font(.forma(.title3))
+                    .foregroundColor(meetingType == type ? .white : type.color)
+                
+                Text(type.displayName)
+                    .font(.forma(.subheadline, weight: .semibold))
+                    .foregroundColor(meetingType == type ? .white : .primary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(meetingTypeButtonBackground(for: type))
+        }
+        .buttonStyle(SpringButtonStyle())
+    }
+    
+    private func meetingTypeButtonBackground(for type: MeetingType) -> some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(meetingType == type
+                  ? AnyShapeStyle(type.color)
+                  : AnyShapeStyle(.ultraThinMaterial))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        meetingType == type ? type.color.opacity(0.3) : Color.secondary.opacity(0.2),
+                        lineWidth: meetingType == type ? 2 : 1
+                    )
+            )
+            .shadow(
+                color: meetingType == type ? type.color.opacity(0.3) : .clear,
+                radius: meetingType == type ? 6 : 0,
+                x: 0,
+                y: meetingType == type ? 3 : 0
+            )
+    }
+    
+    private var customLabelField: some View {
+        StunningFormField(
+            title: "Custom Label",
+            icon: "tag",
+            placeholder: "Optional custom name",
+            text: $meetingLabel,
+            courseColor: courseColor,
+            themeManager: themeManager,
+            isValid: true,
+            errorMessage: "",
+            isFocused: false
+        )
+    }
+    
+    private var timeSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Time")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Start")
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(.secondary)
+                    
+                    DatePicker("", selection: $startTime, displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .colorScheme(.dark)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                                )
+                        )
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("End")
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(.secondary)
+                    
+                    DatePicker("", selection: $endTime, displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .colorScheme(.dark)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                                )
+                        )
+                }
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var daysSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Days of Week")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 7), spacing: 8) {
+                ForEach(days, id: \.self) { day in
+                    DayButton(day: day, courseColor: courseColor, selectedDays: $selectedDays)
+                }
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var detailsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Additional Details")
+                    .font(.forma(.title2, weight: .bold))
+                
+                Spacer()
+                
+                Text("Optional")
+                    .font(.forma(.caption))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+            }
+            
+            VStack(spacing: 12) {
+                StunningFormField(
+                    title: "Location",
+                    icon: "location",
+                    placeholder: "Room 101, Science Building",
+                    text: $location,
+                    courseColor: courseColor,
+                    themeManager: themeManager,
+                    isValid: true,
+                    errorMessage: "",
+                    isFocused: false
+                )
+                
+                StunningFormField(
+                    title: "Instructor",
+                    icon: "person",
+                    placeholder: "Dr. Smith",
+                    text: $instructor,
+                    courseColor: courseColor,
+                    themeManager: themeManager,
+                    isValid: true,
+                    errorMessage: "",
+                    isFocused: false
+                )
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(courseColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var floatingActionButton: some View {
+        VStack {
+            Spacer()
+            
+            HStack {
+                Spacer()
+                
+                Button(action: saveChanges) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2.bold())
+                            .foregroundColor(.white)
+                        
+                        Text("Save Changes")
+                            .font(.forma(.headline, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 16)
+                    .background(
+                        ZStack {
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: canSave ? [courseColor, courseColor.opacity(0.8)] :
+                                               [.secondary.opacity(0.6), .secondary.opacity(0.4)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            
+                            if canSave {
+                                Capsule()
+                                    .fill(
+                                        AngularGradient(
+                                            colors: [
+                                                Color.clear,
+                                                Color.white.opacity(0.3),
+                                                Color.clear,
+                                                Color.clear
+                                            ],
+                                            center: .center,
+                                            angle: .degrees(animationOffset * 0.5)
+                                        )
+                                    )
+                            }
+                        }
+                        .shadow(
+                            color: canSave ? courseColor.opacity(0.4) : .clear,
+                            radius: 16,
+                            x: 0,
+                            y: 8
+                        )
+                    )
+                }
+                .disabled(!canSave)
+                .buttonStyle(BounceButtonStyle())
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: canSave)
+            }
+            .padding(.trailing, 24)
+            .padding(.bottom, 32)
+        }
+    }
+    
+    private func startAnimations() {
+        withAnimation(.linear(duration: 22.5).repeatForever(autoreverses: false)) {
+            animationOffset = 360
+        }
+    }
+    
+    private func saveChanges() {
+        var updatedMeeting = meeting
+        updatedMeeting.meetingType = meetingType
+        updatedMeeting.meetingLabel = meetingLabel.isEmpty ? nil : meetingLabel
+        updatedMeeting.startTime = startTime
+        updatedMeeting.endTime = endTime
+        updatedMeeting.daysOfWeek = Array(selectedDays)
+        updatedMeeting.location = location
+        updatedMeeting.instructor = instructor
+        
+        onSave(updatedMeeting)
+        dismiss()
+    }
+    
+    struct DayButton: View {
+        let day: Int
+        let courseColor: Color
+        @Binding var selectedDays: Set<Int>
+        
+        private var dayName: String {
+            let symbols = Calendar.current.weekdaySymbols
+            let index = (day + Calendar.current.firstWeekday - 2) % 7
+            return String(symbols[index].prefix(3))
+        }
+        
+        private var isSelected: Bool {
+            selectedDays.contains(day)
+        }
+        
+        var body: some View {
+            Button(action: {
+                if isSelected {
+                    selectedDays.remove(day)
+                } else {
+                    selectedDays.insert(day)
+                }
+            }) {
+                Text(dayName)
+                    .font(.forma(.subheadline, weight: .semibold))
+                    .foregroundColor(isSelected ? .white : .secondary)
+                    .frame(height: 40)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(isSelected
+                                  ? AnyShapeStyle(courseColor)
+                                  : AnyShapeStyle(.ultraThinMaterial))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(
+                                        isSelected ? courseColor.opacity(0.3) : Color.secondary.opacity(0.2),
+                                        lineWidth: isSelected ? 2 : 1
+                                    )
+                            )
+                            .shadow(
+                                color: isSelected ? courseColor.opacity(0.3) : .clear,
+                                radius: isSelected ? 6 : 0,
+                                x: 0,
+                                y: isSelected ? 3 : 0
+                            )
+                    )
+            }
+            .buttonStyle(SpringButtonStyle())
+        }
+    }
 }
+
+// MARK: - Button Styles & Extensions
+
+struct CompactLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon
+            configuration.title
+        }
+    }
+}
+
+//struct BounceButtonStyle: ButtonStyle {
+//    func makeBody(configuration: Configuration) -> some View {
+//        configuration.label
+//            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+//            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+//    }
+//}
 
 #Preview {
     EnhancedAddCourseWithMeetingsView()
         .environmentObject(ThemeManager())
         .environmentObject(ScheduleManager())
+        .environmentObject(UnifiedCourseManager())
 }

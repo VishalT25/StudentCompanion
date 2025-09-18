@@ -42,291 +42,538 @@ struct EventEditView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Header
-                    VStack(spacing: 12) {
-                        Text(isNew ? "New Reminder" : "Edit Reminder")
-                            .font(.forma(.largeTitle, weight: .bold))
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [primaryColor, primaryColor.opacity(0.7)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                    }
-                    .padding(.top)
-                    
-                    VStack(spacing: 20) {
-                        // Title Field
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "star.fill")
-                                    .font(.forma(.subheadline))
-                                    .foregroundColor(primaryColor)
-                                Text("Title")
-                                    .font(.forma(.subheadline, weight: .medium))
-                                    .foregroundColor(.primary)
-                            }
-                            
-                            HStack {
-                                TextField("Reminder title", text: $title)
-                                    .font(.forma(.body))
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 12)
-                                Spacer()
-                            }
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(primaryColor.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                        }
+            ZStack {
+                // Spectacular animated background
+                spectacularBackground
+                
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 21) {
+                        // Hero header section
+                        heroSection
+                            .padding(.top, 30)
                         
-                        // Date & Time
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "calendar")
-                                    .font(.forma(.subheadline))
-                                    .foregroundColor(primaryColor)
-                                Text("Date & Time")
-                                    .font(.forma(.subheadline, weight: .medium))
-                                    .foregroundColor(.primary)
-                            }
-                            
-                            HStack {
-                                DatePicker("Select date and time", selection: $date, displayedComponents: [.date, .hourAndMinute])
-                                    .datePickerStyle(.compact)
-                                    .tint(primaryColor)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(primaryColor.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                        }
+                        // Reminder details form
+                        reminderFormSection
                         
-                        // Category
-                        if !viewModel.categories.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "tag")
-                                        .font(.forma(.subheadline))
-                                        .foregroundColor(primaryColor)
-                                    Text("Category")
-                                        .font(.forma(.subheadline, weight: .medium))
-                                        .foregroundColor(.primary)
-                                }
-                                
-                                HStack {
-                                    Picker("Category", selection: $categoryId) {
-                                        Text("No Category")
-                                            .tag(nil as UUID?)
-                                        ForEach(viewModel.categories) { category in
-                                            HStack {
-                                                RoundedRectangle(cornerRadius: 4)
-                                                    .fill(category.color)
-                                                    .frame(width: 12, height: 12)
-                                                Text(category.name)
-                                                    .font(.forma(.body))
-                                            }
-                                            .tag(category.id as UUID?)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                    .tint(primaryColor)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(.ultraThinMaterial)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .stroke(primaryColor.opacity(0.3), lineWidth: 1)
-                                        )
-                                )
-                            }
-                        }
+                        // Settings section
+                        settingsSection
                         
-                        // Reminder Time
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "bell.fill")
-                                    .font(.forma(.subheadline))
-                                    .foregroundColor(primaryColor)
-                                Text("Notification")
-                                    .font(.forma(.subheadline, weight: .medium))
-                                    .foregroundColor(.primary)
-                            }
-                            
-                            HStack {
-                                Picker("Notification", selection: $reminderTime) {
-                                    ForEach(ReminderTime.allCases, id: \.self) { rt in
-                                        Text(rt.displayName)
-                                            .font(.forma(.body))
-                                            .tag(rt)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                .tint(primaryColor)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(primaryColor.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                        }
-                        
-                        // Status Toggle
-                        if !isNew {
-                            Toggle(isOn: $isCompleted) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
-                                        .font(.forma(.subheadline))
-                                        .foregroundColor(isCompleted ? .green : primaryColor)
-                                    Text("Completed")
-                                        .font(.forma(.subheadline, weight: .medium))
-                                        .foregroundColor(.primary)
-                                }
-                            }
-                            .tint(primaryColor)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(primaryColor.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                        }
-                        
-                        // Sync Options
-                        VStack(alignment: .leading, spacing: 12) {
-                            Toggle(isOn: $syncToApple) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "calendar")
-                                        .font(.forma(.subheadline))
-                                        .foregroundColor(primaryColor)
-                                    Text("Sync to Apple Calendar")
-                                        .font(.forma(.subheadline, weight: .medium))
-                                        .foregroundColor(.primary)
-                                }
-                            }
-                            .tint(primaryColor)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(primaryColor.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                            
-                            Toggle(isOn: $syncToGoogle) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "globe")
-                                        .font(.forma(.subheadline))
-                                        .foregroundColor(primaryColor)
-                                    Text("Sync to Google Calendar")
-                                        .font(.forma(.subheadline, weight: .medium))
-                                        .foregroundColor(.primary)
-                                }
-                            }
-                            .tint(primaryColor)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(primaryColor.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                        }
+                        Spacer(minLength: 20)
                     }
                     .padding(.horizontal, 24)
-                    
-                    // Delete Button (for existing events)
-                    if !isNew {
-                        Button {
-                            showDeleteAlert = true
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "trash")
-                                    .font(.forma(.subheadline))
-                                Text("Delete Reminder")
-                                    .font(.forma(.subheadline, weight: .medium))
-                            }
-                            .foregroundColor(.red)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(.red.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                        }
-                        .padding(.horizontal, 24)
-                    }
-                    
-                    Spacer(minLength: 100)
-                }
-            }
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .font(.forma(.subheadline))
-                    .foregroundColor(.secondary)
+                    .padding(.bottom, 30)
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        saveEvent()
+                // Floating action buttons
+                floatingActionButtons
+            }
+        }
+        .navigationBarHidden(true)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(false)
+        .preferredColorScheme(.dark)
+        .alert("Delete Reminder", isPresented: $showDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                viewModel.deleteEvent(event)
+                dismiss()
+            }
+        } message: {
+            Text("This action cannot be undone.")
+        }
+    }
+    
+    // MARK: - Spectacular Background
+    private var spectacularBackground: some View {
+        ZStack {
+            // Base gradient background
+            LinearGradient(
+                colors: [
+                    primaryColor.opacity(colorScheme == .dark ? 0.15 : 0.05),
+                    primaryColor.opacity(colorScheme == .dark ? 0.08 : 0.02),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            // Animated floating shapes
+            ForEach(0..<6, id: \.self) { index in
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                primaryColor.opacity(0.1 - Double(index) * 0.015),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 40 + CGFloat(index * 10)
+                        )
+                    )
+                    .frame(width: 80 + CGFloat(index * 20), height: 80 + CGFloat(index * 20))
+                    .offset(
+                        x: sin(Double(index) * 0.5) * 50,
+                        y: cos(Double(index) * 0.3) * 30
+                    )
+                    .opacity(0.3)
+                    .blur(radius: CGFloat(index * 2))
+            }
+        }
+    }
+    
+    // MARK: - Hero Section
+    private var heroSection: some View {
+        VStack(spacing: 16) {
+            VStack(spacing: 9) {
+                Text(isNew ? "New Reminder" : "Edit Reminder")
+                    .font(.forma(.largeTitle, weight: .bold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                primaryColor,
+                                primaryColor.opacity(0.7)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                
+                Text(isNew ? "Never miss an important task or deadline" : "Update your reminder details")
+                    .font(.forma(.subheadline))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    primaryColor.opacity(0.3),
+                                    primaryColor.opacity(0.1)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                )
+                .shadow(
+                    color: primaryColor.opacity(colorScheme == .dark ? 0.3 : 0.15),
+                    radius: 20,
+                    x: 0,
+                    y: 10
+                )
+        )
+    }
+    
+    // MARK: - Reminder Form Section
+    private var reminderFormSection: some View {
+        VStack(spacing: 24) {
+            Text("Reminder Details")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            VStack(spacing: 20) {
+                // Title Field
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "star.fill")
+                            .font(.forma(.subheadline))
+                            .foregroundColor(primaryColor)
+                            .frame(width: 20)
+                        Text("Title")
+                            .font(.forma(.subheadline, weight: .medium))
+                            .foregroundColor(.primary)
                     }
-                    .font(.forma(.subheadline, weight: .semibold))
-                    .foregroundColor(primaryColor)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    
+                    TextField("Reminder title", text: $title)
+                        .font(.forma(.body, weight: .medium))
+                        .foregroundColor(.primary)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(primaryColor.opacity(0.3), lineWidth: 1)
+                                )
+                        )
+                }
+                
+                // Date & Time Picker
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "calendar")
+                            .font(.forma(.subheadline))
+                            .foregroundColor(primaryColor)
+                            .frame(width: 20)
+                        Text("Date & Time")
+                            .font(.forma(.subheadline, weight: .medium))
+                            .foregroundColor(.primary)
+                    }
+                    
+                    HStack {
+                        DatePicker("Select date and time", selection: $date, displayedComponents: [.date, .hourAndMinute])
+                            .datePickerStyle(.compact)
+                            .labelsHidden()
+                            .tint(primaryColor)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(primaryColor.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                }
+                
+                // Category Picker
+                if !viewModel.categories.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "tag")
+                                .font(.forma(.subheadline))
+                                .foregroundColor(primaryColor)
+                                .frame(width: 20)
+                            Text("Category")
+                                .font(.forma(.subheadline, weight: .medium))
+                                .foregroundColor(.primary)
+                        }
+                        
+                        HStack {
+                            Picker("Category", selection: $categoryId) {
+                                Text("No Category")
+                                    .tag(nil as UUID?)
+                                ForEach(viewModel.categories) { category in
+                                    HStack {
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .fill(category.color)
+                                            .frame(width: 12, height: 12)
+                                        Text(category.name)
+                                            .font(.forma(.body))
+                                    }
+                                    .tag(category.id as UUID?)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .tint(primaryColor)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(primaryColor.opacity(0.3), lineWidth: 1)
+                                )
+                        )
+                    }
+                }
+                
+                // Status Toggle (for existing events)
+                if !isNew {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
+                                .font(.forma(.subheadline))
+                                .foregroundColor(isCompleted ? .green : primaryColor)
+                                .frame(width: 20)
+                            Text("Status")
+                                .font(.forma(.subheadline, weight: .medium))
+                                .foregroundColor(.primary)
+                        }
+                        
+                        Toggle(isOn: $isCompleted) {
+                            Text("Mark as completed")
+                                .font(.forma(.body))
+                                .foregroundColor(.primary)
+                        }
+                        .tint(primaryColor)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(primaryColor.opacity(0.3), lineWidth: 1)
+                                )
+                        )
+                    }
                 }
             }
-            .alert("Delete Reminder", isPresented: $showDeleteAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Delete", role: .destructive) {
-                    viewModel.deleteEvent(event)
-                    dismiss()
-                }
-            } message: {
-                Text("This action cannot be undone.")
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(primaryColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    // MARK: - Settings Section
+    private var settingsSection: some View {
+        VStack(spacing: 24) {
+            HStack {
+                Text("Settings")
+                    .font(.forma(.title2, weight: .bold))
+                
+                Spacer()
+                
+                Text("Optional")
+                    .font(.forma(.caption))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            )
+                    )
             }
+            
+            VStack(spacing: 16) {
+                // Notification Setting
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "bell.fill")
+                            .font(.forma(.subheadline))
+                            .foregroundColor(primaryColor)
+                            .frame(width: 20)
+                        Text("Notification")
+                            .font(.forma(.subheadline, weight: .medium))
+                            .foregroundColor(.primary)
+                    }
+                    
+                    HStack {
+                        Picker("Notification", selection: $reminderTime) {
+                            ForEach(ReminderTime.allCases, id: \.self) { rt in
+                                Text(rt.displayName)
+                                    .font(.forma(.body))
+                                    .tag(rt)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(primaryColor)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(primaryColor.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                }
+                
+                // Calendar Sync Toggles
+                Toggle(isOn: $syncToApple) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "calendar")
+                            .font(.forma(.subheadline))
+                            .foregroundColor(primaryColor)
+                            .frame(width: 20)
+                        Text("Sync to Apple Calendar")
+                            .font(.forma(.subheadline, weight: .medium))
+                            .foregroundColor(.primary)
+                    }
+                }
+                .tint(primaryColor)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(primaryColor.opacity(0.3), lineWidth: 1)
+                        )
+                )
+                
+                Toggle(isOn: $syncToGoogle) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "globe")
+                            .font(.forma(.subheadline))
+                            .foregroundColor(primaryColor)
+                            .frame(width: 20)
+                        Text("Sync to Google Calendar")
+                            .font(.forma(.subheadline, weight: .medium))
+                            .foregroundColor(.primary)
+                    }
+                }
+                .tint(primaryColor)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(primaryColor.opacity(0.3), lineWidth: 1)
+                        )
+                )
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(primaryColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    // MARK: - Floating Action Buttons
+    private var floatingActionButtons: some View {
+        VStack {
+            Spacer()
+            
+            HStack {
+                // Delete Button (only for existing events)
+                if !isNew {
+                    Button(action: {
+                        showDeleteAlert = true
+                    }) {
+                        Image(systemName: "trash")
+                            .font(.title2.bold())
+                            .foregroundColor(.white)
+                            .frame(width: 56, height: 56)
+                            .background(
+                                ZStack {
+                                    Circle()
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [.red, .red.opacity(0.8)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                    
+                                    Circle()
+                                        .fill(
+                                            AngularGradient(
+                                                colors: [
+                                                    Color.clear,
+                                                    Color.white.opacity(0.3),
+                                                    Color.clear,
+                                                    Color.clear
+                                                ],
+                                                center: .center,
+                                                angle: .degrees(45)
+                                            )
+                                        )
+                                }
+                                .shadow(color: .red.opacity(0.4), radius: 16, x: 0, y: 8)
+                                .shadow(color: .red.opacity(0.2), radius: 8, x: 0, y: 4)
+                            )
+                    }
+                    .buttonStyle(EventsBounceButtonStyle())
+                }
+                
+                Spacer()
+                
+                // Save Button with enhanced styling
+                Button(action: saveEvent) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2.bold())
+                            .foregroundColor(.white)
+                        
+                        Text(isNew ? "Add Reminder" : "Save Changes")
+                            .font(.forma(.headline, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 16)
+                    .background(
+                        ZStack {
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [primaryColor, primaryColor.opacity(0.8)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            
+                            Capsule()
+                                .fill(
+                                    AngularGradient(
+                                        colors: [
+                                            Color.clear,
+                                            Color.white.opacity(0.3),
+                                            Color.clear,
+                                            Color.clear
+                                        ],
+                                        center: .center,
+                                        angle: .degrees(180)
+                                    )
+                                )
+                            
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white.opacity(0.2),
+                                            Color.clear
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                        }
+                        .shadow(
+                            color: primaryColor.opacity(0.4),
+                            radius: 16,
+                            x: 0,
+                            y: 8
+                        )
+                        .shadow(
+                            color: primaryColor.opacity(0.2),
+                            radius: 8,
+                            x: 0,
+                            y: 4
+                        )
+                    )
+                }
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .buttonStyle(EventsBounceButtonStyle())
+                .scaleEffect(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.95 : 1.0)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: title.isEmpty)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 32)
         }
     }
     

@@ -357,6 +357,7 @@ struct AddResourceWidget: View {
 // MARK: - Add/Edit Views
 struct AddResourceView: View {
     @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject private var themeManager: ThemeManager
     @ObservedObject var resourcesManager: ResourcesManager
     
@@ -364,53 +365,454 @@ struct AddResourceView: View {
     @State private var url: String = ""
     @State private var selectedColor: Color = .blue
     @State private var isFetchingMetadata = false
+    @State private var isAdding = false
+    @State private var errorMessage: String?
+    
+    // Animation states
+    @State private var animationOffset: CGFloat = 0
+    @State private var pulseAnimation: Double = 1.0
+    @State private var bounceAnimation: Double = 0
+    @State private var showContent = false
+    
+    private var isValid: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    
+    private var currentTheme: AppTheme {
+        themeManager.currentTheme
+    }
 
     var body: some View {
-        NavigationView {
-            Form {
-                Section(header: Text("Resource Details")) {
-                    TextField("Name (e.g., Khan Academy)", text: $name)
+        ZStack {
+            // Spectacular animated background
+            spectacularBackground
+            
+            VStack(spacing: 0) {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 20) {
+                        // Hero header section
+                        heroSection
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : -30)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.075), value: showContent)
+                        
+                        // Form content
+                        formContent
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : 50)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.15), value: showContent)
+                        
+                        // Preview section
+                        if !name.isEmpty {
+                            previewSection
+                                .opacity(showContent ? 1 : 0)
+                                .offset(y: showContent ? 0 : 50)
+                                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.225), value: showContent)
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+                    .padding(.bottom, 120)
+                }
+            }
+            
+            // Floating action button
+            floatingActionButton
+        }
+        .navigationBarHidden(true)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(false)
+        .preferredColorScheme(.dark)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    dismiss()
+                }
+                .foregroundColor(.secondary)
+            }
+        }
+        .alert("Error", isPresented: .constant(errorMessage != nil)) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+                .font(.forma(.body))
+        }
+        .onAppear {
+            startAnimations()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.225) {
+                showContent = true
+            }
+        }
+    }
+    
+    // MARK: - Spectacular Background
+    private var spectacularBackground: some View {
+        ZStack {
+            // Base gradient background
+            LinearGradient(
+                colors: [
+                    currentTheme.primaryColor.opacity(colorScheme == .dark ? 0.15 : 0.05),
+                    currentTheme.primaryColor.opacity(colorScheme == .dark ? 0.08 : 0.02),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            // Animated floating shapes
+            ForEach(0..<6, id: \.self) { index in
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                currentTheme.primaryColor.opacity(0.1 - Double(index) * 0.015),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 40 + CGFloat(index * 10)
+                        )
+                    )
+                    .frame(width: 80 + CGFloat(index * 20), height: 80 + CGFloat(index * 20))
+                    .offset(
+                        x: sin(animationOffset * 0.01 + Double(index)) * 50,
+                        y: cos(animationOffset * 0.008 + Double(index)) * 30
+                    )
+                    .opacity(0.3)
+                    .blur(radius: CGFloat(index * 2))
+            }
+        }
+    }
+    
+    // MARK: - Hero Section
+    private var heroSection: some View {
+        VStack(spacing: 12) {
+            VStack(alignment: .center, spacing: 8) {
+                Text("Add New Resource")
+                    .font(.forma(.title, weight: .bold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                currentTheme.primaryColor,
+                                currentTheme.secondaryColor
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
+                
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.forma(.caption))
+                        .foregroundColor(currentTheme.primaryColor)
                     
-                    HStack {
-                        TextField("URL (e.g., https://...)", text: $url)
+                    Text("Academic Resource")
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(currentTheme.primaryColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(currentTheme.primaryColor.opacity(0.1))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
+                                )
+                        )
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                
+                Text("Add links to your favorite study sites, research tools, and online resources to keep them easily accessible.")
+                    .font(.forma(.subheadline))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    currentTheme.primaryColor.opacity(0.3),
+                                    currentTheme.primaryColor.opacity(0.1)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                )
+                .shadow(
+                    color: currentTheme.primaryColor.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.3 : 0.15),
+                    radius: 20,
+                    x: 0,
+                    y: 10
+                )
+        )
+    }
+    
+    // MARK: - Form Content
+    private var formContent: some View {
+        VStack(spacing: 24) {
+            // Resource Details Section
+            VStack(spacing: 20) {
+                Text("Resource Details")
+                    .font(.forma(.title2, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                
+                VStack(spacing: 16) {
+                    StunningFormField(
+                        title: "Resource Name",
+                        icon: "text.alignleft",
+                        placeholder: "e.g., Khan Academy",
+                        text: $name,
+                        courseColor: currentTheme.primaryColor,
+                        themeManager: themeManager,
+                        isValid: !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        errorMessage: "Please enter a resource name",
+                        isFocused: false
+                    )
+                    
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "link")
+                                .font(.forma(.subheadline))
+                                .foregroundColor(currentTheme.primaryColor)
+                            
+                            Text("Website URL")
+                                .font(.forma(.subheadline, weight: .medium))
+                                .foregroundColor(.primary)
+                            
+                            Spacer()
+                            
+                            if isFetchingMetadata {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                    .tint(currentTheme.primaryColor)
+                            }
+                        }
+                        
+                        TextField("https://example.com", text: $url)
+                            .font(.forma(.body))
                             .keyboardType(.URL)
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
-                            .onChange(of: url, perform: fetchMetadata)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(.ultraThinMaterial)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(
+                                                url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 
+                                                currentTheme.primaryColor.opacity(0.2) :
+                                                currentTheme.primaryColor.opacity(0.4),
+                                                lineWidth: 1
+                                            )
+                                    )
+                            )
+                            .onChange(of: url) { _ in
+                                fetchMetadata(for: url)
+                            }
+                    }
+                }
+            }
+            .padding(.vertical, 24)
+            .padding(.horizontal, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                    )
+            )
+            
+            // Customization Section
+            VStack(spacing: 20) {
+                Text("Customization")
+                    .font(.forma(.title2, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(selectedColor.opacity(0.2))
+                                .frame(width: 40, height: 40)
+                                .overlay(
+                                    Circle()
+                                        .stroke(selectedColor.opacity(0.3), lineWidth: 1)
+                                )
+                            
+                            Image(systemName: "paintpalette")
+                                .font(.forma(.subheadline))
+                                .foregroundColor(selectedColor)
+                        }
                         
-                        if isFetchingMetadata {
-                            ProgressView().padding(.leading, 5)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Accent Color")
+                                .font(.forma(.body, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text("Choose a color to represent this resource")
+                                .font(.forma(.subheadline))
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        ColorPicker("", selection: $selectedColor, supportsOpacity: false)
+                            .labelsHidden()
+                            .scaleEffect(1.2)
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+            .padding(.vertical, 24)
+            .padding(.horizontal, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                    )
+            )
+        }
+    }
+    
+    // MARK: - Preview Section
+    private var previewSection: some View {
+        VStack(spacing: 20) {
+            Text("Preview")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            HStack {
+                ResourceWidget(
+                    resource: Resource(name: name, url: url, customColor: selectedColor.toHex()),
+                    onEdit: {},
+                    onDelete: {}
+                )
+                .environmentObject(themeManager)
+                .buttonStyle(.plain)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: name)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: url)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: selectedColor)
+                
+                Spacer()
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    // MARK: - Floating Action Button
+    private var floatingActionButton: some View {
+        VStack {
+            Spacer()
+            
+            HStack {
+                Spacer()
+                
+                Button(action: {
+                    Task { await addResource() }
+                }) {
+                    HStack(spacing: 12) {
+                        if isAdding {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.title2.bold())
+                                .foregroundColor(.white)
+                        }
+                        
+                        if !isAdding {
+                            Text("Add Resource")
+                                .font(.forma(.headline, weight: .semibold))
+                                .foregroundColor(.white)
                         }
                     }
-                }
-                
-                Section(header: Text("Customization")) {
-                    ColorPicker("Accent Color", selection: $selectedColor, supportsOpacity: false)
-                }
-                
-                if !name.isEmpty {
-                    Section(header: Text("Preview")) {
-                        ResourceWidget(
-                            resource: Resource(name: name, url: url, customColor: selectedColor.toHex()),
-                            onEdit: {},
-                            onDelete: {}
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 16)
+                    .background(
+                        ZStack {
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: !isValid ? [.secondary.opacity(0.6), .secondary.opacity(0.4)] :
+                                               [currentTheme.primaryColor, currentTheme.primaryColor.opacity(0.8)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            
+                            if !isAdding && isValid {
+                                Capsule()
+                                    .fill(
+                                        AngularGradient(
+                                            colors: [
+                                                Color.clear,
+                                                Color.white.opacity(0.3),
+                                                Color.clear,
+                                                Color.clear
+                                            ],
+                                            center: .center,
+                                            angle: .degrees(animationOffset * 0.5)
+                                        )
+                                    )
+                            }
+                        }
+                        .shadow(
+                            color: !isValid ? .clear : currentTheme.primaryColor.opacity(0.4),
+                            radius: 16,
+                            x: 0,
+                            y: 8
                         )
-                        .environmentObject(themeManager)
-                        .buttonStyle(.plain) // Disable button action in preview
-                    }
+                        .scaleEffect(bounceAnimation * 0.1 + 0.9)
+                    )
                 }
+                .disabled(!isValid)
+                .buttonStyle(BounceButtonStyle())
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isValid)
             }
-            .navigationTitle("Add Resource")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { addResource() }
-                        .disabled(name.isEmpty || url.isEmpty)
-                }
-            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 32)
+        }
+    }
+    
+    // MARK: - Helper Methods
+    private func startAnimations() {
+        withAnimation(.linear(duration: 22.5).repeatForever(autoreverses: false)) {
+            animationOffset = 360
+        }
+        
+        withAnimation(.easeInOut(duration: 2.25).repeatForever(autoreverses: true)) {
+            pulseAnimation = 1.1
         }
     }
     
@@ -423,87 +825,529 @@ struct AddResourceView: View {
             DispatchQueue.main.async {
                 isFetchingMetadata = false
                 if let metadata = metadata, name.isEmpty {
-                    name = metadata.title ?? ""
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        name = metadata.title ?? ""
+                    }
                 }
             }
         }
     }
     
-    private func addResource() {
-        var urlString = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !urlString.hasPrefix("http://") && !urlString.hasPrefix("https://") {
-            urlString = "https://" + urlString
+    private func addResource() async {
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            isAdding = true
         }
-        let resource = Resource(
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            url: urlString,
-            customColor: selectedColor.toHex()
-        )
-        resourcesManager.addResource(resource)
-        dismiss()
+        
+        errorMessage = nil
+        
+        do {
+            var urlString = url.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !urlString.hasPrefix("http://") && !urlString.hasPrefix("https://") {
+                urlString = "https://" + urlString
+            }
+            let resource = Resource(
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                url: urlString,
+                customColor: selectedColor.toHex()
+            )
+            
+            resourcesManager.addResource(resource)
+            
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                isAdding = false
+            }
+            
+            dismiss()
+        } catch {
+            errorMessage = "Failed to add resource: \(error.localizedDescription)"
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                isAdding = false
+            }
+        }
     }
 }
 
 struct EditResourceView: View {
     @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject private var themeManager: ThemeManager
     @ObservedObject var resourcesManager: ResourcesManager
     
-    @State private var resource: Resource
+    let originalResource: Resource
+    @State private var editedResource: Resource
+    @State private var isUpdating = false
+    @State private var errorMessage: String?
+    
+    // Animation states
+    @State private var animationOffset: CGFloat = 0
+    @State private var pulseAnimation: Double = 1.0
+    @State private var bounceAnimation: Double = 0
+    @State private var showContent = false
     
     init(resource: Resource, resourcesManager: ResourcesManager) {
-        _resource = State(initialValue: resource)
+        self.originalResource = resource
+        self._editedResource = State(initialValue: resource)
         self.resourcesManager = resourcesManager
+    }
+    
+    private var isValid: Bool {
+        !editedResource.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !editedResource.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    
+    private var currentTheme: AppTheme {
+        themeManager.currentTheme
     }
 
     var body: some View {
-        NavigationView {
-            Form {
-                Section(header: Text("Resource Details")) {
-                    TextField("Name", text: $resource.name)
-                    TextField("URL", text: $resource.url)
-                        .keyboardType(.URL)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                }
-                
-                Section(header: Text("Customization")) {
-                    ColorPicker("Accent Color", selection: Binding(
-                        get: { resource.color },
-                        set: { resource.customColor = $0.toHex() }
-                    ), supportsOpacity: false)
-                }
-                
-                Section(header: Text("Preview")) {
-                    ResourceWidget(resource: resource, onEdit: {}, onDelete: {})
-                        .environmentObject(themeManager)
-                        .buttonStyle(.plain)
+        ZStack {
+            // Spectacular animated background
+            spectacularBackground
+            
+            VStack(spacing: 0) {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 20) {
+                        // Hero header section
+                        heroSection
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : -30)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.075), value: showContent)
+                        
+                        // Form content
+                        formContent
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : 50)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.15), value: showContent)
+                        
+                        // Preview section
+                        previewSection
+                            .opacity(showContent ? 1 : 0)
+                            .offset(y: showContent ? 0 : 50)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.225), value: showContent)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+                    .padding(.bottom, 120)
                 }
             }
-            .navigationTitle("Edit Resource")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+            
+            // Floating action button
+            floatingActionButton
+        }
+        .navigationBarHidden(true)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(false)
+        .preferredColorScheme(.dark)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    dismiss()
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { updateResource() }
-                        .disabled(resource.name.isEmpty || resource.url.isEmpty)
-                }
+                .foregroundColor(.secondary)
+            }
+        }
+        .alert("Error", isPresented: .constant(errorMessage != nil)) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+                .font(.forma(.body))
+        }
+        .onAppear {
+            startAnimations()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.225) {
+                showContent = true
             }
         }
     }
     
-    private func updateResource() {
-        var urlString = resource.url.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !urlString.hasPrefix("http://") && !urlString.hasPrefix("https://") {
-            urlString = "https://" + urlString
+    // MARK: - Spectacular Background
+    private var spectacularBackground: some View {
+        ZStack {
+            // Base gradient background
+            LinearGradient(
+                colors: [
+                    currentTheme.primaryColor.opacity(colorScheme == .dark ? 0.15 : 0.05),
+                    currentTheme.primaryColor.opacity(colorScheme == .dark ? 0.08 : 0.02),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            // Animated floating shapes
+            ForEach(0..<6, id: \.self) { index in
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                currentTheme.primaryColor.opacity(0.1 - Double(index) * 0.015),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 40 + CGFloat(index * 10)
+                        )
+                    )
+                    .frame(width: 80 + CGFloat(index * 20), height: 80 + CGFloat(index * 20))
+                    .offset(
+                        x: sin(animationOffset * 0.01 + Double(index)) * 50,
+                        y: cos(animationOffset * 0.008 + Double(index)) * 30
+                    )
+                    .opacity(0.3)
+                    .blur(radius: CGFloat(index * 2))
+            }
         }
-        resource.url = urlString
-        resource.name = resource.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    // MARK: - Hero Section
+    private var heroSection: some View {
+        VStack(spacing: 12) {
+            VStack(alignment: .center, spacing: 8) {
+                Text("Edit Resource")
+                    .font(.forma(.title, weight: .bold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                currentTheme.primaryColor,
+                                currentTheme.secondaryColor
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
+                
+                HStack(spacing: 6) {
+                    Text("Updating")
+                        .font(.forma(.subheadline))
+                        .foregroundColor(.secondary)
+                    
+                    Text(originalResource.name)
+                        .font(.forma(.subheadline, weight: .medium))
+                        .foregroundColor(currentTheme.primaryColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(currentTheme.primaryColor.opacity(0.1))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(currentTheme.primaryColor.opacity(0.3), lineWidth: 1)
+                                )
+                        )
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                
+                Text("Update resource details and customize its appearance to keep your academic resources perfectly organized.")
+                    .font(.forma(.subheadline))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    currentTheme.primaryColor.opacity(0.3),
+                                    currentTheme.primaryColor.opacity(0.1)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                )
+                .shadow(
+                    color: currentTheme.primaryColor.opacity(colorScheme == .dark ? themeManager.darkModeHueIntensity * 0.3 : 0.15),
+                    radius: 20,
+                    x: 0,
+                    y: 10
+                )
+        )
+    }
+    
+    // MARK: - Form Content
+    private var formContent: some View {
+        VStack(spacing: 24) {
+            // Resource Details Section
+            VStack(spacing: 20) {
+                Text("Resource Details")
+                    .font(.forma(.title2, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                
+                VStack(spacing: 16) {
+                    StunningFormField(
+                        title: "Resource Name",
+                        icon: "text.alignleft",
+                        placeholder: "Resource Name",
+                        text: $editedResource.name,
+                        courseColor: currentTheme.primaryColor,
+                        themeManager: themeManager,
+                        isValid: !editedResource.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        errorMessage: "Please enter a resource name",
+                        isFocused: false
+                    )
+                    
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "link")
+                                .font(.forma(.subheadline))
+                                .foregroundColor(currentTheme.primaryColor)
+                            
+                            Text("Website URL")
+                                .font(.forma(.subheadline, weight: .medium))
+                                .foregroundColor(.primary)
+                            
+                            Spacer()
+                        }
+                        
+                        TextField("https://example.com", text: $editedResource.url)
+                            .font(.forma(.body))
+                            .keyboardType(.URL)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(.ultraThinMaterial)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(
+                                                editedResource.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 
+                                                currentTheme.primaryColor.opacity(0.2) :
+                                                currentTheme.primaryColor.opacity(0.4),
+                                                lineWidth: 1
+                                            )
+                                    )
+                            )
+                    }
+                }
+            }
+            .padding(.vertical, 24)
+            .padding(.horizontal, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                    )
+            )
+            
+            // Customization Section
+            VStack(spacing: 20) {
+                Text("Customization")
+                    .font(.forma(.title2, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(editedResource.color.opacity(0.2))
+                                .frame(width: 40, height: 40)
+                                .overlay(
+                                    Circle()
+                                        .stroke(editedResource.color.opacity(0.3), lineWidth: 1)
+                                )
+                            
+                            Image(systemName: "paintpalette")
+                                .font(.forma(.subheadline))
+                                .foregroundColor(editedResource.color)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Accent Color")
+                                .font(.forma(.body, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text("Choose a color to represent this resource")
+                                .font(.forma(.subheadline))
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        ColorPicker("", selection: Binding(
+                            get: { editedResource.color },
+                            set: { editedResource.customColor = $0.toHex() }
+                        ), supportsOpacity: false)
+                            .labelsHidden()
+                            .scaleEffect(1.2)
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+            .padding(.vertical, 24)
+            .padding(.horizontal, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                    )
+            )
+        }
+    }
+    
+    // MARK: - Preview Section
+    private var previewSection: some View {
+        VStack(spacing: 20) {
+            Text("Preview")
+                .font(.forma(.title2, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            HStack {
+                ResourceWidget(resource: editedResource, onEdit: {}, onDelete: {})
+                    .environmentObject(themeManager)
+                    .buttonStyle(.plain)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: editedResource.name)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: editedResource.url)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: editedResource.color)
+                
+                Spacer()
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(currentTheme.primaryColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+    
+    // MARK: - Floating Action Button
+    private var floatingActionButton: some View {
+        VStack {
+            Spacer()
+            
+            HStack {
+                Spacer()
+                
+                Button(action: {
+                    Task { await updateResource() }
+                }) {
+                    HStack(spacing: 12) {
+                        if isUpdating {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.title2.bold())
+                                .foregroundColor(.white)
+                        }
+                        
+                        if !isUpdating {
+                            Text("Save Changes")
+                                .font(.forma(.headline, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 16)
+                    .background(
+                        ZStack {
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: !isValid ? [.secondary.opacity(0.6), .secondary.opacity(0.4)] :
+                                               [currentTheme.primaryColor, currentTheme.primaryColor.opacity(0.8)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            
+                            if !isUpdating && isValid {
+                                Capsule()
+                                    .fill(
+                                        AngularGradient(
+                                            colors: [
+                                                Color.clear,
+                                                Color.white.opacity(0.3),
+                                                Color.clear,
+                                                Color.clear
+                                            ],
+                                            center: .center,
+                                            angle: .degrees(animationOffset * 0.5)
+                                        )
+                                    )
+                            }
+                        }
+                        .shadow(
+                            color: !isValid ? .clear : currentTheme.primaryColor.opacity(0.4),
+                            radius: 16,
+                            x: 0,
+                            y: 8
+                        )
+                        .scaleEffect(bounceAnimation * 0.1 + 0.9)
+                    )
+                }
+                .disabled(!isValid)
+                .buttonStyle(BounceButtonStyle())
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isValid)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 32)
+        }
+    }
+    
+    // MARK: - Helper Methods
+    private func startAnimations() {
+        withAnimation(.linear(duration: 22.5).repeatForever(autoreverses: false)) {
+            animationOffset = 360
+        }
         
-        resourcesManager.updateResource(resource)
-        dismiss()
+        withAnimation(.easeInOut(duration: 2.25).repeatForever(autoreverses: true)) {
+            pulseAnimation = 1.1
+        }
+    }
+    
+    private func updateResource() async {
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            isUpdating = true
+        }
+        
+        errorMessage = nil
+        
+        do {
+            var urlString = editedResource.url.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !urlString.hasPrefix("http://") && !urlString.hasPrefix("https://") {
+                urlString = "https://" + urlString
+            }
+            editedResource.url = urlString
+            editedResource.name = editedResource.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            resourcesManager.updateResource(editedResource)
+            
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                isUpdating = false
+            }
+            
+            dismiss()
+        } catch {
+            errorMessage = "Failed to save changes: \(error.localizedDescription)"
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                isUpdating = false
+            }
+        }
     }
 }
 
@@ -546,6 +1390,22 @@ struct SquishableButtonStyle: ButtonStyle {
                     y: configuration.isPressed ? 2 : 5)
             .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.5), value: configuration.isPressed)
+    }
+}
+
+struct BounceButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(.spring(response: 0.4, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
+struct SpringButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: configuration.isPressed)
     }
 }
 

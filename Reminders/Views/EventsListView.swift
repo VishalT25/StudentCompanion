@@ -11,6 +11,8 @@ struct EventsListView: View {
     @State private var pendingEventDeletion: Event?
     @State private var showDeleteEventAlert = false
     @State private var showBulkDeleteAlert = false
+    @State private var editingEvent: Event?
+    @State private var editingCategory: Category?
     
     @State private var showAllUpcoming = false
     @State private var showAllPast = false
@@ -102,6 +104,27 @@ struct EventsListView: View {
             AddCategoryView(isPresented: $showingAddCategory)
                 .environmentObject(viewModel)
                 .environmentObject(themeManager)
+        }
+        .sheet(item: $editingEvent) { event in
+            EventEditView(event: event, isNew: false)
+                .environmentObject(viewModel)
+                .environmentObject(themeManager)
+        }
+        .sheet(item: $editingCategory) { category in
+            AddCategoryView(isPresented: .constant(true), existingCategory: category)
+                .environmentObject(viewModel)
+                .environmentObject(themeManager)
+        }
+
+        .alert("Delete Reminder", isPresented: $showDeleteEventAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                if let event = pendingEventDeletion {
+                    viewModel.deleteEvent(event)
+                }
+            }
+        } message: {
+            Text("This action cannot be undone.")
         }
     }
     
@@ -203,6 +226,14 @@ struct EventsListView: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .simultaneousGesture(
+                                LongPressGesture(minimumDuration: 0.6)
+                                    .onEnded { _ in
+                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                        impactFeedback.impactOccurred()
+                                        editingCategory = category
+                                    }
+                            )
                         }
                         
                         // Add Category Button
@@ -443,10 +474,8 @@ struct EventsListView: View {
                 } else {
                     LazyVStack(spacing: 12) {
                         ForEach(dayEvents) { event in
-                            NavigationLink {
-                                EventEditView(event: event, isNew: false)
-                                    .environmentObject(viewModel)
-                                    .environmentObject(themeManager)
+                            Button {
+                                editingEvent = event
                             } label: {
                                 EnhancedEventRow(event: event, isPast: event.date < Date())
                                     .environmentObject(viewModel)
@@ -646,10 +675,8 @@ struct EventsListView: View {
                                 bulkSelectionManager.toggleSelection(event.id)
                             }
                         } else {
-                            NavigationLink {
-                                EventEditView(event: event, isNew: false)
-                                    .environmentObject(viewModel)
-                                    .environmentObject(themeManager)
+                            Button {
+                                editingEvent = event
                             } label: {
                                 EnhancedEventRow(event: event)
                                     .contentShape(Rectangle())
@@ -737,10 +764,8 @@ struct EventsListView: View {
                                 bulkSelectionManager.toggleSelection(event.id)
                             }
                         } else {
-                            NavigationLink {
-                                EventEditView(event: event, isNew: false)
-                                    .environmentObject(viewModel)
-                                    .environmentObject(themeManager)
+                            Button {
+                                editingEvent = event
                             } label: {
                                 EnhancedEventRow(event: event, isPast: true)
                                     .contentShape(Rectangle())

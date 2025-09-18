@@ -63,7 +63,7 @@ struct AddAssignmentView: View {
                 // Stunning animated background
                 spectacularBackground
                 
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 21) {
                         // Hero header section
                         heroSection
@@ -83,36 +83,22 @@ struct AddAssignmentView: View {
                             .offset(y: showContent ? 0 : 50)
                             .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.225), value: showContent)
                         
-                        Spacer(minLength: 80)
+                        Spacer(minLength: 20)
                     }
                     .padding(.horizontal, 24)
-                    .padding(.top, 24)
-                    .padding(.bottom, 90)
+                    .padding(.top, 30)
+                    .padding(.bottom, 30)
                 }
-                
+
                 // Floating action button
                 floatingActionButton
             }
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .foregroundColor(.secondary)
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        saveAssignment()
-                    }
-                    .font(.forma(.subheadline, weight: .semibold))
-                    .foregroundColor(isFormValid ? course.color : .secondary)
-                    .disabled(!isFormValid || isLoading)
-                }
-            }
         }
+        .navigationBarHidden(true)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(false)
+        .preferredColorScheme(.dark)
         .onAppear {
             startAnimations()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.225) {

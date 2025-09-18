@@ -58,7 +58,7 @@ struct AddEventView: View {
                 // Stunning animated background
                 spectacularBackground
                 
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 21) {
                         // Hero header section
                         heroSection
@@ -84,37 +84,22 @@ struct AddEventView: View {
                             .offset(y: showContent ? 0 : 50)
                             .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.3), value: showContent)
                         
-                        Spacer(minLength: 80)
+                        Spacer(minLength: 20)
                     }
                     .padding(.horizontal, 24)
-                    .padding(.top, 24)
-                    .padding(.bottom, 90)
+                    .padding(.top, 30)
+                    .padding(.bottom, 30)
                 }
                 
                 // Floating action button
                 floatingActionButton
             }
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        isPresented = false
-                    }
-                    .font(.forma(.subheadline))
-                    .foregroundColor(.secondary)
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        saveReminder()
-                    }
-                    .font(.forma(.subheadline, weight: .semibold))
-                    .foregroundColor(isFormValid ? primaryColor : .secondary)
-                    .disabled(!isFormValid || isLoading)
-                }
-            }
         }
+        .navigationBarHidden(true)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(false)
+        .preferredColorScheme(.dark)
         .onAppear {
             startAnimations()
             setupInitialCategory()
