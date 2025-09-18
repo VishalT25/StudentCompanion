@@ -14,9 +14,18 @@ DerivedData/
 !default.mode2v3
 *.perspectivev3
 !default.perspectivev3
+
+## Obj-C/Swift specific
+*.hmap
+
+## App packaging
 *.ipa
 *.dSYM.zip
 *.dSYM
+
+## Playgrounds
+timeline.xctimeline
+playground.xcworkspace
 
 # Swift Package Manager
 .build/
